@@ -1,0 +1,36 @@
+# {{ROLE}} (project-local)
+
+> **Why this file exists:** The canonical role brief lives ONCE in the skill
+> (`{{SKILL_BRIEF_PATH}}`) and evolves there. This file carries only a pointer to
+> it, a self-contained fallback summary (so the role is usable even if the skill
+> path is unreachable), and the project-specific deltas that can't live in the
+> generic brief. Never copy the full canonical text here — that copy drifts.
+
+Canonical brief: `{{SKILL_BRIEF_PATH}}` — read it for the full role definition,
+responsibilities, and protocol.
+
+---
+
+## Fallback summary
+
+{{ROLE_SUMMARY}}
+
+---
+
+## Project-specific deltas
+
+<FILL: fill in the project-specific facts this role needs that are NOT in the canonical brief.
+Typical content:
+- **Anomaly families / evidence paths** (diagnostic): "Primary log family: `<path>/*.log`;
+  structured outputs: `<path>/*.json`. Known patterns: <list>."
+- **Acceptance criteria** (orchestrator / inception): "This project's gates are: <list from
+  HANDOFF.md §Acceptance criteria>."
+- **Lifecycle stage names** (orchestrator): "Stages: <draft → candidate → promoted>. Current
+  stage at this writing: <stage>."
+- **Scope constraints** (all roles): "Instrument: <X> only. Frozen hold-out: <Y>. No edits
+  to <Z> without explicit operator authorization."
+- **Brain seeding notes** (orchestrator / inception): "Brain was seeded at <depth> on <date>.
+  Key pages already exist for: <list>."
+- **Any known deviations from canonical** (all roles): "Gate 3 disabled because <reason>.
+  See HANDOFF.md §Acceptance criteria."
+Leave this section empty and note 'no deltas' if the canonical brief is fully sufficient.>

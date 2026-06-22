@@ -1,0 +1,103 @@
+# {{PROJECT_NAME}} — brain
+
+> NOT a CLAUDE.md. This file is read deliberately by the orchestrator, not
+> auto-loaded by Claude Code. Naming it BRAIN.md avoids polluting the repo-root
+> context when the cwd is inside `{{HOME}}/brain/`.
+
+Established: {{DATE}}
+
+---
+
+## Identity
+
+**Project:** {{PROJECT_NAME}}
+**Domain:** <FILL: one sentence — what does this project do?>
+**Root:** {{ROOT}}
+**Brain home:** {{ROOT}}/{{HOME}}/brain/
+
+---
+
+## Scope
+
+This brain is **self-contained to this repo**. It depends on nothing outside it —
+no external service, no shared vault, no cross-repo registry. Every fact it holds
+originates from this repo's docs, code, decisions, and working sessions.
+
+The brain is the orchestrator's long-term memory. It is NOT a task list (tasks live in
+`{{HOME}}/INDEX.md`), NOT a changelog (that's git), and NOT a copy of the code
+(entity pages MAP into code via `maps_to:`, they never paste it).
+
+---
+
+## Default tags
+
+<FILL: list 3–8 tags that appear frequently in this repo's frontmatter.
+Examples: [core, integration, infra, auth, data, api, ui, config, test]
+These help `brain_lint.py` flag stale / untagged pages.>
+
+---
+
+## Entity types you'll commonly see
+
+Standard types (from the schema):
+`module` | `service` | `component` | `external-system` | `datastore` | `dependency` | `person` | `tool`
+
+Project-specific additions:
+<FILL: add any entity types specific to this project's domain. Examples:
+- `model` (for ML projects)
+- `api-endpoint` (for web services)
+- `pipeline-stage` (for data pipelines)
+- `contract` (for integration projects)
+Leave empty if the standard types are sufficient.>
+
+---
+
+## Schema
+
+Canonical schema: `~/.claude/skills/gitos/references/brain-schema.md` — the
+authoritative reference for frontmatter, page types, conventions, and the maintenance loop.
+Read it when in doubt. The self-contained fallback below covers the essentials.
+
+### Four page types
+
+| Type | Lives in | What it holds |
+|------|----------|---------------|
+| `source` | `wiki/sources/` | Factual summary of one ingested document. No interpretation. |
+| `entity` | `wiki/entities/` | A repo "noun" — module, service, dep, person, tool. Maps into code via `maps_to:`. |
+| `concept` | `wiki/concepts/` | How this system works — patterns, conventions, invariants, architecture. |
+| `decision` | `wiki/decisions/` | ADR-style record of a non-trivial choice: context, options, decision + why. |
+
+### UPSERT rule (primary anti-duplication defense)
+
+Before writing ANYTHING to the brain:
+1. **Search first** — read `wiki/index.md` and grep `wiki/` for an existing page on this atom.
+2. **UPDATE** the existing page (bump `updated:`, add `[[wikilinks]]`).
+3. **CREATE** a new page ONLY if the atom is genuinely distinct from every existing page.
+4. **Route by kind** — if it's actionable ("we should do X"), it's a WORK-ORDER, not a brain page.
+5. **Log** — append one line to `wiki/log.md`.
+
+### Anti-redundancy invariants
+
+- **One atom, one page** — one source of truth; everything else links, never copies.
+- **Knowledge ≠ work ≠ birth-record** — facts live in the brain; tasks in INDEX; birth record in HANDOFF.md (never edited).
+- **Maps into code, does not mirror it** — entity/concept pages link to files/symbols; they never paste code or restate docstrings.
+- **Prefer update; create only when distinct** — enforced at write-time, audited by `brain_lint.py`.
+
+---
+
+## How this brain is maintained
+
+The orchestrator's three-layer maintenance loop:
+
+**Layer 1 — Inline (continuous):** UPSERT protocol on every write (see above).
+
+**Layer 2 — Checkpoint reconcile (at natural pauses):** REFLECT → RECONCILE.
+- Reflect: what did this session establish that the brain doesn't hold? What did it invalidate?
+- Capture deltas via the upsert protocol.
+- Reconcile: merge near-duplicates, mark superseded content, fix broken `[[links]]`.
+- Refresh `wiki/index.md` + `.brainmeta.json`.
+
+**Layer 3 — Deterministic backstop:** `python {{ROOT}}/{{HOME}}/tools/brain_lint.py {{ROOT}}/{{HOME}}/brain`
+Reports: duplicate pages, orphans, stale pages, broken wikilinks, cross-layer redundancy (brain page restating a work-order). Read-only — it reports, never edits. Small fixes happen inline; large restructures become a work-order in INDEX.
+
+Full protocol: `~/.claude/skills/gitos/references/brain-schema.md` §5 + §6.

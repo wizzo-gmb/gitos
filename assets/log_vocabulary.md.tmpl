@@ -1,0 +1,75 @@
+# {{PROJECT_NAME}} — Evidence / log vocabulary
+
+Established: {{DATE}}
+
+This file catalogs the known output and log families for {{PROJECT_NAME}}. It grows
+incrementally: add a new entry the first time you encounter a new source type during
+a diagnostic pass. The diagnostic role reads this file as its starting map; the
+orchestrator updates it as the project matures.
+
+---
+
+## Per-entry format
+
+```
+### <Family name>
+Location: <path pattern, e.g. `{{ROOT}}/logs/**/*.log` or `{{ROOT}}/outputs/*.csv`>
+Format: <plain text | JSON | CSV | binary | other>
+Produced by: <what generates this — a script, a service, a job, a test run>
+Cadence: <when it appears — per-run, per-day, on-error, manually>
+Key signals: <what to look for — error prefixes, field names, anomaly patterns>
+Notes: <anything else a diagnostic agent needs to know>
+```
+
+---
+
+## Source families
+
+### 1. Runtime / application logs
+
+<!-- Add entries here as you discover log files produced by the running application.
+     Example entry:
+     Location: `{{ROOT}}/logs/app-*.log`
+     Format: plain text, one line per event, ISO-8601 timestamp prefix
+     Produced by: the main application process
+     Cadence: per-run; rotated daily
+     Key signals: lines containing [ERROR], [WARN], stack traces, "failed to"
+     Notes: timestamps are UTC; PID appears in the filename -->
+
+*None cataloged yet.*
+
+---
+
+### 2. Structured outputs (CSV / JSON)
+
+<!-- Add entries here for machine-readable output files — test results, metrics,
+     exports, reports. These are the most evidence-rich artifacts for diagnostics. -->
+
+*None cataloged yet.*
+
+---
+
+### 3. Maintenance / job logs
+
+<!-- Add entries here for scheduled jobs, CI runs, migration scripts, build logs,
+     or any process that runs outside the main application. -->
+
+*None cataloged yet.*
+
+---
+
+### 4. Research / calibration outputs
+
+<!-- Add entries here for experiment results, model evaluation outputs, benchmark
+     reports, or any artifact produced during a research / tuning phase. -->
+
+*None cataloged yet.*
+
+---
+
+### 5. Contract / artifact files
+
+<!-- Add entries here for deployed artifacts, configuration snapshots, schema
+     migrations, or any file that represents a frozen contract between components. -->
+
+*None cataloged yet.*

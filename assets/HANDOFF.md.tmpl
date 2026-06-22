@@ -1,0 +1,119 @@
+# {{PROJECT_NAME}} — Handoff (birth certificate)
+
+> Written ONCE at inception by the inception agent. The orchestrator reads it once to bootstrap,
+> then the brain (`{{HOME}}/brain/`) is the living state. This file is the immutable birth record —
+> do NOT edit it after inception. Anything that evolves moves into a brain page; this stays as
+> it was the day the project was born.
+
+Established: {{DATE}}
+Root: {{ROOT}}
+Home: {{HOME}}
+
+---
+
+## Project identity
+
+**Name:** {{PROJECT_NAME}}
+**Domain:** <FILL: one sentence — what does this project do, in plain language?>
+**Stage at inception:** <FILL: e.g. greenfield / mid-build / legacy-adopt>
+**Primary language / stack:** <FILL>
+**Repository root:** {{ROOT}}
+**Pipeline home:** {{ROOT}}/{{HOME}}
+
+---
+
+## Lifecycle stages
+
+<FILL: declare the project's own named stages here. Examples:
+- draft → candidate → promoted (research/ML)
+- spike → alpha → beta → release (product)
+- exploration → prototype → hardened → production-ready (infra)
+State what MUST be true to advance between stages.>
+
+---
+
+## Acceptance criteria
+
+General acceptance gate reference: `~/.claude/skills/gitos/references/acceptance-criteria.md`
+
+Project-specific gates for this project:
+<FILL: list the concrete, testable criteria that define "done" for each lifecycle stage.
+Examples: "all unit tests pass", "p95 latency < 200ms under 100 rps load", "security review sign-off".
+Be specific enough that a new contributor can verify each one without asking.>
+
+---
+
+## Hold-out / test discipline
+
+<FILL: define what data, environments, or test sets are locked and CANNOT be used for development
+iteration. Examples:
+- "The `test/` dataset is frozen; never train or tune on it."
+- "The production environment is read-only during development; use staging only."
+- "Benchmark results from DATE are the frozen baseline; do not re-run until promotion."
+State who holds the key and how violations are detected.>
+
+---
+
+## Outcome definition
+
+<FILL: what does success look like? Define the measurable outcome(s) this project must achieve.
+Examples: "Reduce error rate from X% to <Y%", "Ship feature Z with <N user complaints in first week",
+"Model achieves >A% accuracy on held-out set B with <C ms inference latency."
+Avoid vague goals — nail the number and the measurement method.>
+
+---
+
+## Parity status
+
+<FILL: state whether this project has a reference implementation to port byte-identically.
+If YES: name the reference, the language, and the parity-gate test that proves byte-identity.
+If NO: write "N/A — no ported reference implementation.">
+
+---
+
+## Initial backlog seed
+
+<FILL: list the 3–10 known work-items, questions, or risks at inception. These seed the INDEX.
+Format: [priority] description. Examples:
+- [high] Validate ingestion pipeline against reference dataset
+- [medium] Decide authentication approach (see Options A/B in brain/wiki/decisions/)
+- [low] Add linting to CI
+These will be transcribed into `{{HOME}}/INDEX.md` as the first work-orders.>
+
+---
+
+## Predecessor lessons
+
+<FILL: list anything learned from prior projects, spikes, or prototypes that should influence this one.
+Link to prior notes or repo handoffs if they exist. Examples:
+- "The v1 prototype hit memory limits at 10k rows — pre-paginate the ETL."
+- "See docs/adr/2026-05-10-spike-results.md for the rejected approach."
+If none: "First project of this type — no predecessor lessons.">
+
+---
+
+## Production target
+
+**Targeting production?** <FILL: yes / no / tbd>
+
+If yes — production handoff contract reference: `~/.claude/skills/gitos/references/production-handoff-contract.md`
+Project-specific contract lives at: `{{ROOT}}/{{HOME}}/production-contract.md` (scaffold creates it if declared at inception)
+
+---
+
+## Brain seed summary
+
+**Ingest depth chosen at inception:** <FILL: minimal / moderate / aggressive>
+
+**What was seeded:**
+<FILL: brief list of what the inception agent ingested. Examples:
+- "Handoff (this file) → brain/wiki/sources/handoff.md"
+- "README → brain/wiki/sources/readme.md; 3 entity pages (auth-service, database, cache)"
+- "Dependency manifest → 5 entity pages (key deps)"
+- "Codebase crawl → 12 entity pages, 4 concept pages (flagged for prune pass)"
+Leave as "see brain/wiki/log.md for the full ingest record" if the log is authoritative.>
+
+---
+
+*Inception agent: gitos skill / inception role*
+*Schema: `~/.claude/skills/gitos/references/brain-schema.md`*

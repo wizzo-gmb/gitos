@@ -1,0 +1,30 @@
+# {{PROJECT_NAME}} — brain op log
+
+Established: {{DATE}}
+
+Append one line per operation. Never delete entries — this is the audit trail of how
+the brain came to hold what it holds. If an entry is superseded, note it inline on a
+new line (do not edit the old line).
+
+---
+
+## Op vocabulary
+
+| Op | Meaning |
+|----|---------|
+| `ingest` | A document was read and its facts extracted into one or more pages |
+| `page-add` | A new wiki page was created |
+| `page-update` | An existing wiki page was updated (content or frontmatter) |
+| `decision-record` | A new decision page was added (ADR) |
+| `merge` | Two near-duplicate pages were merged into one canonical page |
+| `reconcile` | A checkpoint reconcile pass ran (reflect → capture → merge → refresh index) |
+| `lint` | `brain_lint.py` was run; findings noted |
+
+---
+
+## Log
+
+<!-- Format: YYYY-MM-DD | op | summary (e.g. "page-add | sources/handoff.md — inception handoff ingested")
+     One line per operation. Newest entries at the bottom. -->
+
+{{DATE}} | ingest | brain initialized by inception agent — empty skeleton created

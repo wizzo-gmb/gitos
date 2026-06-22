@@ -1,0 +1,46 @@
+<!-- Use this page type to summarize ONE ingested document (README, spec, design doc, API docs,
+     the inception handoff, a transcript, a note). Facts only — no interpretation. Interpretation
+     and synthesis belong in concepts/ and decisions/. One source page per document. -->
+
+---
+tags: [<FILL: domain tags>]
+source_type: <FILL: readme | spec | design-doc | api-doc | handoff | transcript | note>
+sources: [<FILL: original/path/or/filename this page summarizes>]
+created: {{DATE}}
+updated: {{DATE}}
+---
+
+# <FILL: document title>
+
+## Summary
+
+<FILL: 2–5 sentences. What is this document? What is its purpose? Who wrote it and when?>
+
+## Key facts
+
+<FILL: bulleted list of the concrete, verifiable facts this document establishes.
+Each fact should be atomic — one claim per bullet. Do NOT copy-paste paragraphs;
+distill into facts. Examples:
+- "The service exposes three endpoints: /health, /ingest, /query"
+- "Authentication uses JWT; tokens expire after 24 h"
+- "Max payload size is 1 MB per the spec §4.2"
+- "The reference implementation is in Go 1.21">
+
+## Entities mentioned
+
+<FILL: list every entity (module, service, person, tool, dep) named in this document as
+[[wikilinks]]. Create entity pages if they don't exist yet.
+Example: [[Auth Service]], [[Database]], [[Alice (lead engineer)]]>
+
+## Concepts covered
+
+<FILL: list every architecture pattern, convention, or invariant explained in this document
+as [[wikilinks]]. Create concept pages if they don't exist yet.
+Example: [[JWT Auth Pattern]], [[Retry with Backoff]], [[Immutable Audit Log]]>
+
+## Open questions / action items
+
+<FILL: list anything this document raises that needs follow-up. Action items that are
+unambiguously WOs should be filed in INDEX and linked here rather than left as prose.
+Example: "Unclear whether the 1 MB limit applies to compressed or uncompressed payload —
+file WO to clarify with the API team.">

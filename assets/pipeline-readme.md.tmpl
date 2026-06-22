@@ -1,0 +1,64 @@
+# {{HOME}}/ — pipeline directory
+
+This directory is the **GitOS agent system** for {{PROJECT_NAME}}. It is maintained
+by the `gitos` skill (`~/.claude/skills/gitos/`) and is git-tracked alongside
+the source code — it is an audit trail and long-term memory, not a temp directory.
+
+---
+
+## What is this?
+
+The GitOS skill gives every repo a lightweight operating system: three agent roles
+(inception, orchestrator, diagnostic), a work-order ledger, and a self-contained knowledge
+brain. Humans open the repo and read this README; agents open `HANDOFF.md` and `INDEX.md`
+first, then query the brain.
+
+For the full role documentation see `~/.claude/skills/gitos/references/roles/`.
+
+---
+
+## Work side (human-facing)
+
+```
+{{HOME}}/
+├── README.md              This file
+├── HANDOFF.md             Birth certificate — project identity, lifecycle, acceptance criteria.
+│                          Written once at inception; immutable after that.
+├── INDEX.md               Work-order ledger — open / resolved / disproved / next-steps.
+│                          The single task surface for this repo.
+├── log_vocabulary.md      Catalog of all known log and output families (for diagnostics).
+├── work-orders/           One file per work-order: WO-NNN-slug.md
+│   └── resolved/          Closed work-orders moved here when fixed and verified.
+├── roles/
+│   ├── inception.md       Thin pointer to the inception role brief + project deltas.
+│   ├── orchestrator.md    Thin pointer to the orchestrator role brief + project deltas.
+│   └── diagnostic.md      Thin pointer to the diagnostic role brief + project deltas.
+└── production-contract.md (only present if a production target was declared at inception)
+```
+
+---
+
+## Brain side (orchestrator memory)
+
+```
+{{HOME}}/brain/
+├── BRAIN.md               Brain identity — domain, entity types, schema pointer, rules.
+│                          NOT a CLAUDE.md (avoids auto-loading when cwd is inside brain/).
+├── raw/                   Drop-zone for material to ingest (docs, specs, transcripts).
+│   └── _extracted/        Cached extracted text from PDFs / binaries.
+├── wiki/
+│   ├── sources/           One factual summary per ingested document.
+│   ├── entities/          Repo "nouns": modules, services, deps, people, tools.
+│   ├── concepts/          Architecture patterns, conventions, invariants.
+│   ├── decisions/         ADR-style decision records — WHY things are the way they are.
+│   ├── index.md           Master catalog of all brain pages.
+│   └── log.md             Chronological op record (ingest / page-add / reconcile / lint).
+└── .brainmeta.json        Cached metadata (last_ingest, page counts).
+```
+
+Brain schema: `~/.claude/skills/gitos/references/brain-schema.md`
+
+The brain is the orchestrator's long-term memory. It is self-contained: every fact it holds
+comes from this repo's own docs, code, and decisions — no external service, no shared vault.
+The orchestrator reads, queries, and grows it as it works. Agents do not edit the brain
+directly during diagnostic-only sessions.

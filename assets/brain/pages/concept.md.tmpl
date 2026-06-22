@@ -1,0 +1,45 @@
+<!-- Use this page type for an architecture pattern, domain concept, convention, or
+     invariant — the "how this system works" knowledge that spans multiple files.
+     If the knowledge is about a specific thing (module, service, etc.) it belongs on
+     an entity page. If it's a cross-cutting truth about how the system behaves, it
+     belongs here. One concept page per distinct pattern or invariant. -->
+
+---
+tags: [<FILL: concept_type, domain tags>]
+concept_type: <FILL: pattern | domain | convention | invariant>
+sources: [<FILL: [[Source Page(s)]] where this concept was first encountered or defined>]
+created: {{DATE}}
+updated: {{DATE}}
+---
+
+# <FILL: concept name>
+
+<FILL: 1–3 sentences. What is this concept? Why does it exist in this system?
+Be specific to THIS repo — don't write a Wikipedia article about the pattern in general.>
+
+## How it works in this repo
+
+<FILL: explain the concept as it is ACTUALLY implemented here. Link to the files/symbols
+where it lives. Focus on the non-obvious aspects — what would a new contributor get wrong
+if they didn't read this page?
+Examples:
+- "Retry logic is centralised in `src/retry.py`; callers never implement their own loops."
+- "All timestamps are stored as UTC Unix milliseconds; display conversion is client-side only."
+- "The event bus uses at-least-once delivery; all consumers must be idempotent.">
+
+## Entities that implement or rely on this concept
+
+<FILL: list as [[wikilinks]] to entity pages.>
+
+## Known exceptions / deviations
+
+<FILL: list any places in the codebase where this concept is intentionally NOT followed,
+and why. These are the most valuable things to document — deviations are where bugs hide.>
+
+## Related concepts
+
+<FILL: list as [[wikilinks]] to other concept pages that are closely related.>
+
+## Related decisions
+
+<FILL: list [[Decision]] pages that record WHY this concept/convention was chosen.>

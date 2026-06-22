@@ -1,0 +1,59 @@
+<!-- Use this page type — the HIGHEST-VALUE type — for any non-trivial choice made with
+     the user: what was decided, the context that forced the choice, the alternatives
+     weighed, and WHY this one won. This is the knowledge that most reliably survives
+     context compaction and onboards the next session. Code shows WHAT; decisions show WHY.
+     File a decision page whenever a real trade-off was made, an approach was rejected,
+     or a constraint was agreed upon. One page per decision. -->
+
+---
+status: <FILL: accepted | superseded | revisited>
+decided: {{DATE}}
+supersedes: <FILL: [[Prior Decision]] if this replaces one, else omit>
+superseded_by: <FILL: [[Later Decision]] if this has been replaced, else omit>
+work_order: <FILL: [WO-NNN] if a work-order implements this decision, else omit>
+tags: [<FILL: domain tags>]
+created: {{DATE}}
+updated: {{DATE}}
+---
+
+# Decision: <FILL: imperative summary — what was decided, in one line. Examples:
+# "Use PostgreSQL as the primary datastore"
+# "Defer authentication to the API gateway layer"
+# "Port the reference implementation byte-for-byte before any optimization">
+
+## Context
+
+<FILL: what situation forced this decision? What constraints, requirements, or failures
+made this choice necessary? What were the stakes? Be specific — include numbers, dates,
+and references to relevant entities/concepts where possible.>
+
+## Options considered
+
+<FILL: list every real alternative that was genuinely weighed. For each option, state:
+1. What it is
+2. Its main advantage
+3. Its main drawback
+Don't list options that were never seriously considered — that's noise.
+
+**Option A: <name>**
+- Pro: <...>
+- Con: <...>
+
+**Option B: <name>**
+- Pro: <...>
+- Con: <...>>
+
+## Decision + why
+
+<FILL: state the chosen option and the REASON it won over the others. Be explicit about
+what tipped the balance. "We chose X because Y outweighed Z in our context" is useful;
+"We chose X because it seemed best" is not. If the user said something decisive, quote it.>
+
+## Consequences / what to watch
+
+<FILL: what does this decision lock in? What must stay true for it to remain valid?
+What are the risks or follow-up questions?
+Examples:
+- "This locks us into Postgres-specific features; switching later requires a migration plan."
+- "If throughput exceeds 10k rps, revisit this — the current approach won't scale."
+- "See [[WO-007]] for the implementation of the migration this decision requires.">

@@ -1,0 +1,46 @@
+<!-- Use this page type for a repo "noun": a module/package, a service, a component,
+     an external system or API, a data store, a key dependency, a person/stakeholder,
+     or a tool. This page MAPS into the code (via maps_to:) — it does not copy it.
+     Capture only the cross-cutting facts that aren't obvious from reading one file.
+     One entity page per distinct real-world thing. -->
+
+---
+tags: [<FILL: entity_type, domain tags>]
+entity_type: <FILL: module | service | component | external-system | datastore | dependency | person | tool>
+maps_to: [<FILL: src/path/or/symbol — where this entity lives in the code. Use real paths.>]
+sources: [<FILL: [[Source Page]] that introduced this entity>]
+created: {{DATE}}
+updated: {{DATE}}
+---
+
+# <FILL: entity name>
+
+<FILL: 1–3 sentences. What is this thing? What is its role in the system? Why does it exist?
+Focus on the cross-cutting WHY, not the WHAT (the code shows that).>
+
+## Responsibilities
+
+<FILL: bulleted list of what this entity is responsible for. Keep it high-level — link to
+files/symbols for detail, don't restate code. Examples:
+- "Validates all incoming API requests before routing"
+- "Owns the persistent state for user sessions"
+- "The single point of contact for the external payment provider">
+
+## Key interfaces / contracts
+
+<FILL: what do other parts of the system need to know to interact with this entity?
+Examples: public API surface, event schema, config keys, environment variables required.
+Link to the actual file/symbol, don't copy the code.>
+
+## Dependencies
+
+<FILL: what does this entity depend on? List as [[wikilinks]] to other entity pages.>
+
+## Known constraints / invariants
+
+<FILL: non-obvious rules that govern this entity. Examples: "must be a singleton per process",
+"thread-safe for reads, NOT for writes", "requires DB migration before deploy".>
+
+## Related decisions
+
+<FILL: list [[Decision]] pages that explain WHY this entity is designed the way it is.>
