@@ -18,6 +18,20 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v6 — 2026-06-22
+breaking: no
+
+Hardened orchestrator work loop (WO-016). `references/roles/orchestrator.md` gains an explicit
+**"The work loop"** section (after *First action*) — an ordered, gated spine that makes the role's
+previously-implicit per-session / per-work-order cadence checkable. The gates are non-skippable
+operator-control + correctness points: **the operator confirms proposed work-orders before any are
+activated/dispatched** (the brake on runaway work-order creation), plan-approved + disjoint-files +
+scope-bound before any edit, verify-the-diff before commit, and never-advance-with-anything-half-done.
+**Window topology** (fresh-per-WO vs. batching similar work vs. sequence/parallel) is explicitly left
+to the orchestrator's judgment — an optimization, not a rule. Additive: it makes existing-good
+behaviour explicit and harder to skip; no role behaviour is removed, so a repo on an older engine
+keeps prior behaviour until it upgrades. Adopted cleanly on upgrade.
+
 ## v5 — 2026-06-20
 breaking: no
 

@@ -38,6 +38,50 @@ Bootstrap your state before doing anything:
 
 If a memory pointer named the default role as you, this is where you resume.
 
+## The work loop
+
+Run this **in order**; each step's **gate** is non-skippable. The most common orchestrator failure
+is skipping a gate under context pressure — so they're named explicitly. The gates are hard (operator
+control + correctness); the *optimizations* — how work-orders map to windows, sequence vs. parallel —
+stay your judgment. Steps **point** to the detailed sections below; they don't restate them.
+
+**Once per session**
+
+1. **Bootstrap.** Load state — handoff (once), `INDEX.md`, brain, engine-drift check, ensure-git.
+   → *First action.*
+   *Gate:* you've read the ledger and the relevant brain pages **before** acting.
+
+**Per work-order — repeat until the operator's ask is satisfied**
+
+2. **Intake → propose work-orders.** Decompose the ask into *proposed* ledger entries (Objective +
+   Part-0 probe + Acceptance), in disjoint units. **You propose; the operator confirms the set before
+   any become active or get dispatched** — the brake on runaway work-order creation.
+   → *Authoring work-orders · Prioritization policy.*
+   *Gate:* **no work-order is created, activated, or dispatched without explicit operator confirmation.**
+3. **Dispatch, plan-first.** Plan every work-order for approval before it executes. **You choose the
+   topology** — a fresh window per work-order (clean budget, isolation) is the default, but you may
+   batch similar/related work into one window, or pick sequence vs. parallel, to optimize context
+   usage. Pin disjoint files for anything concurrent + the chosen Option; state the scope bound.
+   → *Dispatch + verify.*
+   *Gate:* no edit begins until the plan is approved and the scope bound is stated; **anything
+   concurrent touches disjoint files.**
+4. **Verify the landing.** On return, read the diff yourself (`git diff` / grep / targeted reads).
+   The worker's report is a claim, not evidence. → *Dispatch + verify.*
+   *Gate:* you do **not** proceed on the worker's word — an unread diff is not a verified one.
+5. **Adjudicate the notes.** Read the Implementer notes; ACCEPT each (→ brain / follow-up work-order)
+   or REJECT (one-line reason). Out-of-scope footprint = defect → revert. → *Dispatch + verify.*
+   *Gate:* every note is routed before you continue.
+6. **Commit.** Commit the verified work; record the sha.
+   *Gate:* **nothing is committed before steps 4–5 pass** — no commit of an unverified or
+   un-adjudicated landing.
+7. **Update INDEX + maintain the brain.** Move the item open→resolved (with sha); upsert/reconcile,
+   write a decision page on any non-trivial choice, run `brain_lint`, reflection-pass the
+   forward-positive invariant. → *INDEX lifecycle · Brain stewardship.*
+   *Gate:* the INDEX is honest and `brain_lint` is clean before you move on.
+8. **Next.** Take the next confirmed work-order; refresh the *Operator next-steps recommendation*.
+   *Gate:* never advance with an unverified diff, an unadjudicated note, an uncommitted landing, or an
+   un-maintained brain.
+
 ## The lifecycle you follow
 
 Work moves through generic, project-declared stages — name them in the handoff

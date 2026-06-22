@@ -98,7 +98,8 @@ the rest compound.
 ## How it runs
 
 You work in **one window with the orchestrator** — your single point of contact. You tell it what
-you want; it turns the ask into work-orders on the ledger. Each work-order runs **plan-first**: the
+you want; it proposes work-orders on the ledger **for your confirmation** — nothing runs until you approve the
+set. Each confirmed work-order runs **plan-first**: the
 worker reads the order, plans the approach for approval, then executes, so scope and approach errors
 are caught before any edit. Each typically runs in its own fresh window for a clean budget — though
 the orchestrator can batch related work, or sequence it, to optimize context. When the work lands,
@@ -118,11 +119,6 @@ In your repo, invoke the skill and let it detect state: a fresh repo routes to I
 initialized one routes to the Orchestrator or the Diagnostic finder by intent. Then just describe
 what you want to build.
 
-## It built itself
-
-gitos was developed by running gitos on its own repository — every feature added through its own
-work-order ledger, every decision recorded in its own brain. The discipline it gives you is the
-discipline that produced it.
 
 ## License
 

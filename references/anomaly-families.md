@@ -200,7 +200,7 @@ What to look for:
   they're supposed to.
 - "This branch should never run" code that occasionally runs.
 - Dormant-mode logic for entities that should be inactive (e.g., disabled
-  feature flags, suspended users).
+  tickers, suspended users).
 
 **Domain adaptations:**
 - IoT/telemetry: `enabled=false` devices should skip sampling entirely;
