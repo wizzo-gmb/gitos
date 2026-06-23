@@ -18,6 +18,26 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v8 — 2026-06-23
+breaking: no
+
+Implementer is operator-enterable (WO-020). The implementer role was modeled as **dispatch-only**
+("never entered, never invoked by user phrasing"), but the canonical workflow opens a *fresh window
+on one work-order* and says "implement this" — which `SKILL.md`'s intent-routing fell through to the
+**orchestrator**, so the agent assumed it drove the ledger. v8 reframes the implementer as entered on
+**one work-order** — by orchestrator dispatch OR by an operator pointing a fresh window at it — and
+adds the routing + signage to land there:
+- `SKILL.md` First-action gains an **implementer-entry branch** ("implement/do THIS work-order" →
+  Implementer: read that WO + plan-first, **not** the full orchestrator bootstrap); the role table and
+  the "four-role" framing shift from "operator-entry / dispatched" to **repo-entry / work-order-entry**.
+- `references/work-order-template.md` gains a **role-pointer banner** at the top of every WO file
+  (opened to do the work → you are the Implementer; plan-first; scope = `## Proposed fix scope`).
+- `references/roles/implementer.md` + `references/agent-system.md` reframe "dispatched, not entered"
+  → "entered on a work-order, not on the repo" (dispatch or operator-pointed; same boundary).
+Additive: the dispatch path and the implementer's scope boundary are unchanged — it only adds the
+operator-direct entry the workflow already used. Downstream repos adopt on upgrade (new WO files carry
+the banner; the routing fix covers WOs already on disk).
+
 ## v7 — 2026-06-22
 breaking: no
 

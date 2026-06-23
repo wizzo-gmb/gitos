@@ -21,7 +21,7 @@ description: >-
 
 # GitOS
 
-A project operating-system skill. It bootstraps and runs a four-role agent system (three operator-entry roles + a dispatched implementer)
+A project operating-system skill. It bootstraps and runs a four-role agent system (three repo-entry roles + an implementer entered on a single work-order)
 on any repo, backed by a per-repo **brain** (the orchestrator's memory). SKILL.md is
 the **router**: it tells you what mode you're in and which reference to open. All the
 detail lives in `references/` — keep this file lean and follow the pointers.
@@ -33,7 +33,7 @@ detail lives in `references/` — keep this file lean and follow the pointers.
 | **Inception** | The repo has no pipeline yet — first-time setup | `references/roles/inception.md` |
 | **Orchestrator** | A pipeline exists; you're building / driving / deciding *with* the user | `references/roles/orchestrator.md` |
 | **Diagnostic** | You're investigating read-only — auditing, finding bugs, cataloging anomalies | `references/roles/diagnostic.md` |
-| **Implementer** | *Dispatched, not entered* — the orchestrator hands you one work-order to land | `references/roles/implementer.md` |
+| **Implementer** | You're handed **one work-order** to land — by an orchestrator dispatch *or* by the operator pointing a fresh window at that WO ("implement this", "do `wo_046`") | `references/roles/implementer.md` |
 
 The **brain** (`.gitos/brain/`) is the orchestrator's long-term memory — a
 self-contained knowledge vault of typed, cross-linked pages (sources / entities /
@@ -59,8 +59,10 @@ digraph route {
   inception -> brain -> handoff -> orchestrator;
   detect -> intent      [label="yes — read INDEX + handoff + brain/wiki/index"];
   intent [shape=diamond, label="user intent?"];
+  implementer [shape=box];
   intent -> orchestrator [label="build / drive / plan / 'what next'"];
   intent -> diagnostic   [label="audit / find bugs / investigate"];
+  intent -> implementer  [label="\"implement / do THIS work-order\" (pointed at one WO)"];
   orchestrator -> diagnostic [label="invoke read-only finder for evidence"];
   diagnostic -> orchestrator [label="return work-orders"];
   orchestrator -> implementers [label="dispatch + verify"];
@@ -82,6 +84,14 @@ Detection procedure (deterministic, in order):
 On an initialized repo, before acting, read `<home>/INDEX.md` (work state),
 `<home>/handoff.md` (the birth record, once), and — if a brain exists —
 `<home>/brain/wiki/index.md` (knowledge state). Then route on intent.
+
+**Implementer entry — the common "fresh window on a work-order" case.** If the operator points you
+at *one specific work-order to execute it* ("implement `wo_046`", "do this WO", a new window opened on
+a single work-order file), you are the **Implementer**, not the orchestrator. Do **not** bootstrap the
+full orchestrator context or assume you drive the ledger — read **that work-order in full** (plus any
+brain page it cites), **plan first → then execute**, edit **only** its `## Proposed fix scope`, and
+fill its `## Implementer notes`. The orchestrator is the *persistent* window that coordinates; an
+implementer window lands one order and returns. Full brief: `references/roles/implementer.md`.
 
 ## Role: Inception (one-time)
 

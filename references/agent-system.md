@@ -1,6 +1,6 @@
 # Agent System — One-Page Map
 
-A concise reference for how the four roles (three operator-entry + one dispatched) and the brain relate. Read this if the
+A concise reference for how the four roles (three repo-entry + an implementer entered on one work-order) and the brain relate. Read this if the
 picture isn't clear after skimming `SKILL.md`. For operating instructions, open the
 role briefs listed at the bottom.
 
@@ -47,13 +47,14 @@ Investigates without editing. Three phases:
 The Diagnostic never edits source code or configuration. All fixes flow through
 work-orders dispatched by the Orchestrator.
 
-### The dispatched implementer (not an entry role)
+### The implementer (entered on a work-order, not on the repo)
 
-The three roles above are **operator-entry** — reached by state detection + user intent. The
-**implementer** is the fourth, **dispatched** role: the orchestrator hands it one work-order, it
-edits only what that work-order's Proposed fix scope names, fills its Implementer notes, and
-returns. It is ephemeral, has no resumable session, and is never invoked by user phrasing. Full
-brief: `references/roles/implementer.md`.
+The three roles above are **repo-entry** — reached by state detection + user intent on the *repo*.
+The **implementer** is the fourth role, entered on a single **work-order**: the orchestrator
+dispatches it, **or** the operator points a fresh window at one work-order ("implement this", "do
+`wo_046`"). Either way it reads that work-order in full, **plans first**, edits only what its
+Proposed fix scope names, fills its Implementer notes, and returns — it lands one order, never drives
+the ledger. It holds no long-term state between orders. Full brief: `references/roles/implementer.md`.
 
 ---
 
@@ -84,8 +85,9 @@ If the repo is already initialized and the intent is build/drive, it's the
 Orchestrator — even if the user says "start over" or "what's left". Detection always
 runs first; see `SKILL.md §First action`.
 
-The **implementer** has no row here — it is **dispatched** by the orchestrator to land a
-single work-order, never invoked by user phrasing. See `references/roles/implementer.md`.
+The **implementer** is entered differently — on a single **work-order**, not on the repo: the
+orchestrator dispatches it, **or** the operator points a fresh window at one work-order ("implement
+`wo_046`"). It lands that order and returns. See `references/roles/implementer.md`.
 
 ---
 
@@ -118,5 +120,5 @@ page. Full invariant statements: `references/brain-schema.md §6`.
 | Inception | `references/roles/inception.md` |
 | Orchestrator | `references/roles/orchestrator.md` |
 | Diagnostic | `references/roles/diagnostic.md` |
-| Implementer (dispatched) | `references/roles/implementer.md` |
+| Implementer (work-order entry) | `references/roles/implementer.md` |
 | Brain schema + maintenance loop | `references/brain-schema.md` |

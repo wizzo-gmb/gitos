@@ -11,6 +11,12 @@ words describing the bug (e.g., `state-resets-on-restart`, `tenant-id-frozen-to-
 ```markdown
 # Bug <NNN> — <Short Title>
 
+> **▶ Role on direct open.** Opened this work-order in a fresh window to *do the work* (or were
+> dispatched to it)? You are the **Implementer** (`references/roles/implementer.md`), **not** the
+> orchestrator: read this WO in full, **plan first → then execute**, edit **only** what
+> `## Proposed fix scope` names, and fill `## Implementer notes` on completion. Driving the whole
+> repo / deciding what's next instead? That's the orchestrator — `references/roles/orchestrator.md`.
+
 ## Severity
 critical | high | medium | low | unconfirmed
 
