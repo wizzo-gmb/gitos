@@ -55,7 +55,10 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
 
 2. **Intake → propose work-orders.** Decompose the ask into *proposed* ledger entries (Objective +
    Part-0 probe + Acceptance), in disjoint units. **You propose; the operator confirms the set before
-   any become active or get dispatched** — the brake on runaway work-order creation.
+   any become active or get dispatched** — the brake on runaway work-order creation. Watch for a
+   newly-grown **diagnostic fork** (a project-local `.claude/skills/*` debug/triage skill, a repo-root
+   `*_AGENT_BRIEF.md`, or a stray duplicate `diagnostic_agent.md`/`debug_agent.md`) and propose a
+   **migrate-then-retire** work-order per the no-fork directive in `references/roles/diagnostic.md`.
    → *Authoring work-orders · Prioritization policy.*
    *Gate:* **no work-order is created, activated, or dispatched without explicit operator confirmation.**
 3. **Dispatch, plan-first.** Plan every work-order for approval before it executes. **You choose the

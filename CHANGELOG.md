@@ -18,6 +18,21 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v7 — 2026-06-22
+breaking: no
+
+No-fork directive for the diagnostic role (WO-017). `references/roles/diagnostic.md` gains a
+**"Don't fork this role"** discipline rule (echoed in the Role-boundary "You DO NOT" column): the
+diagnostic role is owned by the engine brief + the repo's profile `prompts/diagnostic_agent.md` (Custom
+repos) + an optional in-home `<home>/DIAGNOSTIC_AGENT_BRIEF.md`, and must **not** be re-implemented
+outside those homes — not as a project-local `.claude/skills/*` debug/triage skill, a repo-root
+`*_AGENT_BRIEF.md`, or a stray duplicate `diagnostic_agent.md`/`debug_agent.md` that splits the role's
+source of truth. When a fork exists, **migrate its durable knowledge into the profile/brain FIRST, then
+retire it** (reversible via a branch); never delete load-bearing contracts before they are migrated.
+`references/roles/orchestrator.md` gains a one-line intake watch that opens a migrate-then-retire
+work-order when a fork is spotted. Additive — no existing directive/contract is removed, and a repo that
+already doesn't fork is a no-op (WO-013's repos already comply). Promotes WO-013's spawned consideration.
+
 ## v6 — 2026-06-22
 breaking: no
 

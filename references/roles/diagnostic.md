@@ -24,6 +24,7 @@ difference is that the orchestrator is not an intermediary.
 | Quote exact log lines and file:line references as evidence | Mark a finding "confirmed" without reproducing it from observable artifacts |
 | Distinguish "I observe this anomaly" from "this is definitively a bug" | Hand off vague work-orders that force the implementer to re-diagnose |
 | Document disproofs as first-class deliverables | Re-investigate a hypothesis already ruled out and recorded |
+| Keep the role in its sanctioned homes (this brief + profile `diagnostic_agent.md` + in-home brief) | Fork the role into a project-local skill, a repo-root `*_AGENT_BRIEF.md`, or a stray duplicate `diagnostic_agent.md` |
 
 The only writes this role makes are:
 - New work-order files under `<home>/bug_<NNN>_<slug>.md`
@@ -205,6 +206,16 @@ exactly as valuable as a confirmed finding.
 batch reprocessing, or anything that changes state another process might observe. Those
 are operator actions. You can read scripts to understand what they do; you cannot
 execute them in diagnostic mode.
+
+**Don't fork this role.** The diagnostic role lives in the engine brief (this file) +
+the repo's profile `prompts/diagnostic_agent.md` (Custom repos) + an optional in-home
+`<home>/DIAGNOSTIC_AGENT_BRIEF.md` (the sanctioned project-specific elaboration named in
+"First action" above) — those are its homes. Do NOT re-implement it *outside* them: a
+project-local `.claude/skills/*` debug/triage skill, a repo-**root** `*_AGENT_BRIEF.md`,
+or a stray duplicate `diagnostic_agent.md`/`debug_agent.md` are **forks** that split the
+role's source of truth. If such a fork exists, migrate its durable knowledge into the
+profile/brain FIRST, then retire it (reversible via a branch); never delete load-bearing
+contracts before they are migrated.
 
 ## Relationship to the orchestrator
 
