@@ -119,6 +119,20 @@ In your repo, invoke the skill and let it detect state: a fresh repo routes to I
 initialized one routes to the Orchestrator or the Diagnostic finder by intent. Then just describe
 what you want to build.
 
+## Commands
+
+`/gitos` detects the repo's state and routes automatically — or you can name the mode:
+
+```text
+/gitos                 detect state + route (Inception on a fresh repo; else by intent)
+/gitos orchestrator    resume the Orchestrator — drive the project, dispatch + verify work
+/gitos upgrade         adopt the latest engine directives (idempotent; a no-op if already current)
+/gitos diagnostic      a read-only audit pass → evidence-first work-orders
+```
+
+To run a single work-order, point a fresh window at it — *"implement `wo_046`"*. That lands as the
+**Implementer**, scoped to that one order (plan-first), not the orchestrator.
+
 
 ## License
 
