@@ -18,6 +18,26 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v9 — 2026-06-25
+breaking: no
+
+Post-landing revision loop (WO-021). A landed work-order had a channel *up* — **Implementer notes**
+(implementer → orchestrator) — but none *back down* for the common case the operator flagged: a WO
+lands, the operator verifies it, and wants a small change. With no in-WO place for that, a tweak meant
+an out-of-band ask or a near-duplicate WO. v9 adds the return path, additively:
+- `references/work-order-template.md` gains a **`## Revisions (post-landing)`** section: after a WO
+  lands and the operator verifies it, the **orchestrator** writes the requested change as a scoped
+  item, the **implementer** handles it on a re-dispatch (a fresh window on the same WO) and records the
+  result — repeat per round until satisfied. A genuinely new direction stays a follow-up work-order,
+  not a revision (the bloat guard).
+- `references/roles/orchestrator.md` work-loop step 4 becomes **"verify → accept or revise"**: on
+  revise, write the change into the WO's Revisions section and re-dispatch; don't resolve a WO the
+  operator hasn't accepted.
+- `references/roles/implementer.md` lifecycle step 1: on entry, **open `## Revisions` are your scope
+  for this round** (else the Proposed fix scope is).
+Additive — turns a landed WO into an iterable artifact (land → verify → revise → re-land) without a new
+work-order for every tweak. Downstream adopts on upgrade (new WO files carry the section).
+
 ## v8 — 2026-06-23
 breaking: no
 

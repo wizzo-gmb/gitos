@@ -117,6 +117,19 @@ and acts on them.
   NOT fix it here).
 
 "Nothing notable" is a valid and useful answer.]
+
+## Revisions (post-landing — the verify→revise loop)
+
+[Empty when this work-order is authored. After it lands and the operator verifies it, requested
+changes go HERE — not into a new work-order. The **orchestrator** writes the operator's ask as a
+scoped change; the **implementer** handles it on a re-dispatch (a fresh window on this WO) and records
+the result. Repeat per round until the operator is satisfied, then the orchestrator resolves the WO.
+A genuinely *new* direction (not a tweak to this landing) is a follow-up work-order via Implementer
+notes, not a revision. Format per round:]
+
+### Revision 1 — <date>
+- **Requested (orchestrator):** <the operator's change, scoped — same boundary as Proposed fix scope>
+- **Done (implementer):** <what changed + any notes; left blank until handled>
 ```
 
 ---

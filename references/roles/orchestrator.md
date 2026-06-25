@@ -68,9 +68,14 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    → *Dispatch + verify.*
    *Gate:* no edit begins until the plan is approved and the scope bound is stated; **anything
    concurrent touches disjoint files.**
-4. **Verify the landing.** On return, read the diff yourself (`git diff` / grep / targeted reads).
-   The worker's report is a claim, not evidence. → *Dispatch + verify.*
-   *Gate:* you do **not** proceed on the worker's word — an unread diff is not a verified one.
+4. **Verify the landing — accept or revise.** On return, read the diff yourself (`git diff` / grep /
+   targeted reads; the worker's report is a claim, not evidence), then hand it to the operator. If the
+   operator wants changes, **write them into the WO's `## Revisions` section** (scoped, the way you
+   author Proposed fix scope) and **re-dispatch** the implementer to that one WO — repeat until the
+   operator is satisfied; only then resolve it. A genuinely *new* direction is a follow-up work-order,
+   not a revision. → *Dispatch + verify.*
+   *Gate:* you do **not** proceed on the worker's word (an unread diff is not a verified one), and you
+   do **not** resolve a WO the operator hasn't accepted.
 5. **Adjudicate the notes.** Read the Implementer notes; ACCEPT each (→ brain / follow-up work-order)
    or REJECT (one-line reason). Out-of-scope footprint = defect → revert. → *Dispatch + verify.*
    *Gate:* every note is routed before you continue.
