@@ -56,6 +56,11 @@ dispatches it, **or** the operator points a fresh window at one work-order ("imp
 Proposed fix scope names, fills its Implementer notes, and returns — it lands one order, never drives
 the ledger. It holds no long-term state between orders. Full brief: `references/roles/implementer.md`.
 
+**Lenses are not a fifth role.** Operator-imported specialist prompts (under `<home>/agents/`, per
+`references/agent-import.md`) are **cross-role injected context** — read on demand by whatever role is
+active and folded in within that role's boundary, never dispatched or entered. They steer *how* a role
+approaches a domain; they are not an agent themselves.
+
 ---
 
 ## Bridge Diagram

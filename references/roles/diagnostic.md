@@ -52,6 +52,10 @@ on prior work rather than contradict it silently.
    `~/.claude/projects/<project-dir>/memory/diagnostic_role_brief.md` or
    `gitos_role_brief.md` — it may point at additional context or name the
    default role to resume.
+5. **Check for lenses.** If `<home>/agents/index.md` lists a lens whose `domain` /
+   `when-to-apply` matches your current work, read it and apply its guidance **within this
+   role's boundary** (see SKILL.md → *Lenses*). A lens may inform **how** you investigate;
+   it never authorizes an edit — the diagnostic role stays read-only.
 
 If none of the above exists, this is a first-time setup. Scaffold the debug structure
 via `scripts/scaffold.py <PROJECT_ROOT>` — confirm the detected root and log paths with

@@ -355,6 +355,18 @@ def main() -> int:
             print(f"OK   wrote {repo_lint.relative_to(root)}")
         print("OK   brain laid (page templates live in the skill: assets/brain/pages/)")
 
+    # ---- agents (operator-imported steering lenses) -----------------------
+    # The four roles apply on-demand "lens" context (read-on-demand approach context, NOT
+    # the brain's facts). <home>/agents/index.md is the registry, empty until the first
+    # `/gitos agent import`. Lands for full-role scaffolds (independent of --brain, since
+    # lenses are not brain pages). write_if_missing keeps it idempotent and never clobbers
+    # an operator's populated registry — the dir is created via the index.md parent.
+    if not diagnostic_only:
+        agents = home / "agents"
+        report(write_if_missing(agents / "index.md",
+                                render(read_template("agents/index.md.tmpl"), **tokens)),
+               agents / "index.md", root)
+
     # ---- memory pointer ---------------------------------------------------
     memory_dir = Path.home() / ".claude" / "projects" / project_memory_dirname(root) / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)

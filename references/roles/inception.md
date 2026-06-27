@@ -16,6 +16,10 @@ Ask these in a single pass, conversationally (not as a numbered form). Adapt the
 wording to the user's domain and vocabulary. Every answer feeds the handoff and seeds
 the brain — collect them before running the scaffold.
 
+> **Note — lenses.** Operator-imported **lenses** (if any) live in `<home>/agents/` and are applied
+> by all roles when their `domain` / `when-to-apply` matches (see SKILL.md → *Lenses*); inception
+> itself does not author lenses.
+
 1. **Project identity.** What is this repo? Domain, stage, and the one-sentence
    description of what it does or what problem it solves.
 

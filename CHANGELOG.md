@@ -18,6 +18,22 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v11 — 2026-06-27
+breaking: no
+
+Steering lenses (WO-023). Operators can import their own specialist prompts as domain-tagged **lenses**
+(`/gitos agent import <path>`), stored under `<home>/agents/` and catalogued in `<home>/agents/index.md`.
+Any of the four roles reads a lens whose domain matches its current work and folds the guidance in
+**within its role boundary** — injected context, not a dispatched role: a read-only role stays read-only,
+a scoped implementer stays scoped. On import the **orchestrator normalizes** each prompt into the gitos
+idiom (forward-positive framing, role-boundary-aware phrasing, standard vocabulary), preserving the
+operator's domain substance; the operator confirms the reframe (raw prompts are never stored as-is), and a
+`source` field keeps provenance. A new `references/agent-import.md` brief + an `assets/` index template ship
+with the engine; `scripts/scaffold.py` creates the `<home>/agents/` library + registry. Distinct from the
+brain (a lens = how to approach a domain; the brain = the project's facts). Additive — a repo with no lenses
+behaves exactly as before (empty registry = no-op); Custom repos preserve imported lenses across upgrades via
+their BRIDGE PRESERVE set. Downstream adopts on upgrade.
+
 ## v10 — 2026-06-27
 breaking: no
 

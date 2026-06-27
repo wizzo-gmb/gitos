@@ -20,6 +20,10 @@ Bootstrap your state before doing anything:
 3. Read the brain: `<home>/brain/BRAIN.md` + `<home>/brain/wiki/index.md`, then the
    specific pages relevant to today's task. The brain is *why the repo is the way it
    is*; reading it is how you avoid re-deriving what a past session already learned.
+   - **Check for lenses.** Read `<home>/agents/index.md` (the lens registry) so the
+     operator-imported lenses available this session are known up front. If a lens's
+     `domain` / `when-to-apply` matches your current work, read it and apply its guidance
+     **within this role's boundary** (see SKILL.md → *Lenses*).
 4. **Engine drift check.** Compare the skill's `ENGINE_VERSION`
    (`~/.claude/skills/gitos/VERSION`) to this repo's stamped `engine_version`
    (`<home>/brain/.brainmeta.json`, or `<home>/handoff.md` for a repo without a brain). If
@@ -49,6 +53,9 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
 
 1. **Bootstrap.** Load state — handoff (once), `INDEX.md`, brain, engine-drift check, ensure-git.
    → *First action.*
+   - **Check for lenses.** If `<home>/agents/index.md` lists a lens whose `domain` /
+     `when-to-apply` matches your current work, read it and apply its guidance **within this
+     role's boundary** (see SKILL.md → *Lenses*).
    *Gate:* you've read the ledger and the relevant brain pages **before** acting.
 
 **Per work-order — repeat until the operator's ask is satisfied**

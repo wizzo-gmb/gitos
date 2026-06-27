@@ -170,6 +170,24 @@ which owns SYNC / PRESERVE / MERGE and then finishes via the same steps. A repo 
 Custom but has no bridge **halts** — see `references/bridge.md` for the BRIDGE contract and
 the `_meta.bridge` pointer convention.
 
+## Lenses (operator-imported steering)
+
+A repo may carry operator-imported **lenses** in `<home>/agents/` (default `.gitos/agents/`) —
+domain-tagged specialist context the operator brought in (a math lens, a niche-research lens, …),
+catalogued in `<home>/agents/index.md`. A lens is **injected context, not a dispatched role**:
+whatever role you are in, when your current work matches a lens's `domain` / `when-to-apply`, read that
+lens and fold its guidance into your work — **within your role's boundary**. A lens changes how you
+*think* about a domain; it never changes what your role is *allowed to do* (a read-only role stays
+read-only; a scoped implementer stays scoped). Lenses are operator-authored *approach* — distinct from
+the brain, which holds the project's *facts*.
+
+Manage them via `references/agent-import.md`:
+- `/gitos agent import <path>` — import a prompt as a lens. The **orchestrator normalizes** it into the
+  gitos idiom before storing (forward-positive framing, role-boundary-aware phrasing, standard
+  vocabulary), preserving the operator's domain substance; the operator confirms the reframe. Raw
+  prompts are never stored as-is.
+- `/gitos agent list` — print the lens registry.
+
 ## When the user authorizes fixes / implementers
 
 On "fix bug NNN" or "launch agents for these fixes": dispatch implementer agents,
@@ -198,6 +216,7 @@ it with a one-line reason.
 - `references/profiles.md` — how a downstream product layers a domain profile on top of the engine.
 - `references/upgrade.md` — the canonical `upgrade` procedure (adopt the latest engine directives).
 - `references/bridge.md` — the BRIDGE contract: how a Custom (profiled) repo wraps `upgrade` (SYNC / PRESERVE / MERGE).
+- `references/agent-import.md` — the `agent import` / `agent list` procedure (import + normalize operator lenses into `<home>/agents/`).
 - `references/disciplines.md` — the transferable engineering disciplines (the war-stories, with the why).
 - `references/glossary.md` — terminology (domain-agnostic).
 - `scripts/scaffold.py` — lays the `.gitos/` tree + brain (idempotent).

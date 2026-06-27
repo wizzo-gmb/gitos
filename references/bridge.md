@@ -54,8 +54,10 @@ canonical worked example.
    `scripts/brain_lint.py` (byte-copy).
 2. **PRESERVE** — the files the BRIDGE must never overwrite, re-sync, or reformat: the domain
    profile and this project's state. *Finance example:* the deployment contract + gate posture
-   + finance anomaly families (profile), and the filled handoff, brain pages, `INDEX.md`, and
-   the work-order ledger (`work-orders/`, `resolved/`) (state).
+   + finance anomaly families (profile), and the filled handoff, brain pages, `INDEX.md`, the
+   work-order ledger (`work-orders/`, `resolved/`), and the operator's imported lens library +
+   registry (`<home>/agents/`, `<home>/agents/index.md`) (state) — so an engine re-sync never
+   clobbers imported lenses.
 3. **MERGE** — the files that are part profile, part shared engine scaffolding, refreshed
    surgically: keep the bespoke profile content, refresh only the shared engine scaffolding,
    and diff before/after to confirm the profile content survived. *Finance example:* the one

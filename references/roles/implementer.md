@@ -28,6 +28,10 @@ touch the ledger — you land one order, not drive the project.)
    scope** (your contract) and any pinned Option. **If the WO has open `## Revisions`** (post-landing
    operator changes the orchestrator recorded), *those* are your scope for this round — handle them and
    write the result under the revision; otherwise the Proposed fix scope is your scope.
+   **Check for lenses:** if `<home>/agents/index.md` lists a lens whose `domain` / `when-to-apply`
+   matches this work-order, read it and apply its guidance **within this role's boundary**
+   (see SKILL.md → *Lenses*). A lens may inform **how** you edit; it never widens scope beyond the
+   work-order's Proposed fix scope.
 2. **Edit only what the Proposed fix scope names.** Different sections of one named file is fine;
    files the work-order did not name are not — even an "obvious" adjacent fix.
 3. **Fill the work-order's Implementer notes** on completion — deviations, surprises, durable
