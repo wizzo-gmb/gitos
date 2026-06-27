@@ -158,7 +158,8 @@ out). Detail: `references/roles/inception.md`.
 
 When the user says **"upgrade this repo's engine"**, **"update the gitos directive"**, or
 runs the `upgrade` command, route to `references/upgrade.md`. It is the single, canonical
-upgrade procedure: detect the repo's home + stamped `engine_version`, live-read the skill's
+upgrade procedure: detect the repo's home + stamped `engine_version`, **offer to `git pull` the installed
+engine first if it's a git clone** (so the latest is what gets applied), live-read the skill's
 `VERSION`, and — if the skill is ahead — direct the orchestrator to adopt the latest
 directives, re-point stale pointers, stamp the new version, and record an ADR. It changes
 the *directive*, never the folder layout, and is idempotent (no upstream change → no-op).

@@ -101,10 +101,25 @@ Resolve `<home>` by the standard detection order (`.gitos/` → `.pipeline/` →
 `<home>/brain/.brainmeta.json` (`engine_version` field) — or, for a general repo without
 a brain, from `<home>/handoff.md`. A repo with no stamp is treated as version `0`.
 
-**2. Live-read the installed engine.**
-Read `~/.claude/skills/gitos/VERSION` (the current `ENGINE_VERSION`) and the canonical
-brief (`~/.claude/skills/gitos/SKILL.md` + the role briefs under
-`~/.claude/skills/gitos/references/`).
+**2. Refresh + live-read the installed engine.**
+First, **offer to pull the latest engine from its remote.** If the installed skill is a git clone
+— `~/.claude/skills/gitos/.git` exists (a dir or a file) — a newer engine may be available upstream
+that this install hasn't fetched. **Report intent, then ask the operator** before running anything
+(never auto-pull):
+
+> "Your installed gitos engine is a git clone. Pull the latest from its remote before I upgrade this
+> repo? — `git -C ~/.claude/skills/gitos pull`. (Recommended — otherwise I upgrade against the engine
+> exactly as installed.)"
+
+On **yes**: run `git -C ~/.claude/skills/gitos pull` and report the result (the `VERSION` delta, or
+"already up to date"). If the pull brought a newer engine, note that a **session reload** is what
+makes the *agent* load the new skill — but the steps below still adopt the latest by reading the
+refreshed files from disk, so the per-repo upgrade applies either way. On **no** — or if
+`~/.claude/skills/gitos/` is **not** a git clone (a copied install: nothing to pull; updating means
+re-cloning / re-copying, see the README's *Updating*) — skip the pull and proceed.
+
+Then read `~/.claude/skills/gitos/VERSION` (the current `ENGINE_VERSION`) and the canonical brief
+(`~/.claude/skills/gitos/SKILL.md` + the role briefs under `~/.claude/skills/gitos/references/`).
 
 **3. If already current → stop (idempotent).**
 If the repo's stamp equals the skill's `ENGINE_VERSION`, report **"engine up to date

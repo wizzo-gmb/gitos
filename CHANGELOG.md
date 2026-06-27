@@ -18,6 +18,21 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v10 — 2026-06-27
+breaking: no
+
+`upgrade` offers to pull the latest engine first (WO-022). `/gitos upgrade` reconciles a repo against
+the **installed** engine (`~/.claude/skills/gitos/`), not GitHub — so a public user on a git-clone
+install had to `git pull` the engine by hand before upgrading, and a bare `/gitos upgrade` would
+no-op ("did it upgrade?"). v10 closes that: `references/upgrade.md` step 2 ("live-read the installed
+engine") becomes **"refresh + live-read"** — if `~/.claude/skills/gitos/` is a git clone, the
+procedure **reports intent and asks the operator** to `git -C ~/.claude/skills/gitos pull` before
+reading the VERSION/briefs (never auto-pulls; notes that a session reload is what reloads the agent;
+on "no" or a non-clone copied install it skips and upgrades as-installed). `SKILL.md`'s upgrade blurb
+gains the same one-line note. Additive — the reconcile steps are unchanged; it front-loads an optional
+engine refresh so "upgrade" can fetch-then-apply in one prompt. (Pairs with the README install moving
+to a direct clone + an *Updating* section.)
+
 ## v9 — 2026-06-25
 breaking: no
 

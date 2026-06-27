@@ -110,14 +110,32 @@ happen elsewhere.
 
 ## Install
 
+Clone it straight into your skills directory so updates are a simple `git pull`:
+
 ```bash
-git clone https://github.com/wizzo-gmb/gitos.git
-cp -r gitos ~/.claude/skills/gitos     # or your platform's skills directory
+git clone https://github.com/wizzo-gmb/gitos.git ~/.claude/skills/gitos
 ```
+
+(Prefer to clone elsewhere? Copy the contents into `~/.claude/skills/gitos` instead — then
+*Updating* below means re-copying rather than `git pull`.)
 
 In your repo, invoke the skill and let it detect state: a fresh repo routes to Inception; an
 initialized one routes to the Orchestrator or the Diagnostic finder by intent. Then just describe
 what you want to build.
+
+## Updating
+
+The **engine** and a **repo's adoption** of it are two layers:
+
+```bash
+cd ~/.claude/skills/gitos && git pull     # 1. update the installed engine (git-clone installs)
+/gitos upgrade                            # 2. per repo, adopt the new directives
+```
+
+`/gitos upgrade` reconciles *that repo* against the **installed** engine — and if your install is a
+git clone, it **offers to `git pull` the latest for you first**, so step 1 can happen inside the
+command. (A bare `/gitos upgrade` with no newer engine installed is a safe no-op.) After a pull,
+reload your editor so the agent loads the new skill.
 
 ## Commands
 
