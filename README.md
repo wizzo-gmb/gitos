@@ -146,10 +146,18 @@ reload your editor so the agent loads the new skill.
 /gitos orchestrator    resume the Orchestrator — drive the project, dispatch + verify work
 /gitos upgrade         adopt the latest engine directives (idempotent; a no-op if already current)
 /gitos diagnostic      a read-only audit pass → evidence-first work-orders
+/gitos agent import    import your own specialist prompt as a domain-tagged "lens"
+/gitos agent list      list the lenses you've imported (the registry)
 ```
 
 To run a single work-order, point a fresh window at it — *"implement `wo_046`"*. That lands as the
 **Implementer**, scoped to that one order (plan-first), not the orchestrator.
+
+**Lenses** (`/gitos agent import`) bring your own specialist prompts — a math lens, a niche-research
+lens — into the engine. Each becomes a domain-tagged module any of the four roles reads and folds into
+its work when the domain matches, *within that role's boundary* (a read-only role stays read-only). On
+import the orchestrator normalizes your prompt into the engine's voice and you confirm the result, so
+imported steering reads like the rest of gitos. It's injected context, not a fifth role.
 
 
 ## License
