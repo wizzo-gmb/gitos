@@ -181,6 +181,15 @@ lens and fold its guidance into your work — **within your role's boundary**. A
 read-only; a scoped implementer stays scoped). Lenses are operator-authored *approach* — distinct from
 the brain, which holds the project's *facts*.
 
+Lenses resolve from **two layers**: the repo's own `<home>/agents/` and the operator's **global lens
+library** at `<skill>/agents/` — the installed skill's own `agents/` directory (registry
+`<skill>/agents/index.md`), whose lenses are available in *every* repo the skill runs on with no
+per-repo copying. Check both registries; on a name collision the repo's lens wins (more specific). The
+same boundary rules govern both layers. The global library is **operator content**: engine updates
+never ship, overwrite, or delete it. `agent import` writes to **both layers by default** (repo-only /
+global-only on request), and `upgrade` **refreshes a repo's lens copies from the global library** —
+report-and-ask, so a deliberate local variant survives by declining.
+
 Manage them via `references/agent-import.md`:
 - `/gitos agent import <path>` — import a prompt as a lens. The **orchestrator normalizes** it into the
   gitos idiom before storing (forward-positive framing, role-boundary-aware phrasing, standard

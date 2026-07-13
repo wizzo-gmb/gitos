@@ -18,6 +18,31 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v13 — 2026-07-02
+breaking: no
+
+Lens distribution model (WO-026; completes v12). `/gitos agent import` now writes each lens to **both
+layers by default** — the current repo's `<home>/agents/` (git-tracked, travels with the repo) *and*
+the global `<skill>/agents/` (the machine-wide distribution hub) — with repo-only / global-only on
+request. `/gitos upgrade` gains a **lens-refresh step**: for each repo lens that also exists globally,
+byte-compare and report-and-ask to refresh the repo copy from the global (a deliberately-forked local
+variant survives by declining — never a silent clobber), then offer any global lens not yet in the
+repo. Read-time collision rule unchanged (repo wins). Scaffolded lens-registry template mentions the
+global layer. Additive — no global library / no repo lenses → the new steps no-op.
+
+## v12 — 2026-07-02
+breaking: no
+
+Global lens library (WO-025). Lenses now resolve from **two layers**: the repo's own `<home>/agents/`
+(v11) plus an operator-maintained **global library** at `<skill>/agents/` — the installed skill's own
+`agents/` directory, catalogued in `<skill>/agents/index.md` — whose lenses apply in *every* repo the
+skill runs on, no per-repo copying. Roles check both registries; on a name collision the repo's lens
+wins (more specific). Same boundary rules on both layers. `/gitos agent import` gains a global
+destination ("import globally"); `list` prints both registries labeled by layer. The global library is
+**operator content**: engine updates never ship, overwrite, or delete it (the dev→live sync's mirror
+mode now explicitly protects `<live>/agents/`). SKILL.md Lenses section + the four role-brief echoes
+extended. Additive — a skill install with no `agents/` behaves exactly as v11.
+
 ## v11 — 2026-06-27
 breaking: no
 

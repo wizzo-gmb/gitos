@@ -138,7 +138,14 @@ Direct the running orchestrator to:
   `~/.claude/skills/gitos/...` and `gitos_role_brief.md`;
 - **copy `brain_lint` into the home if missing** — ensure `<home>/tools/brain_lint.py`
   exists (byte-copy from `~/.claude/skills/gitos/scripts/brain_lint.py`); never clobber an
-  existing copy.
+  existing copy;
+- **refresh lens copies from the global library** — the global `<skill>/agents/` is the
+  machine-wide lens distribution hub (SKILL.md → *Lenses*). For each lens in
+  `<home>/agents/` whose name also exists globally, byte-compare; where they differ,
+  **report-and-ask** to refresh the repo copy from the global (never silently clobber — a
+  deliberately-forked local variant survives by declining). Then offer any global lens
+  *not yet* in the repo as an optional install. Update the repo registry to match what was
+  accepted. No global lenses / no `<home>/agents/` → skip, no-op.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
