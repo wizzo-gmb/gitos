@@ -144,6 +144,72 @@ read-only finder can never be pressured into edits mid-investigation.
 Severity is about *consequence, not certainty*. Don't inflate to get attention; don't
 downgrade to seem reasonable.
 
+## Canary (always-on drift early-warning)
+
+Two cheap sentinels catch AI drift where it accumulates — the home's **state** and the
+window's **context**. This section is the SSOT; the four role briefs carry one-line echoes.
+
+**State canary — `scripts/canary.py`.** Deterministic, read-only, stdlib-only checker for
+the *home state layer* — the surface `brain_lint` (brain), selftest (payload), and
+`path_guard` (publish) don't cover: INDEX ↔ work-order files (stale / orphan / duplicate
+rows), `.brainmeta.json` counts vs on-disk pages + ahead-stamps, lens registries on both
+layers (rows ↔ files, `name` = filename, `applies-to` list-form), link rot in `INDEX.md` +
+open WOs; delegates to `brain_lint` when a brain exists. Exit 0 = CLEAN, 1 = findings.
+No judgment calls, no false-CLEAN (a parse failure is a finding; a skipped check reports
+as skipped); it reports and gates — it never edits (fixing a finding is normal
+orchestrator/implementer work).
+
+```
+python <home>/tools/canary.py <home>      # home copy missing -> <skill>/scripts/canary.py
+```
+
+Strictness: **report at bootstrap, gate at resolution.** The orchestrator runs it at
+first-action and reports one line — `canary: CLEAN`, or the findings first,
+forward-positive (cause + correction: "counts.decisions=16, files=17 → set 17"). Findings
+never block *starting* work; **no work-order is resolved while the canary is red** (the
+gate joins verify-before-commit). Scope is home state only — domain artifacts (outputs,
+data, logs) stay the diagnostic role's judgment territory.
+
+**Context canary — the role marker.** The first line of EVERY reply, in every role:
+
+```
+[gitos · <role> · <focus>]
+```
+
+Lowercase `gitos`, spaced middle dots (`·`), square brackets — one greppable pattern.
+`<focus>` is **stateful: recomputed each reply, never copied forward**:
+
+| Role | `<focus>` |
+|---|---|
+| orchestrator | current WO + work-loop step |
+| implementer | current WO + lifecycle step |
+| diagnostic | current phase (vocabulary / scan / work-orders) |
+| inception | current interview stage (then phase, as inception proceeds) |
+
+Compliance is trivial while the directive layer is intact — so a missing, wrong-role, or
+stale marker is live evidence of context degradation (compaction loss, attention dilution,
+role misroute). Rote copying shows up as staleness (wrong WO / wrong step): itself a
+canary signal.
+
+**Slippage protocol** — on a missing / wrong-role / stale marker, operator-noticed or
+self-noticed:
+1. **Directive reinjection.** Re-read your role brief + this file's routing, re-state your
+   role + current focus, resume marking.
+2. **Second slip in the same window** → recommend a checkpoint (commit state, update
+   `INDEX.md`) and a **fresh window** — the context is degrading; reinjection alone may
+   not restore fidelity.
+
+**Honesty clause.** The slipped agent is the least reliable detector of its own slip; the
+operator's one-glance check of the first line is the primary monitor. The marker is a
+signal, not a guarantee.
+
+The operator may opt out of the marker per repo — record the opt-out; it reduces canary
+coverage to state-only.
+
+**`/gitos canary`** — run both on demand: directive reinjection (re-read role brief +
+routing, re-state role + focus) **and** `canary.py`; report context + state health in one
+block.
+
 ## Scaffolding
 
 ```
@@ -230,3 +296,4 @@ it with a one-line reason.
 - `references/glossary.md` — terminology (domain-agnostic).
 - `scripts/scaffold.py` — lays the `.gitos/` tree + brain (idempotent).
 - `scripts/brain_lint.py` — deterministic brain health/redundancy detector (read-only).
+- `scripts/canary.py` — deterministic home-state canary (read-only; report at bootstrap, gate at resolution).

@@ -132,13 +132,17 @@ Direct the running orchestrator to:
   **implementer-notes accept/reject loop** (have each implementer fill the work-order's
   `## Implementer notes` on completion; on landing, harvest and adjudicate them: ACCEPT —
   route durable facts to the brain, lessons into dispatch, follow-ups into new
-  work-orders — or REJECT with a one-line reason);
+  work-orders — or REJECT with a one-line reason) and the **per-reply canary marker**
+  (open every reply with `[gitos · <role> · <focus>]` — SKILL.md → *Canary*);
 - **re-point any stale role pointers** — if a role pointer or the memory pointer still
   names an old skill path or the legacy `project_flow_role_brief.md`, repoint it to
   `~/.claude/skills/gitos/...` and `gitos_role_brief.md`;
 - **copy `brain_lint` into the home if missing** — ensure `<home>/tools/brain_lint.py`
   exists (byte-copy from `~/.claude/skills/gitos/scripts/brain_lint.py`); never clobber an
   existing copy;
+- **copy `canary.py` into the home if missing** — ensure `<home>/tools/canary.py` exists
+  (byte-copy from `~/.claude/skills/gitos/scripts/canary.py`); never clobber an existing
+  copy;
 - **refresh lens copies from the global library** — the global `<skill>/agents/` is the
   machine-wide lens distribution hub (SKILL.md → *Lenses*). For each lens in
   `<home>/agents/` whose name also exists globally, byte-compare; where they differ,
@@ -159,8 +163,8 @@ from→to versions, which directives were adopted, and any pointers re-pointed. 
 
 **7. Report.**
 Show the `git diff` of what changed (the re-pointed pointers, the stamp, the ADR, any
-newly-copied `brain_lint`). The folder layout is unchanged — confirm that explicitly in
-the report.
+newly-copied `brain_lint` / `canary`). The folder layout is unchanged — confirm that
+explicitly in the report.
 
 ## What it never does
 

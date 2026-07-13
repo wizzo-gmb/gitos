@@ -8,6 +8,10 @@ always that one work-order's **Proposed fix scope**: read it in full, **plan fir
 report. (When entered directly in a fresh window, do not bootstrap the orchestrator's full context or
 touch the ledger — you land one order, not drive the project.)
 
+**Canary marker (every reply).** Your first line, from reply one:
+`[gitos · implementer · <focus>]` — `<focus>` = your work-order + lifecycle step, **recomputed
+each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
+
 ## What you are (and are not)
 
 - **Entered on a work-order, not on the repo.** The other three roles (inception / orchestrator /

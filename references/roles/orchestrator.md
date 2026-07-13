@@ -8,6 +8,10 @@ you an *orchestrator* is that you keep three things coherent as you go: the **wo
 ledger** (`INDEX.md`), the **memory** (the brain), and the **roles** you delegate to
 (the read-only diagnostic finder, and implementer agents).
 
+**Canary marker (every reply).** Your first line, from reply one:
+`[gitos · orchestrator · <focus>]` — `<focus>` = current WO + work-loop step, **recomputed
+each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
+
 ## First action (every session)
 
 Bootstrap your state before doing anything:
@@ -40,6 +44,11 @@ Bootstrap your state before doing anything:
    that predate the guarantee or lost git, so the `.gitos/` ledger + brain stay a durable
    audit trail. This is an environment action (like the `git diff` you already run to
    verify landings), not a code edit, so it does not violate the no-direct-code-edits rule.
+6. **State canary.** Run `python <home>/tools/canary.py <home>` (home copy missing → run the
+   installed skill's `scripts/canary.py`) and report **one line**: `canary: CLEAN`, or the
+   findings first — forward-positive, cause + correction ("counts.decisions=16, files=17 →
+   set 17"). Findings never block starting work; a red canary does block resolving any
+   work-order (work-loop step 7). SSOT: SKILL.md → *Canary*.
 
 If a memory pointer named the default role as you, this is where you resume.
 
@@ -52,8 +61,8 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
 
 **Once per session**
 
-1. **Bootstrap.** Load state — handoff (once), `INDEX.md`, brain, engine-drift check, ensure-git.
-   → *First action.*
+1. **Bootstrap.** Load state — handoff (once), `INDEX.md`, brain, engine-drift check, ensure-git,
+   state-canary (one-line report). → *First action.*
    - **Check for lenses.** If `<home>/agents/index.md` — or the global library
      `<skill>/agents/index.md` — lists a lens whose `domain` /
      `when-to-apply` matches your current work, read it and apply its guidance **within this
@@ -92,12 +101,14 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    *Gate:* **nothing is committed before steps 4–5 pass** — no commit of an unverified or
    un-adjudicated landing.
 7. **Update INDEX + maintain the brain.** Move the item open→resolved (with sha); upsert/reconcile,
-   write a decision page on any non-trivial choice, run `brain_lint`, reflection-pass the
-   forward-positive invariant. → *INDEX lifecycle · Brain stewardship.*
-   *Gate:* the INDEX is honest and `brain_lint` is clean before you move on.
+   write a decision page on any non-trivial choice, run `brain_lint` + `canary.py`, reflection-pass
+   the forward-positive invariant. → *INDEX lifecycle · Brain stewardship.*
+   *Gate:* the INDEX is honest, `brain_lint` is clean, and **the canary is green** before you move
+   on — no work-order is resolved while the canary is red (fix the finding first — normal work;
+   this gate joins verify-before-commit).
 8. **Next.** Take the next confirmed work-order; refresh the *Operator next-steps recommendation*.
-   *Gate:* never advance with an unverified diff, an unadjudicated note, an uncommitted landing, or an
-   un-maintained brain.
+   *Gate:* never advance with an unverified diff, an unadjudicated note, an uncommitted landing, an
+   un-maintained brain, or a red canary.
 
 ## The lifecycle you follow
 

@@ -355,6 +355,21 @@ def main() -> int:
             print(f"OK   wrote {repo_lint.relative_to(root)}")
         print("OK   brain laid (page templates live in the skill: assets/brain/pages/)")
 
+    # ---- state canary tool --------------------------------------------------
+    # Copy the state-canary tool so `<home>/tools/canary.py` — referenced by SKILL.md
+    # (## Canary) and the orchestrator brief's first-action — exists self-contained in the
+    # home (the brain_lint pattern). NOT brain-gated: the canary checks the ledger, stamps,
+    # lens registries, and links, which exist without a brain (it only *delegates* to
+    # brain_lint when a brain is present). Byte copy (preserve LF); never clobber a copy.
+    if not diagnostic_only:
+        repo_canary = home / "tools" / "canary.py"
+        if repo_canary.exists():
+            print(f"SKIP exists {repo_canary.relative_to(root)}")
+        else:
+            repo_canary.parent.mkdir(parents=True, exist_ok=True)
+            repo_canary.write_bytes((SKILL_DIR / "scripts" / "canary.py").read_bytes())
+            print(f"OK   wrote {repo_canary.relative_to(root)}")
+
     # ---- agents (operator-imported steering lenses) -----------------------
     # The four roles apply on-demand "lens" context (read-on-demand approach context, NOT
     # the brain's facts). <home>/agents/index.md is the registry, empty until the first

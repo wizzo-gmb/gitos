@@ -8,6 +8,10 @@ ONLY.
 Once the orchestrator holds the handoff and the brain is seeded, inception is done —
 the orchestrator is the permanent front-line role from here.
 
+**Canary marker (every reply).** Your first line, from reply one:
+`[gitos · inception · <focus>]` — `<focus>` = the current interview stage (then the phase, as
+inception proceeds), **recomputed each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
+
 ---
 
 ## Phase 1 — The interview (~7 questions, conversational)

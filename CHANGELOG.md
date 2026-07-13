@@ -18,6 +18,33 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v14 — 2026-07-13
+breaking: no
+
+The canary system (WO-027) — cheap, always-on early-warning for the two places AI drift
+accumulates. **State:** new `scripts/canary.py` (payload; stdlib-only, read-only, the
+`brain_lint` invocation/report contract) deterministically checks the *home state layer* none of
+the existing watchers cover — INDEX ↔ work-order files (stale / orphan / duplicate rows),
+`.brainmeta.json` counts vs on-disk pages + ahead-stamps, lens registries on both layers
+(rows ↔ files, `name` = filename, `applies-to` list-form), link rot in `INDEX.md` + open WOs —
+and delegates to `brain_lint` when a brain exists; parse failure = finding, skipped checks report
+as skipped, never false-CLEAN. Exit 0 = CLEAN / 1 = findings (a deliberate divergence from
+`brain_lint`'s reporter semantics: the gate needs red/green). Strictness: **report at bootstrap,
+gate at resolution** — the orchestrator runs it at first-action (one line: `canary: CLEAN`, or
+findings-first, forward-positive) and may not resolve a work-order while it is red (joins
+verify-before-commit). **Context:** `SKILL.md` gains a `## Canary` section (the SSOT) + a
+one-line echo in all four role briefs — every reply opens with the **stateful marker**
+`[gitos · <role> · <focus>]` (recomputed each reply: WO + work-loop/lifecycle step / phase /
+interview stage), so a missing, wrong-role, or stale marker is live evidence of context
+degradation; slippage → directive reinjection, a second slip in the same window → checkpoint +
+fresh window; honesty clause (the slipped agent is the least reliable detector of its own slip —
+the operator's first-line glance is the primary monitor). An operator may opt out per repo
+(reduces coverage to state-only). `/gitos canary` runs both on demand. `scripts/scaffold.py`
+lays `<home>/tools/canary.py` on fresh scaffolds and `upgrade` step 4 copies it into existing
+homes (the `brain_lint` pattern; never clobber); selftest gains gate 9 (seeded clean home
+silent, six seeded defect classes each caught — dev-only). Additive — a repo that ignores the
+marker just has no context canary.
+
 ## v13 — 2026-07-02
 breaking: no
 
