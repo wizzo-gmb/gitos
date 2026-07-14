@@ -5,16 +5,19 @@ payload, path_guard the publish; the canary watches the HOME STATE layer none of
 cover:
 
   - ledger <-> files        (INDEX open/resolved rows vs work-orders/ + resolved/ files,
-                             duplicate NNNs, orphaned WO files)
-  - brainmeta counts        (.brainmeta.json counts.* vs on-disk wiki page counts)
+                             duplicate NNNs, orphaned WO files, nonconforming *.md filenames)
+  - brainmeta counts        (.brainmeta.json counts.* vs on-disk wiki page counts;
+                             unknown counts.* keys and rogue wiki/ page dirs)
   - engine-version stamp    (a stamp AHEAD of the installed skill VERSION = impossible state)
   - lens registries         (both layers: registry rows <-> lens files, name = filename,
                              required frontmatter keys, applies-to list-form)
   - link rot                (relative markdown links in INDEX.md + open WO files resolve)
   - brain delegation        (if a brain exists, run brain_lint and fold its findings in)
 
-Graceful no-ops: no home / no brain / no lenses -> that check is SKIPPED and reported as
-skipped — never silently CLEAN. A parse failure is a finding, never a skip (no false-CLEAN).
+Graceful no-ops: empty home / no brain / no lenses -> that check is SKIPPED and reported as
+skipped (its own [--] line per sub-check) — never silently CLEAN. A parse failure is a
+finding, never a skip (no false-CLEAN). A NONEXISTENT <HOME> is a usage error (exit 2,
+message on stderr) — the resolution gate must never read a missing home as green.
 The canary reports and gates resolution; it never edits — fixing a finding is normal
 orchestrator/implementer work.
 
@@ -166,21 +169,33 @@ def resolve_skill_dir(arg: str | None) -> Path | None:
 
 
 # --------------------------------------------------------------------------- checks
-def _wo_files(d: Path) -> dict[str, list[str]]:
+def _wo_files(d: Path) -> tuple[dict[str, list[str]], list[str]]:
+    """-> ({NNN: [conforming WO-NNN-<slug>.md names]}, [nonconforming *.md names])."""
     by_nnn: dict[str, list[str]] = {}
+    bad: list[str] = []
     if d.is_dir():
         for f in sorted(d.glob("*.md")):
             m = WO_FILE.match(f.name)
             if m:
                 by_nnn.setdefault(m.group(1), []).append(f.name)
-    return by_nnn
+            else:
+                bad.append(f.name)
+    return by_nnn, bad
 
 
 def check_ledger(home: Path) -> list[dict]:
     items: list[dict] = []
     wo_dir = home / "work-orders"
-    on_root = _wo_files(wo_dir)
-    on_res = _wo_files(wo_dir / "resolved")
+    on_root, bad_root = _wo_files(wo_dir)
+    on_res, bad_res = _wo_files(wo_dir / "resolved")
+
+    # every *.md in the ledger dirs is either a strict WO-NNN-<slug>.md or a finding —
+    # a nonconforming name would otherwise be silently invisible to the orphan/link scans
+    for where, bad in (("work-orders", bad_root), ("work-orders/resolved", bad_res)):
+        for name in bad:
+            items.append({"kind": "nonconforming-wo-filename", "file": f"{where}/{name}",
+                          "finding": f"{where}/{name} does not match WO-NNN-<slug>.md -> "
+                                     "rename to the pattern or move it out of the ledger dirs"})
 
     idx_text = _read(home / "INDEX.md")
     if idx_text is None:
@@ -280,6 +295,16 @@ def check_brainmeta(home: Path, installed: int | None) -> tuple[list[dict], list
     brain = home / "brain"
     wiki = brain / "wiki"
 
+    # rogue page dirs: a wiki/ subdir holding .md pages outside PAGE_TYPES is invisible
+    # to counts AND to brain_lint's page scan -> finding, never silent
+    if wiki.is_dir():
+        for d in sorted(p for p in wiki.iterdir() if p.is_dir()):
+            if d.name not in PAGE_TYPES and any(d.glob("*.md")):
+                counts_items.append({"kind": "unknown-page-type", "dir": d.name,
+                                     "finding": f"wiki/{d.name}/ holds .md page(s) but is not a "
+                                                f"known page type ({', '.join(PAGE_TYPES)}) -> "
+                                                "relocate the pages or extend the schema"})
+
     raw = _read(brain / ".brainmeta.json")
     if raw is None:
         if wiki.is_dir():
@@ -316,6 +341,11 @@ def check_brainmeta(home: Path, installed: int | None) -> tuple[list[dict], list
                 counts_items.append({"kind": "count-mismatch", "key": t,
                                      "expected": expected, "actual": actual,
                                      "finding": f"counts.{t}={expected}, files={actual} -> set {actual}"})
+        for key in sorted(set(counts) - set(PAGE_TYPES)):
+            counts_items.append({"kind": "unknown-page-type", "key": key,
+                                 "finding": f"counts.{key} is not a known page type "
+                                            f"({', '.join(PAGE_TYPES)}) -> remove the key "
+                                            "or fix the type name"})
 
     ev = meta.get("engine_version")
     if ev is None:
@@ -435,6 +465,8 @@ def check_brain_delegate(home: Path, stale_days: int, today: date) -> list[dict]
                       "finding": "no brain_lint.py at <home>/tools/ or beside canary.py -> "
                                  "a brain without a reachable linter is unchecked; copy the tool"})
         return items
+    prev_dwb = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True   # read-only contract: no __pycache__ under <home>/tools/
     try:
         bl = _load_module("_canary_brain_lint", lint_path)
         rep = bl.lint(brain, stale_days=stale_days, today=today)
@@ -443,6 +475,8 @@ def check_brain_delegate(home: Path, stale_days: int, today: date) -> list[dict]
                       "finding": f"brain_lint raised {type(e).__name__}: {e} -> "
                                  "fix the tool copy or the brain"})
         return items
+    finally:
+        sys.dont_write_bytecode = prev_dwb
     # fold the importable report lists — brain_lint's CLI exits 0 even when it flags
     for key in BRAIN_LINT_KEYS:
         found = rep.get(key, [])
@@ -542,21 +576,26 @@ def print_report(r: dict) -> None:
         ("Link rot (INDEX + open WOs)", "links"),
         ("Brain (delegated brain_lint)", "brain"),
     ]
-    reasons: dict[str, list[str]] = {}
+    skips: dict[str, list[dict]] = {}
     for s in r["skipped"]:
-        reasons.setdefault(s["check"].split(":")[0], []).append(s["reason"])
+        skips.setdefault(s["check"].split(":")[0], []).append(s)
     total = 0
     for title, key in sections:
         items = r[key]
         total += len(items)
-        if key not in r["checked"]:
-            uniq = sorted(set(reasons.get(key, ["not applicable"])))
-            print(f"[--] {title}: skipped ({'; '.join(uniq)})")
-            continue
-        flag = "OK" if not items else "!!"
-        print(f"[{flag}] {title}: {len(items)}")
-        for it in items:
-            print(f"       - {json.dumps(it, ensure_ascii=False)}")
+        if key in r["checked"]:
+            flag = "OK" if not items else "!!"
+            print(f"[{flag}] {title}: {len(items)}")
+            for it in items:
+                print(f"       - {json.dumps(it, ensure_ascii=False)}")
+        elif not skips.get(key):
+            print(f"[--] {title}: skipped (not applicable)")
+        # every skipped sub-check gets its OWN [--] line — a skip folded into an
+        # [OK] line would render "didn't look" as "looked, found nothing"
+        for s in skips.get(key, []):
+            sub = s["check"].split(":", 1)
+            label = f"{title} [{sub[1]}]" if len(sub) > 1 else title
+            print(f"[--] {label}: skipped ({s['reason']})")
     print(f"\n{'CLEAN - nothing flagged.' if total == 0 else f'{total} item(s) flagged. The canary reports; fixes are normal orchestrator/implementer work - resolution stays gated while red.'}")
 
 
@@ -577,8 +616,13 @@ def main() -> int:
 
     home = Path(args.home).resolve()
     if not home.is_dir():
-        print(f"no gitos home at {home} - nothing to check.")
-        return 0
+        # a missing/typo'd home is a USAGE error — the resolution gate must never read it as green
+        print(f"canary: no gitos home at {home} -> pass the gitos home dir, e.g. <repo>/.gitos",
+              file=sys.stderr)
+        if args.json:
+            print(json.dumps({"home": str(home), "error": "no such home"},
+                             indent=2, ensure_ascii=False))
+        return 2
 
     r = run(home, resolve_skill_dir(args.skill_dir), date.today(), args.stale_days)
     if args.json:
