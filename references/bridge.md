@@ -63,7 +63,9 @@ canonical worked example.
    and diff before/after to confirm the profile content survived. *Finance example:* the one
    file `prompts/diagnostic_agent.md` — keep its finance anomaly families + Configuration
    block, refresh only the work-order template + `## Implementer notes` section + role-boundary
-   table.
+   table. **Also `CLAUDE.md`:** the repo-root file is profile-owned (it carries `_meta` + project
+   instructions), but the `<!-- gitos:agent-system -->` block inside it is engine-managed —
+   refresh *only* that block (the canary's durable anchor), preserve everything outside the markers.
 
 ## Then the wrapped `upgrade` finishes the job
 

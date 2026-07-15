@@ -87,7 +87,8 @@ files. It lays:
 - `.gitos/work-orders/resolved/.gitkeep` — the resolved archive
 - `.gitos/brain/` — the empty brain structure (BRAIN.md, raw/, wiki/ with sources/
   entities/ concepts/ decisions/ directories, index.md, log.md, .brainmeta.json)
-- `.gitos/tools/brain_lint.py` — the deterministic brain-health backstop (self-contained in the home)
+- `.gitos/tools/brain_lint.py` + `.gitos/tools/canary.py` — the deterministic backstops (brain health + home-state drift), self-contained in the home
+- a `<!-- gitos:agent-system -->` block in the repo-root `CLAUDE.md` (created if absent) — the **durable context anchor**: the canary's recovery seed, carried in the layer the harness re-injects every window (SKILL.md → *Canary*). Managed block only; your own `CLAUDE.md` content is never touched.
 
 The script does NOT ingest — that is your job in Phase 3.
 

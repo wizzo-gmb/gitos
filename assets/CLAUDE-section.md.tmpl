@@ -5,9 +5,18 @@ This repo uses the **GitOS agent system** (`~/.claude/skills/gitos/`).
 
 - **Work** (open tasks, work-orders, evidence): `{{HOME}}/INDEX.md` + `{{HOME}}/work-orders/`
 - **Memory** (long-term knowledge, decisions, entities): `{{HOME}}/brain/`
-- **Roles** (inception / orchestrator / diagnostic): `{{HOME}}/roles/`
+- **Roles** (inception / orchestrator / diagnostic / implementer): `{{HOME}}/roles/`
 - **Birth certificate**: `{{HOME}}/HANDOFF.md` (read once at session start)
 
-To start a session: invoke the `gitos` skill. It will detect the current state
-(initialized / uninitialized) and route to the correct role automatically.
+To start a session: invoke the `gitos` skill — it detects the current state and routes
+to the correct role automatically.
+
+**Canary — your way back.** Every reply opens with `[gitos · <role> · <focus>]` (role =
+orchestrator / diagnostic / implementer / inception; focus = current work-order + step).
+**If your last reply had no such marker, your context has drifted** — re-read
+`~/.claude/skills/gitos/SKILL.md`, re-detect your role, run
+`python {{HOME}}/tools/canary.py {{HOME}}`, and resume marking. This block is a durable
+backstop the harness reloads into every window, so it survives even when the skill
+directive washes out under compaction; if you can read it, you can recover. It is a
+signal, not a guarantee — the operator's glance at the first line is the final check.
 <!-- gitos:agent-system END -->

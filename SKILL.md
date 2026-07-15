@@ -203,6 +203,19 @@ self-noticed:
 operator's one-glance check of the first line is the primary monitor. The marker is a
 signal, not a guarantee.
 
+**Durable anchor — closing the self-reference gap.** The marker directive lives in the skill
+layer, which compaction summarizes away — so on its own it degrades in lockstep with what it
+watches (a detector cannot detect its own absence). The recovery seed therefore *also* lives
+in the **durable layer**: inception writes a managed `<!-- gitos:agent-system -->` block into
+the repo-root `CLAUDE.md`, which the harness re-injects into **every** context window, carrying
+the marker requirement + the trigger to re-read this file and run `canary.py`. Even after the
+skill directive washes out, that block re-asserts the marker and points the way back; `upgrade`
+refreshes it (managed-block upsert — never touching your content), and `canary.py` flags it
+(`anchor/missing`, `anchor/stale`) if it goes missing or drifts. The "who watches the watcher"
+recursion terminates at the **harness** (which guarantees `CLAUDE.md`) — the most durable layer
+reachable. It raises the water line, not to omniscience: a bloated `CLAUDE.md` loses salience
+too, so the block stays short and the operator's glance remains the final backstop.
+
 The operator may opt out of the marker per repo — record the opt-out; it reduces canary
 coverage to state-only.
 

@@ -18,6 +18,24 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v15 — 2026-07-14
+breaking: no
+
+Durable context anchor (WO-028) — closes the v14 canary's **self-reference hole**. The per-reply
+marker and its own absence-detector both lived in the skill directive layer, which compaction
+summarizes away, so the detector degraded in lockstep with what it watched. The recovery seed now
+*also* lives in the **durable layer**: inception writes a managed `<!-- gitos:agent-system -->` block
+into the repo-root `CLAUDE.md` — which the harness re-injects into every context window — carrying the
+marker requirement + the trigger to re-read SKILL.md and run `canary.py`. Even after the skill directive
+washes out, that block re-asserts the marker and points the way back. `scripts/scaffold.py` gains
+`ensure_claude_section()` (idempotent managed-block **upsert**, creates the file if absent, never
+clobbers content outside the markers — replacing the old append-once behavior); `upgrade` refreshes it;
+`canary.py` gains an `anchor` category (`anchor/missing`, `anchor/stale`); selftest grows a 10th gate
+(the upsert's create / no-clobber / idempotency) and gate 9 now covers the anchor. Custom repos treat
+the block as a **MERGE** (engine-managed section inside a profile-owned `CLAUDE.md`). Also fixes
+cold-start drift + the misroute class — the repo self-announces through the durable layer. Additive — a
+repo without the anchor simply lacks the durable backstop.
+
 ## v14 — 2026-07-13
 breaking: no
 

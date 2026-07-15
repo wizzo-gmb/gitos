@@ -142,6 +142,38 @@ def render(text: str, **tokens: str) -> str:
     return text
 
 
+CLAUDE_ANCHOR_START = "<!-- gitos:agent-system START -->"
+CLAUDE_ANCHOR_END = "<!-- gitos:agent-system END -->"
+
+
+def ensure_claude_section(claude_path: Path, section: str) -> str:
+    """Upsert the gitos managed block (the canary's durable recovery seed, WO-028) into a
+    repo-root CLAUDE.md — the harness re-injects CLAUDE.md into every context window, so the
+    marker requirement + recovery trigger survive here even when the skill directive washes
+    out. MANAGED BLOCK ONLY: content outside the START/END markers is never touched.
+
+    -> 'created' (no file), 'updated' (block replaced), 'unchanged' (idempotent no-op),
+       or 'appended' (file existed without the block). Never raises on ordinary content.
+    """
+    block = section.rstrip("\n")
+    if not claude_path.exists():
+        claude_path.parent.mkdir(parents=True, exist_ok=True)
+        claude_path.write_text(block + "\n", encoding="utf-8")
+        return "created"
+    existing = claude_path.read_text(encoding="utf-8")
+    if CLAUDE_ANCHOR_START in existing and CLAUDE_ANCHOR_END in existing:
+        i = existing.index(CLAUDE_ANCHOR_START)
+        j = existing.index(CLAUDE_ANCHOR_END, i) + len(CLAUDE_ANCHOR_END)
+        new = existing[:i] + block + existing[j:]          # preserve everything outside
+        if new == existing:
+            return "unchanged"
+        claude_path.write_text(new, encoding="utf-8")
+        return "updated"
+    sep = "" if existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
+    claude_path.write_text(existing + sep + block + "\n", encoding="utf-8")
+    return "appended"
+
+
 def detect_home(root: Path, requested: str) -> tuple[Path, str]:
     """Return (home_dir, label). label in {'.gitos','.pipeline','outputs/debug','docs/agents'}."""
     if requested != "auto":
@@ -440,22 +472,22 @@ def main() -> int:
     else:
         print("SKIP pointer already in MEMORY.md")
 
-    # ---- CLAUDE.md section (sentinel-guarded) -----------------------------
+    # ---- CLAUDE.md context anchor (sentinel-guarded, upserted) ------------
+    # The durable recovery seed for the canary system (WO-028): the harness re-injects
+    # CLAUDE.md into every context window, so the marker requirement + recovery trigger
+    # survive here even when the skill directive washes out under compaction. Managed
+    # block only — ensure_claude_section never touches content outside the markers, and
+    # CREATES the file when absent so the backstop always exists.
     if not diagnostic_only:
         claude = root / "CLAUDE.md"
         section = render(read_template("CLAUDE-section.md.tmpl"), **tokens)
-        if claude.exists():
-            existing = claude.read_text(encoding="utf-8")
-            if "gitos:agent-system" not in existing:
-                with claude.open("a", encoding="utf-8") as f:
-                    f.write("\n\n" + section)
-                print("OK   appended 'Working this repo' section to CLAUDE.md")
-            else:
-                print("SKIP CLAUDE.md already has the gitos section")
-        else:
-            print("\n--- recommended: add this to a root CLAUDE.md ---")
-            print(section)
-            print("--- end ---")
+        status = ensure_claude_section(claude, section)
+        print({
+            "created": "OK   wrote CLAUDE.md (gitos context anchor)",
+            "updated": "OK   refreshed the gitos anchor block in CLAUDE.md",
+            "appended": "OK   appended the gitos anchor block to CLAUDE.md",
+            "unchanged": "SKIP CLAUDE.md gitos anchor current",
+        }[status])
 
     # ---- ensure version control (WO-011) ----------------------------------
     # Reverses the old "offer, never run". `ensure` (default) auto-inits git when absent,

@@ -143,6 +143,13 @@ Direct the running orchestrator to:
 - **copy `canary.py` into the home if missing** — ensure `<home>/tools/canary.py` exists
   (byte-copy from `~/.claude/skills/gitos/scripts/canary.py`); never clobber an existing
   copy;
+- **refresh the CLAUDE.md context anchor** — the repo-root `CLAUDE.md` carries the gitos
+  `<!-- gitos:agent-system -->` managed block (the canary's durable recovery seed; SKILL.md →
+  *Canary*). If `canary.py` reports `anchor/missing` or `anchor/stale`, refresh it: re-run
+  `python ~/.claude/skills/gitos/scripts/scaffold.py <root> --git skip` (idempotent — it upserts
+  *only* the managed block, creating `CLAUDE.md` if absent, never touching content outside the
+  markers), or edit the block by hand between its markers. On a Custom repo this is a **MERGE**
+  (refresh the block, preserve the profile) — see `references/bridge.md`;
 - **refresh lens copies from the global library** — the global `<skill>/agents/` is the
   machine-wide lens distribution hub (SKILL.md → *Lenses*). For each lens in
   `<home>/agents/` whose name also exists globally, byte-compare; where they differ,

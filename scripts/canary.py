@@ -13,6 +13,8 @@ cover:
                              required frontmatter keys, applies-to list-form)
   - link rot                (relative markdown links in INDEX.md + open WO files resolve)
   - brain delegation        (if a brain exists, run brain_lint and fold its findings in)
+  - durable anchor          (repo-root CLAUDE.md carries the gitos block — the canary's own
+                             recovery seed; missing/stale block is a finding, no CLAUDE.md a skip)
 
 Graceful no-ops: empty home / no brain / no lenses -> that check is SKIPPED and reported as
 skipped (its own [--] line per sub-check) — never silently CLEAN. A parse failure is a
@@ -43,7 +45,12 @@ from pathlib import Path
 from urllib.parse import unquote
 
 PAGE_TYPES = ("sources", "entities", "concepts", "decisions")   # brain_lint's constant
-CATEGORIES = ("ledger", "counts", "stamp", "lenses", "links", "brain")
+CATEGORIES = ("ledger", "counts", "stamp", "lenses", "links", "brain", "anchor")
+# The durable context anchor (WO-028): the gitos managed block in repo-root CLAUDE.md,
+# the canary's own recovery seed. The block must carry these tokens or it can't do its job.
+CLAUDE_ANCHOR_START = "<!-- gitos:agent-system START -->"
+CLAUDE_ANCHOR_END = "<!-- gitos:agent-system END -->"
+ANCHOR_TOKENS = ("[gitos ·", "canary.py", "SKILL.md")   # marker + the two recovery pointers
 OPEN_ANCHOR = "## Open work-orders (by severity)"
 RESOLVED_ANCHOR = "## Resolved"
 WO_FILE = re.compile(r"^WO-(\d{3})-[A-Za-z0-9][A-Za-z0-9-]*\.md$")
@@ -487,6 +494,29 @@ def check_brain_delegate(home: Path, stale_days: int, today: date) -> list[dict]
     return items
 
 
+def check_anchor(claude_path: Path) -> list[dict]:
+    """The durable context anchor: the gitos managed block in repo-root CLAUDE.md must exist
+    and carry the recovery seed (the marker + the re-read/canary pointers). Called only when
+    CLAUDE.md exists (a wholly absent CLAUDE.md is a visible skip, not a finding — inception /
+    upgrade own creating it)."""
+    items: list[dict] = []
+    text = _read(claude_path) or ""
+    if CLAUDE_ANCHOR_START not in text or CLAUDE_ANCHOR_END not in text:
+        items.append({"kind": "anchor-missing",
+                      "finding": "CLAUDE.md has no gitos:agent-system block -> the durable "
+                                 "context anchor (the canary's recovery seed) is absent; "
+                                 "re-run scaffold.py or `/gitos upgrade` to restore it"})
+        return items
+    i = text.index(CLAUDE_ANCHOR_START)
+    block = text[i:text.index(CLAUDE_ANCHOR_END, i)]
+    missing = [t for t in ANCHOR_TOKENS if t not in block]
+    if missing:
+        items.append({"kind": "anchor-stale", "missing": missing,
+                      "finding": f"CLAUDE.md gitos block is missing recovery-seed token(s) "
+                                 f"{missing} -> refresh the block (scaffold.py / `/gitos upgrade`)"})
+    return items
+
+
 # --------------------------------------------------------------------------- run + report
 def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60) -> dict:
     r: dict = {"home": str(home), "skill_dir": str(skill_dir) if skill_dir else None,
@@ -556,6 +586,16 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60) -
         else:
             skip("lenses:global", "no <skill>/agents/")
 
+    # durable context anchor: the gitos block in repo-root CLAUDE.md (home is <root>/.gitos,
+    # so its parent is the repo root). A wholly absent CLAUDE.md is a VISIBLE skip — whether
+    # a repo should carry one is inception/upgrade's concern, not a false-CLEAN here.
+    claude = home.parent / "CLAUDE.md"
+    if claude.is_file():
+        r["anchor"].extend(check_anchor(claude))
+        checked.add("anchor")
+    else:
+        skip("anchor", "no CLAUDE.md at repo root")
+
     for k in CATEGORIES:      # a category with findings is by definition checked
         if r[k]:
             checked.add(k)
@@ -575,6 +615,7 @@ def print_report(r: dict) -> None:
         ("Lens registries (repo + global)", "lenses"),
         ("Link rot (INDEX + open WOs)", "links"),
         ("Brain (delegated brain_lint)", "brain"),
+        ("Durable anchor (CLAUDE.md recovery seed)", "anchor"),
     ]
     skips: dict[str, list[dict]] = {}
     for s in r["skipped"]:
