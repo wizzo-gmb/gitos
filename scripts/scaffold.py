@@ -35,6 +35,7 @@ Home detection (`--home auto`, first match wins):
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import subprocess
 import sys
@@ -146,32 +147,91 @@ CLAUDE_ANCHOR_START = "<!-- gitos:agent-system START -->"
 CLAUDE_ANCHOR_END = "<!-- gitos:agent-system END -->"
 
 
-def ensure_claude_section(claude_path: Path, section: str) -> str:
+def carried_lines(old_block: str, new_block: str) -> "list[str]":
+    """Lines inside the OLD managed block that the refreshed block does not account for.
+
+    The block is engine-managed, so a refresh SHOULD replace drifted engine text — that is
+    its entire purpose. But content the engine never wrote (a profile `_meta` pointer, an
+    operator note) must survive that refresh: destroying it is silent data loss (WO-029
+    class 6). difflib separates the two deterministically:
+
+      * `delete` opcodes — old lines with no counterpart at all in the incoming block. This
+        is foreign content: carried.
+      * `replace` opcodes — an old line swapped for a similar new one, i.e. ordinary drift.
+        Carried ONLY when the line has no close counterpart among the incoming lines
+        (difflib's own documented 0.6 cutoff), which catches a wholly-rewritten block
+        without treating normal drift as content.
+
+    Blank lines are never content. Relative order is preserved. `autojunk=False` keeps the
+    result deterministic regardless of block size.
+
+    Known trade-off: the engine cannot know what an OLDER template said, so a line a future
+    template legitimately RETIRES is carried forward rather than dropped. That errs toward
+    preserving, and the carry is always REPORTED — never silent. Deleting it is then a
+    visible one-line operator edit; the reverse (a silent delete) is unrecoverable.
+    """
+    old_lines = old_block.splitlines()
+    new_lines = new_block.splitlines()
+    out: list[str] = []
+    sm = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag not in ("delete", "replace"):
+            continue
+        cand = new_lines[j1:j2] if tag == "replace" else []
+        for line in old_lines[i1:i2]:
+            if not line.strip():
+                continue                      # blank lines are never content
+            if cand and difflib.get_close_matches(line, cand, n=1, cutoff=0.6):
+                continue                      # ordinary drift: a successor is in the new block
+            out.append(line)
+    return out
+
+
+def ensure_claude_section(claude_path: Path, section: str) -> "tuple[str, list[str]]":
     """Upsert the gitos managed block (the canary's durable recovery seed, WO-028) into a
     repo-root CLAUDE.md — the harness re-injects CLAUDE.md into every context window, so the
     marker requirement + recovery trigger survive here even when the skill directive washes
     out. MANAGED BLOCK ONLY: content outside the START/END markers is never touched.
 
-    -> 'created' (no file), 'updated' (block replaced), 'unchanged' (idempotent no-op),
-       or 'appended' (file existed without the block). Never raises on ordinary content.
+    NEVER SILENTLY DELETES (WO-029 class 6). Content found inside the block that the refresh
+    does not account for is CARRIED THROUGH — re-emitted just inside the END marker — and
+    reported to the caller. It is preserved in place rather than relocated outside the
+    markers, because moving it would violate the one invariant this function guarantees:
+    content outside the markers is never touched.
+
+    -> (status, carried) where status is 'created' (no file), 'updated' (block replaced),
+       'preserved' (block replaced AND unrecognized in-block lines carried through),
+       'unchanged' (idempotent no-op), or 'appended' (file existed without the block), and
+       `carried` lists the lines carried through. Never raises on ordinary content.
     """
     block = section.rstrip("\n")
     if not claude_path.exists():
         claude_path.parent.mkdir(parents=True, exist_ok=True)
         claude_path.write_text(block + "\n", encoding="utf-8")
-        return "created"
+        return "created", []
     existing = claude_path.read_text(encoding="utf-8")
     if CLAUDE_ANCHOR_START in existing and CLAUDE_ANCHOR_END in existing:
         i = existing.index(CLAUDE_ANCHOR_START)
         j = existing.index(CLAUDE_ANCHOR_END, i) + len(CLAUDE_ANCHOR_END)
-        new = existing[:i] + block + existing[j:]          # preserve everything outside
+        carried = carried_lines(existing[i:j], block)
+        new_block = block
+        if carried:
+            # re-emit the unrecognized lines just inside the END marker: stable (a re-run
+            # finds them there and carries them to the same place -> idempotent).
+            if CLAUDE_ANCHOR_END in block:
+                head = block[:block.rindex(CLAUDE_ANCHOR_END)].rstrip("\n")
+                new_block = (head + "\n\n" + "\n".join(carried) + "\n"
+                             + CLAUDE_ANCHOR_END)
+            else:                              # markerless section: never drop the content
+                new_block = block + "\n" + "\n".join(carried)
+        new = existing[:i] + new_block + existing[j:]      # preserve everything outside
         if new == existing:
-            return "unchanged"
+            return "unchanged", carried
         claude_path.write_text(new, encoding="utf-8")
-        return "updated"
+        return ("preserved" if carried else "updated"), carried
     sep = "" if existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
     claude_path.write_text(existing + sep + block + "\n", encoding="utf-8")
-    return "appended"
+    return "appended", []
 
 
 def detect_home(root: Path, requested: str) -> tuple[Path, str]:
@@ -481,13 +541,24 @@ def main() -> int:
     if not diagnostic_only:
         claude = root / "CLAUDE.md"
         section = render(read_template("CLAUDE-section.md.tmpl"), **tokens)
-        status = ensure_claude_section(claude, section)
+        status, carried = ensure_claude_section(claude, section)
         print({
             "created": "OK   wrote CLAUDE.md (gitos context anchor)",
             "updated": "OK   refreshed the gitos anchor block in CLAUDE.md",
+            "preserved": "OK   refreshed the gitos anchor block in CLAUDE.md",
             "appended": "OK   appended the gitos anchor block to CLAUDE.md",
             "unchanged": "SKIP CLAUDE.md gitos anchor current",
         }[status])
+        # Never silently delete: say what was found inside the managed block and kept.
+        if carried:
+            print(f"     PRESERVED {len(carried)} line(s) found inside the managed block that "
+                  "the refresh did not account for:")
+            for line in carried:
+                print(f"       | {line}")
+            print("     They were carried through, just inside the END marker. The block is "
+                  "engine-managed —")
+            print("     content you want to own permanently belongs OUTSIDE the markers "
+                  "(see references/bridge.md).")
 
     # ---- ensure version control (WO-011) ----------------------------------
     # Reverses the old "offer, never run". `ensure` (default) auto-inits git when absent,

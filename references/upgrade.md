@@ -148,8 +148,12 @@ Direct the running orchestrator to:
   *Canary*). If `canary.py` reports `anchor/missing` or `anchor/stale`, refresh it: re-run
   `python ~/.claude/skills/gitos/scripts/scaffold.py <root> --git skip` (idempotent — it upserts
   *only* the managed block, creating `CLAUDE.md` if absent, never touching content outside the
-  markers), or edit the block by hand between its markers. On a Custom repo this is a **MERGE**
-  (refresh the block, preserve the profile) — see `references/bridge.md`;
+  markers), or edit the block by hand between its markers. **Anything the repo owns — project
+  instructions, the `_meta` block including `_meta.bridge` — belongs outside the markers: the
+  refresh replaces the block's engine text, and while it now carries unrecognized in-block
+  lines through and reports them, only content outside the markers is untouched by
+  construction.** On a Custom repo this is a **MERGE** (refresh the block, preserve the
+  profile) — see `references/bridge.md`;
 - **refresh lens copies from the global library** — the global `<skill>/agents/` is the
   machine-wide lens distribution hub (SKILL.md → *Lenses*). For each lens in
   `<home>/agents/` whose name also exists globally, byte-compare; where they differ,

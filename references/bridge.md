@@ -81,7 +81,11 @@ So the upgrade can find a BRIDGE deterministically (rather than relying on the p
 Custom repo declares a pointer:
 
 - **Human-visible source of truth:** add `_meta.bridge: <repo-relative path to BRIDGE.md>` to
-  the repo-root `CLAUDE.md` `_meta` block.
+  the repo-root `CLAUDE.md` `_meta` block — **outside the `<!-- gitos:agent-system -->`
+  markers**. That block is engine-managed and is refreshed in place by `scaffold.py` /
+  `/gitos upgrade`; only content *outside* the markers is guaranteed untouched. (A refresh
+  carries unrecognized in-block lines through and reports them rather than dropping them —
+  but the `_meta` block is profile-owned, so keep it out of the engine's block entirely.)
 - **Agent fast-path mirror:** copy the same value into `<home>/brain/.brainmeta.json` so an
   agent resolves it without parsing `CLAUDE.md`.
 

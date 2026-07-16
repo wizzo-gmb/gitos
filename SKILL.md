@@ -170,6 +170,18 @@ never block *starting* work; **no work-order is resolved while the canary is red
 gate joins verify-before-commit). Scope is home state only — domain artifacts (outputs,
 data, logs) stay the diagnostic role's judgment territory.
 
+**The gate binds on *actionable* findings — category descoping.** The canary encodes the
+engine's own conventions as its defaults, and a healthy repo may legitimately differ. A
+convention mismatch must never freeze a healthy ledger, so an operator (or a repo's BRIDGE,
+under *Profile deviations*) may **descope a canary category** for that repo — recording the
+deviation and its reason where the deviation lives. **A descoped category still reports; it
+does not gate.** The finding stays visible (no false-CLEAN, nothing is silenced) while
+resolution proceeds. Descoping is a local, recorded workaround for a convention the engine
+does not yet tolerate — not a way to hide a real defect: descope the *category*, never the
+individual finding, and the right durable fix is an upstream work-order that teaches the
+canary the shape. A descoped category is a standing debt — re-scope it once the engine
+tolerates the shape.
+
 **Context canary — the role marker.** The first line of EVERY reply, in every role:
 
 ```

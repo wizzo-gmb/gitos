@@ -51,15 +51,39 @@ CATEGORIES = ("ledger", "counts", "stamp", "lenses", "links", "brain", "anchor")
 CLAUDE_ANCHOR_START = "<!-- gitos:agent-system START -->"
 CLAUDE_ANCHOR_END = "<!-- gitos:agent-system END -->"
 ANCHOR_TOKENS = ("[gitos ·", "canary.py", "SKILL.md")   # marker + the two recovery pointers
-OPEN_ANCHOR = "## Open work-orders (by severity)"
-RESOLVED_ANCHOR = "## Resolved"
-WO_FILE = re.compile(r"^WO-(\d{3})-[A-Za-z0-9][A-Za-z0-9-]*\.md$")
+# Ledger section headings are matched by PREFIX, not by literal equality: the tail is
+# legitimate downstream variation — some ledgers carry a parenthetical tail ('(by severity)'),
+# others a bare heading. The heading names the section; it is not a schema. (WO-029 class 3)
+OPEN_HEADING = "## Open work-orders"
+RESOLVED_HEADING = "## Resolved"
+# Work-order FILENAME conventions, one regex per known ledger form, each capturing NNN.
+# The engine's own form is ONE SAMPLE, not the schema — hardcoding it made the ledger check
+# loud AND blind on any repo that names its work-orders differently (WO-029 class 1). A name
+# matching no form is still reported (nonconforming-wo-filename) — tolerance, never blindness.
+WO_FILE_FORMS = (
+    re.compile(r"^WO-(\d{3})-[A-Za-z0-9][A-Za-z0-9-]*\.md$"),      # the engine's own hyphen form
+    re.compile(r"^work_(\d{3})_[A-Za-z0-9][\w.-]*\.md$"),          # an underscore work_ form
+    re.compile(r"^bug_(\d{3})_[A-Za-z0-9][\w.-]*\.md$"),           # a diagnostic bug_ form
+)
+WO_FORM_NAMES = "WO-NNN-<slug>.md, work_NNN_<slug>.md, bug_NNN_<slug>.md"
 NNN_RE = re.compile(r"\d{3}")
 EMDASH = "—"           # resolved rows may carry an em-dash NNN (no work-order number)
+# A prose/blockquote ledger row's IDENTITY position: the NNN at the head of the item, past
+# any blockquote/list markers and bold/code/link decoration, with an optional convention
+# prefix. Anchored at the line head on purpose — an unanchored \d{3} scan would harvest every
+# number in the prose ('240 findings') and manufacture phantom rows. (WO-029 class 3)
+PROSE_NNN = re.compile(
+    r"^\s*(?:>+\s*)*(?:[-*+]\s+)?(?:\*\*|__|`|\[)*\s*(?:(?:WO|work|bug)[-_ ]?)?(\d{3})\b",
+    re.IGNORECASE)
 MDLINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+MDLINK_CELL = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
 FENCE = re.compile(r"^\s*```")
 SEP_CELL = re.compile(r"[-: ]*")
-LENS_REQUIRED = ("name", "domain", "tags", "when-to-apply", "applies-to", "source", "imported")
+LENS_REQUIRED = ("name", "domain", "tags", "when-to-apply", "applies-to", "source")
+# Provenance: operator-IMPORTED or orchestrator-AUTHORED (distilled). Requiring `imported:`
+# of every lens forced a distilled lens to record FALSE provenance. Either key satisfies it;
+# a lens with NEITHER is still reported. (WO-029 class 5)
+LENS_PROVENANCE = ("imported", "authored")
 BRAIN_LINT_KEYS = ("duplicates", "orphans", "stale", "broken_wikilinks", "cross_layer_redundancy")
 
 
@@ -109,23 +133,77 @@ def _table_rows(lines: list[str]) -> list[list[str]] | None:
     return rows if header_seen else None
 
 
-def section_rows(text: str, anchor: str) -> list[list[str]] | None:
-    """Table rows of the section headed exactly `anchor`. None when the anchor or the
-    table header is missing (callers report 'cannot parse' — never silently CLEAN)."""
+def wo_nnn(name: str) -> str | None:
+    """The NNN of a work-order filename under ANY known ledger convention, else None.
+    One place decides what a work-order file is named — the ledger scan, the orphan scan and
+    the link scan all key off this, so none of them can go blind on a naming convention."""
+    for rx in WO_FILE_FORMS:
+        m = rx.match(name)
+        if m:
+            return m.group(1)
+    return None
+
+
+def section_lines(text: str, heading_prefix: str) -> list[str] | None:
+    """Lines of the first '## ' section whose heading STARTS WITH `heading_prefix`. None
+    when no such heading exists (callers report 'cannot parse' — never silently CLEAN).
+    Prefix, not equality: the heading's tail is legitimate downstream variation."""
     lines = text.splitlines()
     for i, ln in enumerate(lines):
-        if ln.strip() == anchor:
+        if ln.strip().startswith(heading_prefix):
             block: list[str] = []
             for nxt in lines[i + 1:]:
                 if nxt.strip().startswith("## "):
                     break
                 block.append(nxt)
-            return _table_rows(block)
+            return block
     return None
+
+
+def prose_nnns(block: list[str]) -> list[str]:
+    """Row NNNs of a PROSE/blockquote ledger section — the fallback when a section carries
+    no table at all. Two deterministic signals, in order:
+
+      1. the NNN in each item's IDENTITY position (the line head — see PROSE_NNN);
+      2. a top-up from work-order files LINKED in the section, for rows carried only as a
+         markdown link.
+
+    (2) contributes only NNNs (1) did not already see, so a row that both leads with its NNN
+    and links its own file counts ONCE — one row, never a phantom duplicate. Duplicates
+    WITHIN (1) are preserved: a real duplicate-NNN collision in a prose ledger must still be
+    caught. Empty -> the caller reports cannot-parse (no false-CLEAN)."""
+    out: list[str] = []
+    for ln in block:
+        m = PROSE_NNN.match(ln)
+        if m:
+            out.append(m.group(1))
+    seen = set(out)
+    for tgt in extract_links("\n".join(block)):
+        nnn = wo_nnn(Path(tgt).name)
+        if nnn and nnn not in seen:
+            seen.add(nnn)
+            out.append(nnn)
+    return out
 
 
 def clean_cell(cell: str) -> str:
     return cell.strip().strip("`").strip("*").strip()
+
+
+def lens_row_name(cell: str) -> str:
+    """The lens name in a registry Lens cell: a bare stem OR a navigable markdown link
+    `[name](name.md)` — the link TARGET's stem is the name, since that is what the row points
+    at. Without this, a link cell double-reports ONE condition as BOTH registry-row-no-file
+    and lens-file-no-row. (WO-029 class 4)"""
+    s = clean_cell(cell)
+    m = MDLINK_CELL.fullmatch(s)
+    if not m:
+        return s
+    label, tgt = m.group(1), m.group(2)
+    t = unquote(tgt.strip("<>").split("#", 1)[0].strip())
+    if t.endswith(".md"):
+        return clean_cell(Path(t).name[:-3])
+    return clean_cell(label)
 
 
 def extract_links(text: str) -> list[str]:
@@ -177,14 +255,14 @@ def resolve_skill_dir(arg: str | None) -> Path | None:
 
 # --------------------------------------------------------------------------- checks
 def _wo_files(d: Path) -> tuple[dict[str, list[str]], list[str]]:
-    """-> ({NNN: [conforming WO-NNN-<slug>.md names]}, [nonconforming *.md names])."""
+    """-> ({NNN: [work-order names under any known convention]}, [nonconforming *.md names])."""
     by_nnn: dict[str, list[str]] = {}
     bad: list[str] = []
     if d.is_dir():
         for f in sorted(d.glob("*.md")):
-            m = WO_FILE.match(f.name)
-            if m:
-                by_nnn.setdefault(m.group(1), []).append(f.name)
+            nnn = wo_nnn(f.name)
+            if nnn:
+                by_nnn.setdefault(nnn, []).append(f.name)
             else:
                 bad.append(f.name)
     return by_nnn, bad
@@ -196,13 +274,14 @@ def check_ledger(home: Path) -> list[dict]:
     on_root, bad_root = _wo_files(wo_dir)
     on_res, bad_res = _wo_files(wo_dir / "resolved")
 
-    # every *.md in the ledger dirs is either a strict WO-NNN-<slug>.md or a finding —
+    # every *.md in the ledger dirs matches a known work-order form or is a finding —
     # a nonconforming name would otherwise be silently invisible to the orphan/link scans
     for where, bad in (("work-orders", bad_root), ("work-orders/resolved", bad_res)):
         for name in bad:
             items.append({"kind": "nonconforming-wo-filename", "file": f"{where}/{name}",
-                          "finding": f"{where}/{name} does not match WO-NNN-<slug>.md -> "
-                                     "rename to the pattern or move it out of the ledger dirs"})
+                          "finding": f"{where}/{name} matches no known work-order filename "
+                                     f"form ({WO_FORM_NAMES}) -> rename to one of them or "
+                                     "move it out of the ledger dirs"})
 
     idx_text = _read(home / "INDEX.md")
     if idx_text is None:
@@ -211,14 +290,24 @@ def check_ledger(home: Path) -> list[dict]:
                           "finding": "work-orders exist but INDEX.md is missing -> restore the ledger"})
         return items
 
-    open_rows = section_rows(idx_text, OPEN_ANCHOR)
-    res_rows = section_rows(idx_text, RESOLVED_ANCHOR)
+    # Table first (the engine's own shape); when a section carries no table at all, fall back
+    # to a PROSE/blockquote ledger — an equally legitimate downstream shape. Only a section
+    # that is neither a table nor a recognizable prose ledger is cannot-parse. (WO-029 class 3)
+    open_block = section_lines(idx_text, OPEN_HEADING)
+    res_block = section_lines(idx_text, RESOLVED_HEADING)
+    open_rows = _table_rows(open_block) if open_block is not None else None
+    res_rows = _table_rows(res_block) if res_block is not None else None
+    open_prose = prose_nnns(open_block) if open_block is not None and open_rows is None else []
+    res_prose = prose_nnns(res_block) if res_block is not None and res_rows is None else []
 
     open_nnns: list[str] = []
-    if open_rows is None:
-        items.append({"kind": "cannot-parse", "section": OPEN_ANCHOR,
-                      "finding": f"section '{OPEN_ANCHOR}' missing or has no table -> "
-                                 "not a recognizable ledger; fix INDEX.md"})
+    if open_rows is None and open_prose:
+        open_nnns = open_prose            # prose ledger — a legitimate shape
+    elif open_rows is None:
+        items.append({"kind": "cannot-parse", "section": OPEN_HEADING,
+                      "finding": f"no '{OPEN_HEADING}...' section with a table or a "
+                                 "recognizable prose ledger -> not a recognizable ledger; "
+                                 "fix INDEX.md"})
     else:
         for row in open_rows:
             nnn = clean_cell(row[0]) if row else ""
@@ -229,10 +318,13 @@ def check_ledger(home: Path) -> list[dict]:
                               "finding": f"open row col-1 '{nnn}' is not a 3-digit NNN -> fix the row"})
 
     res_nnns: list[str] = []
-    if res_rows is None:
-        items.append({"kind": "cannot-parse", "section": RESOLVED_ANCHOR,
-                      "finding": f"section '{RESOLVED_ANCHOR}' missing or has no table -> "
-                                 "not a recognizable ledger; fix INDEX.md"})
+    if res_rows is None and res_prose:
+        res_nnns = res_prose              # prose ledger — a legitimate shape
+    elif res_rows is None:
+        items.append({"kind": "cannot-parse", "section": RESOLVED_HEADING,
+                      "finding": f"no '{RESOLVED_HEADING}...' section with a table or a "
+                                 "recognizable prose ledger -> not a recognizable ledger; "
+                                 "fix INDEX.md"})
     else:
         for row in res_rows:
             nnn = clean_cell(row[0]) if row else ""
@@ -263,8 +355,11 @@ def check_ledger(home: Path) -> list[dict]:
         items.append({"kind": "wo-in-both", "nnn": nnn,
                       "finding": f"WO-{nnn} present in both work-orders/ and resolved/ -> keep exactly one"})
 
-    # rows -> files (per side, only when that side parsed — no cascades on cannot-parse)
-    if open_rows is not None:
+    # rows -> files (per side, only when that side parsed — no cascades on cannot-parse).
+    # "parsed" = a table OR a recognized prose ledger; a prose side is a real row set.
+    open_parsed = open_rows is not None or bool(open_prose)
+    res_parsed = res_rows is not None or bool(res_prose)
+    if open_parsed:
         for nnn in open_nnns:
             if nnn in on_root:
                 continue
@@ -274,9 +369,9 @@ def check_ledger(home: Path) -> list[dict]:
                                          "mark the row Resolved (or restore the file)"})
             else:
                 items.append({"kind": "open-row-missing-file", "nnn": nnn,
-                              "finding": f"open row {nnn} has no WO-{nnn}-*.md under work-orders/ -> "
-                                         "restore the file or drop the row"})
-    if res_rows is not None:
+                              "finding": f"open row {nnn} has no work-order file for NNN {nnn} "
+                                         "under work-orders/ -> restore the file or drop the row"})
+    if res_parsed:
         for nnn in res_nnns:
             # a resolved row may legitimately have NO file (landed as commit/decision page)
             if nnn in on_root and nnn not in on_res:
@@ -392,7 +487,7 @@ def check_lens_layer(layer_dir: Path, layer: str) -> list[dict]:
                                          "add the | Lens | ... | table"})
         else:
             for row in rows:
-                name = clean_cell(row[0]) if row else ""
+                name = lens_row_name(row[0]) if row else ""
                 if name:
                     row_names.append(name)
                 else:
@@ -420,6 +515,9 @@ def check_lens_layer(layer_dir: Path, layer: str) -> list[dict]:
                                      "add the lens frontmatter block"})
             continue
         missing = [k for k in LENS_REQUIRED if k not in fm]
+        # provenance: either key satisfies it; NEITHER is still a finding (class 5)
+        if not any(k in fm for k in LENS_PROVENANCE):
+            missing.append(" or ".join(LENS_PROVENANCE))
         if missing:
             items.append({"kind": "missing-keys", "layer": layer, "file": f.name, "keys": missing,
                           "finding": f"{layer} agents/{f.name} missing frontmatter key(s): "
@@ -439,20 +537,32 @@ def check_lens_layer(layer_dir: Path, layer: str) -> list[dict]:
 
 
 def check_links(home: Path) -> list[dict]:
+    """Link rot in INDEX.md + open work-order files.
+
+    A target is resolved against BOTH the containing file's dir AND the repo root, and is
+    only reported when NEITHER resolves. CommonMark itself resolves relative to the
+    containing file, so `src.parent` alone is markdown-correct — but this tool detects DRIFT,
+    it does not lint markdown, and flagging a path that demonstrably EXISTS is a false
+    positive against that purpose. Re-basing to the repo root ALONE would be equally wrong:
+    it would break legitimate home-relative links. Try both; report only a target that exists
+    nowhere — the true-positive (a link to nothing) is untouched. (WO-029 class 2)
+    """
     items: list[dict] = []
+    repo_root = home.parent
     sources: list[Path] = []
     if (home / "INDEX.md").is_file():
         sources.append(home / "INDEX.md")
     wo_dir = home / "work-orders"
     if wo_dir.is_dir():
-        sources.extend(sorted(f for f in wo_dir.glob("*.md") if WO_FILE.match(f.name)))
+        sources.extend(sorted(f for f in wo_dir.glob("*.md") if wo_nnn(f.name)))
     for src in sources:
         rel = src.relative_to(home).as_posix()
         for tgt in extract_links(_read(src) or ""):
-            if not (src.parent / tgt).exists():
-                items.append({"kind": "dead-link", "file": rel, "link": tgt,
-                              "finding": f"{rel} -> {tgt} does not resolve -> "
-                                         "fix the link or restore the target"})
+            if (src.parent / tgt).exists() or (repo_root / tgt).exists():
+                continue
+            items.append({"kind": "dead-link", "file": rel, "link": tgt,
+                          "finding": f"{rel} -> {tgt} resolves neither beside the file nor at "
+                                     "the repo root -> fix the link or restore the target"})
     return items
 
 

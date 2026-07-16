@@ -18,6 +18,48 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v16 — 2026-07-16
+breaking: no
+
+Canary **external validity** (WO-029) — the canary encoded the engine's *own* conventions as if they
+were the schema. They were one sample. On an independently-evolved downstream repo the ledger check was
+**loud *and* blind**: hundreds of findings, nearly all false, while a real duplicate-NNN collision sat
+in front of it unseen. Fixed as *tolerance, never blindness* — every relaxation keeps its true-positive
+test:
+
+- **Work-order filenames** (`scripts/canary.py`): the hardcoded `WO-NNN-<slug>.md` regex became a list
+  of known forms — the engine's hyphen form plus an underscore `work_NNN_` form and a diagnostic
+  `bug_NNN_` form — each yielding NNN, so duplicate / orphan / row→file detection **actually runs** on a
+  ledger that doesn't use the engine's naming. A name matching no known form is still reported.
+- **Ledger section headings**: matched by prefix, not by a literal — the heading's tail (e.g. a
+  `(by severity)` parenthetical) is legitimate variation. When a section carries no table, a
+  **prose/blockquote ledger** is parsed via each item's identity-position NNN plus a top-up from linked
+  work-order files. A section that is neither remains `cannot-parse`.
+- **Link resolution**: a target now resolves against the containing file's dir **or** the repo root, and
+  is reported only when **neither** resolves. Flagging a path that demonstrably exists was a false
+  positive against the tool's purpose (it detects drift; it does not lint markdown).
+- **Lens registries**: a Lens cell may be a bare stem **or** a markdown link (the target's stem is the
+  name) — a link cell used to double-report one condition as two findings. Lens provenance accepts
+  `imported:` **or** `authored:`: a distilled lens should not have to record false provenance.
+- **Managed-block data loss** (`scripts/scaffold.py`): `ensure_claude_section` replaced the block's
+  contents wholesale, silently destroying anything inside it — on a refresh the engine itself
+  recommends, while the docs pointed a profile pointer *into* that file without saying to keep it
+  outside the markers. It now carries unrecognized in-block lines through the refresh and **reports**
+  them (status `preserved`); ordinary drift is still replaced. Silence was the defect. The docs
+  (`assets/CLAUDE-section.md.tmpl`, `references/bridge.md`, `references/upgrade.md`) now pin `_meta` and
+  anything repo-owned **outside** the markers.
+- **Gate escape** (`SKILL.md`): a convention mismatch must never freeze a healthy ledger. An operator or
+  a repo's BRIDGE may **descope a canary category**, recording the deviation; a descoped category
+  **reports but does not gate**. The gate binds on *actionable* findings.
+- **Root cause — fixture bias** (`.gitos/tools/selftest.py`): the prior gate's fixtures were hand-built
+  to match the canary's assumptions, so a green suite proved internal consistency, not external
+  validity. A new gate runs the canary against shapes observed in real downstream repos and asserts both
+  directions: legitimate shapes are silent, and the seeded real collision **is** caught.
+
+Additive and strictly more tolerant: every shape that passed at v15 still passes (a repo clean at v15
+had no nonconforming filenames by definition, so the widened forms cannot newly flag it), and the block
+refresh now preserves what it used to delete.
+
 ## v15 — 2026-07-14
 breaking: no
 
