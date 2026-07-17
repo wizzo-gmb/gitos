@@ -97,9 +97,18 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
 5. **Adjudicate the notes.** Read the Implementer notes; ACCEPT each (→ brain / follow-up work-order)
    or REJECT (one-line reason). Out-of-scope footprint = defect → revert. → *Dispatch + verify.*
    *Gate:* every note is routed before you continue.
-6. **Commit.** Commit the verified work; record the sha.
+6. **Commit.** Commit the verified work; record the sha. **A commit is scoped to one work-order, the
+   same way an edit is** — so **stage by explicit path**. Staging is directory-shaped and work-orders
+   are not: a bulk stage takes whatever a dispatched agent has in flight, and the disjoint-files gate
+   you set at step 3 dies at your own commit. Before committing, read the staged set back
+   (`git diff --cached --stat`) and compare it against this work-order's scope — an unexpected path
+   there is the same defect as an implementer editing an unnamed file: out-of-scope footprint (step 5).
+   Caught there it is **unstaged**, not excused — the gate below forbids committing it. **Disclosure is
+   for the sweep you find too late:** once the commit exists, name it in the next one and correct
+   forward; never rewrite a published commit to look clean. The ledger is an audit trail, not a tidy
+   story — and a sweep you hid is a boundary failure with the evidence deleted.
    *Gate:* **nothing is committed before steps 4–5 pass** — no commit of an unverified or
-   un-adjudicated landing.
+   un-adjudicated landing — and **the staged set matches this work-order's scope.**
 7. **Update INDEX + maintain the brain.** Move the item open→resolved (with sha); upsert/reconcile,
    write a decision page on any non-trivial choice, run `brain_lint` + `canary.py`, reflection-pass
    the forward-positive invariant. → *INDEX lifecycle · Brain stewardship.*

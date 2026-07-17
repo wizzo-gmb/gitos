@@ -141,16 +141,25 @@ Direct the running orchestrator to:
   holds byte-copies of the engine's own scripts (`brain_lint.py`, `canary.py`, and any future
   tool the engine lays there) — **engine artifacts, not repo content**: a cache of the
   installed skill that the briefs invoke by home path. For **each** tool the engine ships into
-  `<home>/tools/`, byte-compare the home copy against the skill's
-  (`~/.claude/skills/gitos/scripts/<tool>.py`):
+  `<home>/tools/`, compare the home copy against the skill's
+  (`~/.claude/skills/gitos/scripts/<tool>.py`) — **normalizing line endings first**:
   - **missing** → byte-copy it in (preserve LF) and report it;
-  - **byte-identical** → no-op, silently — no churn, no false "updated";
-  - **different** → **report it, then refresh it.** A byte-compare proves *different*, not
+  - **identical** → no-op, silently — no churn, no false "updated";
+  - **different** → **report it, then refresh it.** The compare proves *different*, not
     *why*: the copy is stale, or hand-modified, and you cannot tell which — so say exactly
     that. Name the tool, state that the home copy differed and was replaced from the skill,
     and note the prior bytes are recoverable from git (the engine requires version control).
     Don't ask: a stale copy has one right answer, and a prompt per tool per upgrade teaches
     the operator to skip the very fix the upgrade exists to deliver.
+
+  *Why line endings are normalized before comparing, and not treated as a difference:* a line
+  ending is how git wrote the file out, not part of the tool. `core.autocrlf=true` is the
+  Git-for-Windows installer default and `<home>/` is deliberately git-tracked, so a raw
+  byte-compare calls **every fresh Windows clone of a compliant repo** stale — and "refreshing"
+  it only rewrites bytes that the next clone converts straight back. `canary.py`'s `tool`
+  category applies the identical predicate (`same_tool`), so the rule and the check that
+  observes it cannot disagree about what a changed tool is. Byte-identity is `sync_to_live`'s
+  contract, because a mirror's job is exact bytes; it was never this one's.
 
   **Never silently skip; never silently overwrite** — the two are the same failure wearing
   different clothes. The rule this replaced copied a tool only when it was *absent*, which made

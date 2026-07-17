@@ -15,6 +15,8 @@ cover:
   - brain delegation        (if a brain exists, run brain_lint and fold its findings in)
   - durable anchor          (repo-root CLAUDE.md carries the gitos block — the canary's own
                              recovery seed; missing/stale block is a finding, no CLAUDE.md a skip)
+  - engine tool copies      (<home>/tools/<t>.py byte-compared against the skill's scripts/<t>.py;
+                             a home copy that DIFFERS is reported — never refreshed here)
 
 Graceful no-ops: empty home / no brain / no lenses -> that check is SKIPPED and reported as
 skipped (its own [--] line per sub-check) — never silently CLEAN. A parse failure is a
@@ -45,7 +47,54 @@ from pathlib import Path
 from urllib.parse import unquote
 
 PAGE_TYPES = ("sources", "entities", "concepts", "decisions")   # brain_lint's constant
-CATEGORIES = ("ledger", "counts", "stamp", "lenses", "links", "brain", "anchor")
+CATEGORIES = ("ledger", "counts", "stamp", "lenses", "links", "brain", "anchor", "tool")
+# The engine's home tool copies (WO-034). <home>/tools/ holds byte-copies of the engine's own
+# scripts — engine artifacts, a cache of the installed skill that the briefs invoke by home
+# path. `upgrade` refreshes them (references/upgrade.md step 4); this category is what NOTICES
+# when it didn't.
+#
+# THE SET IS DERIVED, NOT ENUMERATED (WO-029/031/033, the fourth time): the engine's home tools
+# are the names present in BOTH <home>/tools/ and <skill>/scripts/. Neither side alone is the
+# rule — <skill>/scripts/ alone would demand scaffold.py in every home (it is never copied
+# there), and <home>/tools/ alone would claim every repo-local tool an operator ever parked in
+# the dir. The INTERSECTION is exactly "an engine script this home carries a copy of", which is
+# the set upgrade's rule already governs ("each tool the engine ships into <home>/tools/") and
+# the set scaffold already lays. A future tool the engine lays there is covered on the day it
+# ships, with no edit here and no engine release for the repo that meets it first.
+#
+# ONLY <home>/tools/ IS EVER READ. `<home>/agents/` is OPERATOR CONTENT, not an engine artifact
+# — the v12/v13 boundary, re-pinned by WO-032. It is not reachable from this check by
+# construction: the dir is never named here. Blurring the two categories is the failure that
+# destroys operator data.
+#
+# A tool ABSENT from <home>/tools/ is NOT a finding: SKILL.md's fallback runs the skill's own
+# current copy, so a home without a copy cannot be stale — those repos were never victims. This
+# category is about a copy that EXISTS and has drifted; delivering a missing one is upgrade's job.
+TOOL_SRC_DIR = "scripts"      # where the skill keeps the originals
+TOOL_HOME_DIR = "tools"       # where a home keeps its copies (NEVER `agents/` — operator content)
+
+
+def same_tool(a: bytes, b: bytes) -> bool:
+    """Two copies are THE SAME TOOL if they differ only in how a checkout wrote their newlines.
+
+    NOT a byte-compare, and the distinction is the whole point. `sync_to_live` byte-compares
+    because it is a MIRROR — byte-identity IS its contract. This check asks a different question
+    ("is the home carrying the same tool the skill ships?"), and a line ending is how git wrote
+    the file out, not part of the tool. The same primitive serving two contracts needs two
+    normalizations; using the mirror's predicate here was the bug.
+
+    WHY IT MATTERS: `core.autocrlf=true` is the Git-for-Windows installer default (system scope),
+    and `<home>/` is deliberately git-tracked. So a byte-compare reports every fresh Windows clone
+    of a fully compliant repo as different — while `upgrade`, the correction it prints, rewrites
+    the bytes, goes quiet, and lets the finding return on the next clone. A correction that does
+    not correct is worse than no finding, and this category GATES.
+
+    KNOWN LIMIT, stated rather than wished away: copies differing ONLY by a literal CRLF inside a
+    string would compare equal. A tool source carrying raw CRLF bytes in a literal is pathological
+    — every checkout it survives would mangle it anyway — and the cost is one missed finding, not
+    a wrong one.
+    """
+    return a.replace(b"\r\n", b"\n") == b.replace(b"\r\n", b"\n")
 # The durable context anchor (WO-028): the gitos managed block in repo-root CLAUDE.md,
 # the canary's own recovery seed. The block must carry these tokens or it can't do its job.
 CLAUDE_ANCHOR_START = "<!-- gitos:agent-system START -->"
@@ -676,6 +725,76 @@ def check_anchor(claude_path: Path) -> list[dict]:
     return items
 
 
+def check_tools(home: Path, skill_dir: Path | None) -> tuple[list[dict], str | None]:
+    """The engine's home tool copies: <home>/tools/<t>.py vs <skill>/scripts/<t>.py.
+    -> (items, skip-reason | None-if-compared).
+
+    REPORTS, NEVER FIXES. Refreshing a stale copy is `upgrade`'s job (references/upgrade.md
+    step 4). A canary that refreshed would be the same category error upgrade's rule was just
+    corrected for: silently overwriting a copy an operator may have edited. This check's whole
+    contribution is that the refresh stops depending on someone remembering.
+
+    SAYS "DIFFERENT", NOT "WHY". The compare proves the copy is not the skill's; it cannot
+    distinguish stale from hand-modified, and it does not guess. Both have the same correction
+    (`upgrade` — which reports and refreshes, with the prior bytes recoverable from git), so
+    naming a cause would add a claim without adding an action.
+
+    COMPARES CONTENT, NOT BYTES (see same_tool). Line endings are a checkout artifact, not part
+    of the tool: byte-comparing flags every fresh Windows clone of a compliant repo, and this
+    category gates. Verified against the real fleet, not a fixture — normalizing silenced a
+    line-endings-only copy while both genuinely-drifted copies stayed red.
+
+    THE SELF-REFERENCE WRINKLE (WO-034, WO-028's shape): a STALE home canary cannot report its
+    OWN staleness — a copy predating this check simply has no such check to run, and stays quiet
+    about being old. A detector cannot detect its own absence. This is not solvable from inside
+    (a bootstrap trick would only move the trust, not remove it) and it does not need to be: the
+    LAYER ABOVE terminates it. `upgrade` delivers the checking canary (that is WO-032), and a
+    home with no copy at all runs the skill's current one by SKILL.md's fallback. This category
+    is what keeps the copy honest AFTERWARDS. Named here so the limit is a known property rather
+    than a surprise.
+    """
+    items: list[dict] = []
+    if skill_dir is None:
+        return items, "no skill install found"
+    src = skill_dir / TOOL_SRC_DIR
+    if not src.is_dir():
+        return items, f"no <skill>/{TOOL_SRC_DIR}/"
+    home_tools = home / TOOL_HOME_DIR
+    if not home_tools.is_dir():
+        return items, f"no <home>/{TOOL_HOME_DIR}/"
+
+    # DERIVED (see TOOL_SRC_DIR above): the engine tools this home carries copies of = the
+    # names present on BOTH sides. Non-recursive *.py on purpose — __pycache__/ is not a tool.
+    names = sorted({p.name for p in home_tools.glob("*.py")} &
+                   {p.name for p in src.glob("*.py")})
+    if not names:
+        # Nothing to compare is NOT nothing to say: a home whose tools/ holds no engine script
+        # is unchecked, and unchecked must look different from clean. (Tolerance, never blindness.)
+        return items, f"no engine tool copies in <home>/{TOOL_HOME_DIR}/"
+
+    for name in names:
+        try:
+            home_bytes = (home_tools / name).read_bytes()
+            skill_bytes = (src / name).read_bytes()
+        except OSError as e:
+            # An unreadable copy is a FINDING, never a skip — a compare that could not run must
+            # not read as a compare that passed.
+            items.append({"kind": "cannot-read", "tool": name,
+                          "finding": f"<home>/{TOOL_HOME_DIR}/{name} or the skill's copy could "
+                                     f"not be read ({type(e).__name__}) -> fix permissions, then "
+                                     "re-run; an unreadable tool copy cannot be verified"})
+            continue
+        if not same_tool(home_bytes, skill_bytes):
+            items.append({"kind": "tool-stale", "tool": name,
+                          "finding": f"<home>/{TOOL_HOME_DIR}/{name} differs in content from the "
+                                     f"installed skill's copy ({TOOL_SRC_DIR}/{name}) -> run "
+                                     f"`/gitos upgrade` to refresh it. Line endings are normalized "
+                                     f"first, so this is a real difference, not a checkout "
+                                     f"artifact. It proves DIFFERENT, not why: the copy is stale, "
+                                     f"or hand-modified, and this check cannot tell which"})
+    return items, None
+
+
 # --------------------------------------------------------------------------- run + report
 def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60) -> dict:
     r: dict = {"home": str(home), "skill_dir": str(skill_dir) if skill_dir else None,
@@ -755,6 +874,16 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60) -
     else:
         skip("anchor", "no CLAUDE.md at repo root")
 
+    # engine tool copies: the home's cache of the engine's own scripts vs the installed skill.
+    # Reports only — refreshing is `upgrade`'s job (WO-032/WO-034). Reads <home>/tools/ and
+    # <skill>/scripts/ and nothing else: `<home>/agents/` is operator content, not a tool.
+    t_items, t_reason = check_tools(home, skill_dir)
+    r["tool"].extend(t_items)
+    if t_reason is None:
+        checked.add("tool")
+    else:
+        skip("tool", t_reason)
+
     for k in CATEGORIES:      # a category with findings is by definition checked
         if r[k]:
             checked.add(k)
@@ -775,6 +904,7 @@ def print_report(r: dict) -> None:
         ("Link rot (INDEX + open WOs)", "links"),
         ("Brain (delegated brain_lint)", "brain"),
         ("Durable anchor (CLAUDE.md recovery seed)", "anchor"),
+        ("Engine tool copies (<home>/tools/ vs skill)", "tool"),
     ]
     skips: dict[str, list[dict]] = {}
     for s in r["skipped"]:

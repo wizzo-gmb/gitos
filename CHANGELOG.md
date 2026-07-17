@@ -18,6 +18,123 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v22 — 2026-07-17
+breaking: no
+
+**A commit is scoped to one work-order, the same way an edit is** (WO-035). The work loop pinned
+*"anything concurrent touches disjoint files"* at **dispatch** (step 3) and then said only *"Commit the
+verified work; record the sha"* — no rule about **what gets staged**. That gap is not theoretical: staging
+is **directory-shaped and work-orders are not**, so a bulk stage takes whatever a dispatched agent has in
+flight, and the disjointness the orchestrator guaranteed at dispatch dies at its own commit. The gate is
+honoured; the commit defeats it. Step 6 now carries the staging rule: **stage by explicit path**; read the
+staged set back (`git diff --cached --stat`) and compare it against the work-order's scope before
+committing — **an unexpected path there is the same defect as an implementer editing an unnamed file**
+(out-of-scope footprint, the boundary step 5 already enforces on implementers, now applied to the
+orchestrator's own act). The step-6 gate is extended accordingly.
+
+**Disclose, don't rewrite — but disclosure is not a licence.** Two moments, kept distinct: a stray caught
+*at the read-back* is **unstaged**, because the gate forbids committing it; **disclosure is for the sweep
+you find too late** — once the commit exists, it is named in the next one and corrected forward, never
+rewritten to look clean. **The ledger is an audit trail, not a tidy story**, and a commit that
+misdescribes its own contents corrupts the record the engine exists to keep honest. Rewriting would
+destroy the evidence that the boundary failed, which is the fact worth keeping.
+
+**One rule about staging, not one bullet per git incantation** — WO-031's lesson applied at authorship,
+for the fourth work-order running. A list of forbidden commands is an enumeration, and **an enumeration
+fails once per novel form** (`-a`, `.`, `-u`, a GUI's "stage all", whatever ships next). The invariant is
+*explicit paths*; every bulk form is excluded by it without being named, including forms that don't exist
+yet.
+
+**Placement is the point, and it is reasoned:** the rule lands in **step 6, where the promise is kept or
+broken** — not in *Dispatch + verify*, which steps 3–5 point to and step 6 does not. A commit-time rule
+read at dispatch time is a rule read once and applied many turns later under context pressure; that
+distance *is* the failure mode. Per the work-loop spine's own governing choice (a spine **points** to the
+detailed sections rather than restating them), the rule is stated once, at the boundary, and binds to the
+existing out-of-scope-footprint notion by reference rather than by copy.
+
+**Known limit, stated plainly rather than implied away: this is a directive, and directives decay.** The
+engine's own thesis — *if an invariant depends on someone remembering, it eventually fails* — applies to
+this fix as much as to any other, and this rule exists precisely because a correct rule was forgotten one
+turn after it was written. The directive is necessary and demonstrably followable; it is **not** claimed to
+be sufficient. The mechanism that would close it (a check comparing a commit's footprint against the
+work-order that owns it) is **blocked on a primitive the engine does not have** — no machine-readable
+binding from a work-order to the paths it owns; scope is prose. That primitive, not the check, is the
+next question.
+
+---
+
+## v21 — 2026-07-16
+breaking: no
+
+**The canary reports a home tool copy that differs from the skill's** (WO-034). v19 fixed the *rule* —
+`upgrade` now **delivers** the engine's `<home>/tools/` copies instead of only seeding them. Nothing made
+that observed. The gate that shipped the rule named its own residual gap plainly: *an upgrade step is
+prose an orchestrator performs; there is no function to call, so no gate proves an orchestrator
+complied.* This is the structural counterpart — a new **`tool` category**: for each engine tool a home
+carries a copy of, compare it against the installed skill's. Identical → silent. Different →
+`tool-stale`, naming the tool and the correction (`/gitos upgrade`). The canary already runs at every
+orchestrator bootstrap, so drift now surfaces on the **next session in the repo that has it**, without
+anyone remembering to look. **If an invariant depends on someone remembering, it eventually fails** —
+so it is now a check, not a directive.
+
+**⚠️ Adopters: a repo carrying a stale or hand-edited home tool copy now goes RED where it was green —
+and because the canary gates work-order resolution, that red BLOCKS resolution until the copy is
+refreshed.** Flagged `breaking: no` deliberately, and the reasoning is stated rather than assumed: this
+removes no directive and demands no migration *beyond* a clean adoption — the documented `upgrade` flow
+refreshes the tools in step 4, so a repo adopting v21 through that path is silent on the new category by
+the time the canary runs. An un-migrated repo does not behave *incorrectly*; it gets a finding it always
+deserved. But the red is real, it is new, and a repo that adopts the canary while skipping the refresh
+will feel it — hence the warning, not a silent flag. **The pressure valve already exists and is
+unchanged:** a repo that wants this category to report without gating **descopes** it (SKILL.md →
+*Canary*), the mechanism v16 established for exactly this.
+
+**Says "different", not "why" — and reports, never fixes.** The compare proves the content is not the
+skill's; it cannot distinguish *stale* from *hand-modified*, so it does not guess (v19's honesty, kept).
+Both have the same correction, so naming a cause would add a claim without adding an action. And the
+canary does not refresh what it finds: **refreshing is `upgrade`'s job**. A canary that edited would be
+the same category error v19 had just corrected.
+
+**Line endings are normalized before comparing — a CRLF checkout is not a stale tool.** `<home>/` is
+deliberately git-tracked and `core.autocrlf=true` is the Git-for-Windows installer default, so a raw
+byte-compare calls **every fresh Windows clone of a fully compliant repo** stale — and since this
+category gates, it would hard-block a board that did nothing wrong, printing a correction (`upgrade`)
+that rewrites the bytes and lets the next clone bring the finding right back. *A correction that does
+not correct is worse than no finding.* Both `upgrade`'s step-4 rule and the canary now apply the same
+predicate, so the rule and the check observing it cannot disagree about what a changed tool is.
+Byte-identity remains the right contract for a **mirror** — it was never the right one for *"is this the
+same tool?"*. Caught pre-landing against the real fleet rather than a fixture: normalizing silenced a
+line-endings-only copy while both genuinely-drifted copies stayed red — tolerance, never blindness.
+
+**The tool set is DERIVED, not enumerated** — the fourth work-order to say so, applied at authorship.
+The engine's home tools are the names present in **both** `<home>/tools/` and the skill's `scripts/`.
+Neither side alone is the rule: the skill's side alone would demand `scaffold.py` in every home (it is
+never copied there), and the home's side alone would claim every repo-local tool an operator parked in
+the dir. The intersection is exactly *"an engine script this home carries a copy of"* — the set the
+upgrade rule already governs and scaffold already lays. A future tool the engine ships into a home is
+covered the day it ships, with no edit here and no release for the repo that meets it first.
+
+**Boundaries kept.** `<home>/agents/` is **operator content, not a tool**, and is not reachable from
+this check by construction — the selftest plants a decoy in `agents/` named exactly like an engine
+script and differing from it; if the check ever reaches there, the gate goes red. A tool **absent** from
+`<home>/tools/` is **not** a finding: SKILL.md's fallback runs the skill's own current copy, so a home
+without a copy cannot be stale — those repos were never victims. No `<home>/tools/`, no resolvable skill
+install, or no engine copies to compare → **visible skip**, never a false-CLEAN (*tolerance, never
+blindness*).
+
+**The self-reference limit, named rather than papered over.** A **stale canary cannot report its own
+staleness** — a copy predating this check has no such check to run. A detector cannot detect its own
+absence. This is not solvable from inside, and it does not need to be: the **layer above** terminates it.
+`upgrade` delivers the checking canary (v19), and a home with no copy at all already runs the skill's
+current one. This category is what keeps the copy honest *afterwards*. No bootstrap trick was attempted.
+
+Gate 9 extended to the new category in all three phases, mutation-tested **both** directions (5/5 RED:
+neuter; flag-an-identical-copy; reach into `agents/`; and both one-sided derivations). Its positive case
+asserts the compare **ran** — this category skips itself into silence, so "no findings" alone would pass
+a check that never looked. Its negative case mutates the home copy to be byte-different but
+behaviourally **identical**, which is the honest test of a check that promises *different, not why*.
+
+---
+
 ## v20 — 2026-07-16
 breaking: no
 
