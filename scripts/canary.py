@@ -258,23 +258,50 @@ def section_lines(text: str, heading_prefix: str) -> list[str] | None:
     return None
 
 
-def prose_nnns(block: list[str]) -> list[str]:
-    """Row NNNs of a PROSE/blockquote ledger section — the fallback when a section carries
-    no table at all. Two deterministic signals, in order:
+def prose_row_nnns(block: list[str]) -> list[str]:
+    """Line-head identity NNNs of a PROSE/blockquote ledger section: one per line that LEADS
+    with an NNN at the identity position (see PROSE_NNN), fenced code skipped. This is the
+    prose ROW signal — the `> 042 = ...` / `- 042: ...` blockquote/list entries a section
+    carries as text.
 
-      1. the NNN in each item's IDENTITY position (the line head — see PROSE_NNN);
+    It deliberately does NOT harvest markdown-LINKED work-order files: a link to a work-order
+    inside a table cell or a sentence is a CROSS-REFERENCE, not a row of THIS section. That
+    link top-up (prose_nnns) belongs only to a section with no table of its own, where a row
+    may be carried solely as a link; folding it into a table section would manufacture a
+    phantom row out of every citation (WO-038). Fenced code is skipped so an EXAMPLE ledger
+    row shown in a ``` block is never read as a real row. Duplicates are preserved — a real
+    duplicate-NNN collision in prose must still be caught."""
+    out: list[str] = []
+    in_fence = False
+    for ln in block:
+        if FENCE.match(ln):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = PROSE_NNN.match(ln)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+def prose_nnns(block: list[str]) -> list[str]:
+    """Row NNNs of a PROSE/blockquote ledger section with NO table of its own — the fallback
+    shape. Two deterministic signals, in order:
+
+      1. each item's line-head IDENTITY-position NNN (prose_row_nnns);
       2. a top-up from work-order files LINKED in the section, for rows carried only as a
          markdown link.
 
     (2) contributes only NNNs (1) did not already see, so a row that both leads with its NNN
     and links its own file counts ONCE — one row, never a phantom duplicate. Duplicates
     WITHIN (1) are preserved: a real duplicate-NNN collision in a prose ledger must still be
-    caught. Empty -> the caller reports cannot-parse (no false-CLEAN)."""
-    out: list[str] = []
-    for ln in block:
-        m = PROSE_NNN.match(ln)
-        if m:
-            out.append(m.group(1))
+    caught. Empty -> the caller reports cannot-parse (no false-CLEAN).
+
+    The link top-up is EXCLUSIVE to a no-table section. A section that also has a table folds
+    in only signal (1) via prose_row_nnns — see check_ledger — because in a table section a
+    markdown link is a citation, not a row (WO-038)."""
+    out = prose_row_nnns(block)
     seen = set(out)
     for tgt in extract_links("\n".join(block)):
         nnn = wo_nnn(Path(tgt).name)
@@ -388,25 +415,31 @@ def check_ledger(home: Path) -> list[dict]:
                           "finding": "work-orders exist but INDEX.md is missing -> restore the ledger"})
         return items
 
-    # Table first (the engine's own shape); when a section carries no table at all, fall back
-    # to a PROSE/blockquote ledger — an equally legitimate downstream shape. Only a section
-    # that is neither a table nor a recognizable prose ledger is cannot-parse. (WO-029 class 3)
+    # Each section contributes the UNION of its table-row NNNs and its prose/blockquote row
+    # NNNs (WO-038). A real section can be BOTH a summary/subsection table AND prose entries;
+    # the engine used to read it as a table XOR a prose ledger (table-first), so the instant a
+    # section carried any table — even a header-only or one-row table — its prose rows went
+    # unparsed and every prose-tracked work-order phantom-orphaned. The prose ROW signal folded
+    # into a table section is the LINE-HEAD identity only (prose_row_nnns) — never the
+    # citation-link top-up (prose_nnns), which would turn every cross-reference link in a cell
+    # into a phantom row. A section with NO table at all keeps the full prose fallback
+    # (line-head rows + link-only rows), unchanged. Only a section that is neither a table nor
+    # a recognizable prose ledger is cannot-parse. (WO-029 class 3; WO-038)
+    #
+    # UNION is the safe direction for orphans: adding NNNs to a section's tracked set can only
+    # REMOVE orphan-file findings, never add one. A genuinely stray file (no table row AND no
+    # prose row) is still absent from the union and MUST still orphan. It CAN newly surface a
+    # rows->files finding (a prose row whose file is missing / sits in the wrong dir) — that is
+    # a real finding the XOR was hiding, not a false positive.
     open_block = section_lines(idx_text, OPEN_HEADING)
     res_block = section_lines(idx_text, RESOLVED_HEADING)
     open_rows = _table_rows(open_block) if open_block is not None else None
     res_rows = _table_rows(res_block) if res_block is not None else None
-    open_prose = prose_nnns(open_block) if open_block is not None and open_rows is None else []
-    res_prose = prose_nnns(res_block) if res_block is not None and res_rows is None else []
+    open_prose_rows = prose_row_nnns(open_block) if open_block is not None else []
+    res_prose_rows = prose_row_nnns(res_block) if res_block is not None else []
 
     open_nnns: list[str] = []
-    if open_rows is None and open_prose:
-        open_nnns = open_prose            # prose ledger — a legitimate shape
-    elif open_rows is None:
-        items.append({"kind": "cannot-parse", "section": OPEN_HEADING,
-                      "finding": f"no '{OPEN_HEADING}...' section with a table or a "
-                                 "recognizable prose ledger -> not a recognizable ledger; "
-                                 "fix INDEX.md"})
-    else:
+    if open_rows is not None:
         for row in open_rows:
             nnn = clean_cell(row[0]) if row else ""
             if NNN_RE.fullmatch(nnn):
@@ -414,16 +447,22 @@ def check_ledger(home: Path) -> list[dict]:
             else:
                 items.append({"kind": "cannot-parse", "section": "open", "cell": nnn,
                               "finding": f"open row col-1 '{nnn}' is not a 3-digit NNN -> fix the row"})
+        # fold in prose/blockquote rows the table did not already carry (dedup against the
+        # TABLE set only — a prose-internal duplicate collision is preserved for the check below)
+        seen_open = set(open_nnns)
+        open_nnns += [n for n in open_prose_rows if n not in seen_open]
+    else:
+        open_prose = prose_nnns(open_block) if open_block is not None else []
+        if open_prose:
+            open_nnns = open_prose        # prose-only ledger — a legitimate shape
+        else:
+            items.append({"kind": "cannot-parse", "section": OPEN_HEADING,
+                          "finding": f"no '{OPEN_HEADING}...' section with a table or a "
+                                     "recognizable prose ledger -> not a recognizable ledger; "
+                                     "fix INDEX.md"})
 
     res_nnns: list[str] = []
-    if res_rows is None and res_prose:
-        res_nnns = res_prose              # prose ledger — a legitimate shape
-    elif res_rows is None:
-        items.append({"kind": "cannot-parse", "section": RESOLVED_HEADING,
-                      "finding": f"no '{RESOLVED_HEADING}...' section with a table or a "
-                                 "recognizable prose ledger -> not a recognizable ledger; "
-                                 "fix INDEX.md"})
-    else:
+    if res_rows is not None:
         for row in res_rows:
             nnn = clean_cell(row[0]) if row else ""
             if NNN_RE.fullmatch(nnn):
@@ -432,6 +471,17 @@ def check_ledger(home: Path) -> list[dict]:
                 items.append({"kind": "cannot-parse", "section": "resolved", "cell": nnn,
                               "finding": f"resolved row col-1 '{nnn}' is neither a 3-digit NNN "
                                          "nor an em-dash -> fix the row"})
+        seen_res = set(res_nnns)
+        res_nnns += [n for n in res_prose_rows if n not in seen_res]
+    else:
+        res_prose = prose_nnns(res_block) if res_block is not None else []
+        if res_prose:
+            res_nnns = res_prose          # prose-only ledger — a legitimate shape
+        else:
+            items.append({"kind": "cannot-parse", "section": RESOLVED_HEADING,
+                          "finding": f"no '{RESOLVED_HEADING}...' section with a table or a "
+                                     "recognizable prose ledger -> not a recognizable ledger; "
+                                     "fix INDEX.md"})
 
     # duplicate NNNs — within a section, and across open/resolved
     for section, nnns in (("Open", open_nnns), ("Resolved", res_nnns)):
@@ -454,9 +504,10 @@ def check_ledger(home: Path) -> list[dict]:
                       "finding": f"WO-{nnn} present in both work-orders/ and resolved/ -> keep exactly one"})
 
     # rows -> files (per side, only when that side parsed — no cascades on cannot-parse).
-    # "parsed" = a table OR a recognized prose ledger; a prose side is a real row set.
-    open_parsed = open_rows is not None or bool(open_prose)
-    res_parsed = res_rows is not None or bool(res_prose)
+    # "parsed" = a table OR a recognized prose ledger; a prose side is a real row set. A table
+    # side that folded in prose rows is still parsed (open_rows is not None).
+    open_parsed = open_rows is not None or bool(open_nnns)
+    res_parsed = res_rows is not None or bool(res_nnns)
     if open_parsed:
         for nnn in open_nnns:
             if nnn in on_root:

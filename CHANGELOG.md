@@ -18,6 +18,60 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v23 — 2026-07-17
+breaking: no
+
+**A ledger section is a table UNION its prose, not a table XOR its prose** (WO-038). The canary read each
+INDEX section as a table *or* a prose/blockquote ledger, table-first: `_table_rows` returns non-None the
+moment a section carries **any** table — even a header-only or one-row summary/subsection table — so the
+prose branch never ran, and every work-order tracked **only** by a blockquote/list row went unparsed.
+Because the files→rows scan then sees those work-order files with no matching row, each one was reported
+as `orphan-file` — a phantom. The failure was **loud *and* blind**: it manufactured false `orphan-file`
+findings while the section's real prose rows stayed invisible, and the ledger category **gates**
+work-order resolution, so a single prose-only row in an otherwise-healthy mixed section would freeze the
+board. `check_ledger` now folds each section's prose rows into its tracked set as a **union** with the
+table rows.
+
+- **Line-head prose rows only — never the citation-link top-up.** The prose fallback for a *no-table*
+  section has two signals: line-head identity rows (`> 042 = …`, `- **Bug 042** …`) and a top-up that
+  recovers a row carried solely as a markdown link. Only the **line-head rows** (new `prose_row_nnns`)
+  are folded into a section that also has a table. In a table section a markdown link is a **citation**,
+  not a row — folding the link top-up would turn every cross-reference in a cell into a phantom row and
+  manufacture *new* false positives (a cited-but-resolved work-order would surface as a bogus open row).
+  The link top-up stays exclusive to a no-table section, whose behaviour is unchanged.
+- **UNION is the safe direction for orphans, and it stays tolerance-not-blindness.** Adding NNNs to a
+  section's tracked set can only **remove** `orphan-file` findings, never add one; a genuinely stray file
+  (no table row **and** no prose row) is still absent from the union and **still orphans**. What the fix
+  does newly surface is *correct*: a prose row whose file is missing is now caught as
+  `open-row-missing-file`, and one whose file sits in the wrong directory as `open-row-file-in-resolved` /
+  `resolved-row-file-in-root` — real inconsistencies the XOR was hiding, not new false positives.
+- **Every true-positive guard is intact, and prose parsing is now *stricter* inside a table section.** The
+  line-head anchor (a bare mid-line number can't manufacture a row), the `NNN\b` closer, duplicate
+  detection (a prose-internal collision is still caught — the union dedups a prose row against the
+  **table** set only, never against itself), and the fenced-code skip all hold. The row scan now skips
+  fenced code, so an **example** ledger row shown in a ``` block is never read as a real row — this matters
+  more now that prose is parsed inside table sections, which are likelier to carry examples.
+- **`cannot-parse` is unchanged:** a section that is neither a table nor a recognizable prose ledger is
+  still `cannot-parse`, never silently CLEAN. The orphan-scan guard (`open_rows is not None and res_rows
+  is not None`) is deliberately **left as-is**: a *pure-prose* section keeps its conservative best-effort
+  treatment; this defect is specific to the **mixed** section, where that guard already passes. Widening
+  the orphan scan to pure-prose ledgers is a separate question, not folded in here.
+- **New selftest gate** (`.gitos/tools/selftest.py`, 14 gates) pins a mixed table+prose section:
+  blockquote rows whose files exist are tracked (no phantom orphan), a genuinely stray file **still**
+  orphans (anchored on `count == 1`), a citation link / a fenced example / a mid-line number **never**
+  become rows, a prose row with no file **does** fire `open-row-missing-file`, and a prose-internal
+  duplicate is still caught. Mutation-tested five ways, each RED: revert to the XOR, neuter the fold, fold
+  the link top-up, drop the fence skip, and over-broaden the row match to a bare mid-line number.
+
+`breaking: no` — strictly more tolerant on the false-positive it removes (a repo phantom-frozen by a mixed
+section goes green), and measured **finding-neutral on every reachable ledger today**. ⚠️ **One thing to
+know:** a repo with a *mixed* section whose prose rows point at a **missing** or **misplaced** file will
+now see the correct `open-row-missing-file` / `*-file-in-*` finding that the XOR was hiding — a real
+ledger inconsistency surfaced, not a migration burden; the pressure valve (descope the category to
+report-without-gating) is unchanged.
+
+---
+
 ## v22 — 2026-07-17
 breaking: no
 
