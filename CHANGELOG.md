@@ -18,6 +18,56 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v20 — 2026-07-16
+breaking: no
+
+**The canary identifies a work-order by a RULE, not by a list of forms** (WO-033). Three work-orders,
+one error, three altitudes: the check hardcoded the engine's own filename regex (*"they were one
+sample"*), the remedy enumerated three samples (*"a four-item list is still a list of samples"*), and
+v18 folded the underscore forms but still enumerated **prefixes**. Enumeration is a strategy that
+**fails once per novel downstream**, and each failure costs that repo its resolution gate until the
+engine ships — so the next ledger writing `task_007_x.md` or `WO007-x.md` was already scheduled to land
+in the same place. This ends the class instead of lowering its rate.
+
+**The rule: the directory is the scope.** Files under `<home>/work-orders/` are work-orders by
+construction, so a filename does not have to prove it is one — it only has to yield an **identity**: an
+optional letter prefix and separator, then **exactly three digits**, then a separator and a slug. The
+prefix carries no meaning and is no longer inspected. `WO-007-x.md`, `wo_007_x.md`, `bug_007_x.md`,
+`task_007_x.md`, `WO007-x.md`, `007-x.md` and whatever the next repo invents all resolve, with no engine
+release. Measured against **every ledger reachable from the engine's environment (312 files)**: the new
+rule and the old list agree on **all 312** — the change buys no existing repo anything, and that is the
+honest claim. Its entire value is that the next novel form costs nothing.
+
+**Tolerance, never blindness — both halves tested.** `IDENT_NNN` is now the engine's single notion of
+"exactly three digits, closed", shared by the filename rule and the prose-row rule so the two cannot
+drift; a name with no readable identity is still reported (`wo_1234_x.md` four digits, `wo1234_x.md` the
+backtrack trap — the rule's prefix is letters-only precisely so a digit cannot be backtracked out of it
+into a phantom WO-234, `WO-1-x.md` one digit, `notes.md` none, `wo_029b_x.md` a suffixed identity this
+ledger model cannot represent and therefore reports rather than flattening onto its sibling). The two
+identity rules share a core but **not** a prefix policy, deliberately: a filename is scoped by its
+directory, a prose line by nothing but its anchor, so an open prose prefix would read `**Fixed 240
+findings**` as row 240. Gate 11 now bites in **both** directions — narrowing to any prefix enumeration,
+widening to `\d{3,4}`, tolerating digits in the prefix, re-importing enumeration from the other end (a
+`notes_` exclusion), or "unifying" the two rules by opening the prose prefix each turn it red.
+
+**The blindness risk, pinned rather than wished away.** A non-work-order carrying an identity
+(`notes_007_draft.md`) **is** adopted as WO-007; no filename signal separates it from `task_007_real.md`,
+and a name-shaped heuristic to tell them apart would re-import the enumeration just removed. What is
+guaranteed is that adoption is never **silent** — with no INDEX row it surfaces as `orphan-file`, against
+a real WO-007 as `duplicate-file` naming both. The cost is a finding with a different **label**, never a
+missed one, bounded by a directory that holds nothing but work-orders. The probe found **zero**
+non-work-order `.md` files across every reachable ledger, and the one near-miss — a memo deliverable
+named after its own work-order — **already** matched v18's enumeration, so the prefix list never
+protected against this class in the first place.
+
+`breaking: no` — the rule is strictly more tolerant (nothing v18 accepted is now rejected, proved on all
+312 real files); no migration action is required. Two caveats named rather than buried: a ledger holding
+an identity-carrying non-work-order will see that finding change **label** (`nonconforming-wo-filename` →
+`orphan-file`/`duplicate-file`), and the module constant `WO_FILE_FORMS` is gone, replaced by
+`WO_FILE_RE` + `IDENT_NNN` (a plural "forms" name would have preserved the framing this WO removes).
+
+---
+
 ## v19 — 2026-07-16
 breaking: no
 

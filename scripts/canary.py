@@ -56,30 +56,74 @@ ANCHOR_TOKENS = ("[gitos ·", "canary.py", "SKILL.md")   # marker + the two reco
 # others a bare heading. The heading names the section; it is not a schema. (WO-029 class 3)
 OPEN_HEADING = "## Open work-orders"
 RESOLVED_HEADING = "## Resolved"
-# Work-order FILENAME conventions, one regex per known ledger form, each capturing NNN.
-# The engine's own form is ONE SAMPLE, not the schema — hardcoding it made the ledger check
-# loud AND blind on any repo that names its work-orders differently (WO-029 class 1). A name
-# matching no form is still reported (nonconforming-wo-filename) — tolerance, never blindness.
+# --------------------------------------------------------------- the identity position
+# The engine's ONE notion of where a work-order's identity lives. Both users below build on
+# it — the FILENAME rule and the PROSE-ROW rule — so the two cannot drift apart (WO-033).
 #
-# The underscore forms are ONE pattern, not three entries: `<prefix>_NNN_<slug>.md` is a
-# convention, and enumerating the prefixes one had happened to see is what made this list
-# short by exactly the prefix nobody sampled (WO-031). Expressing the shape covers the
-# forward `wo_` sibling of the diagnostic `bug_` form the engine's own template prescribes.
-# Note this is still an enumeration of prefixes, one level up — see WO-031's discipline note.
-WO_FILE_FORMS = (
-    re.compile(r"^WO-(\d{3})-[A-Za-z0-9][A-Za-z0-9-]*\.md$"),         # the engine's own hyphen form
-    re.compile(r"^(?:wo|work|bug)_(\d{3})_[A-Za-z0-9][\w.-]*\.md$"),  # the underscore convention
-)
-WO_FORM_NAMES = ("WO-NNN-<slug>.md, wo_NNN_<slug>.md, work_NNN_<slug>.md, "
-                 "bug_NNN_<slug>.md")
+# EXACTLY three digits, closed by a non-digit — `wo_1234_x.md` must never quietly become
+# WO-123. Stated once, here, so the two users below cannot disagree about it.
+#
+# Honest note on the (?!\d): today it is REDUNDANT in both users, and the code should say so
+# rather than imply a guard it does not need. Each user already closes the NNN by other
+# means — the filename rule requires a SEPARATOR immediately after it, and the prose rule a
+# `\b`; neither can be followed by a fourth digit. It is kept as the explicit statement of
+# the exactly-three intent at the one place both rules share, and it becomes load-bearing the
+# moment either closer is relaxed. What actually defends the rule's precision is the widening
+# that IS realistic — `\d{3,4}` — and gate 11 mutation-tests exactly that.
+IDENT_NNN = r"(\d{3})(?!\d)"
+
+# A work-order FILE is one whose name carries an NNN at the identity position: an optional
+# letter prefix + separator, then the NNN, then a separator and a slug. This is a RULE, not
+# an enumeration of forms. Enumeration is a strategy that fails once per novel downstream,
+# and each failure costs that repo its resolution gate until the engine ships a fix — one
+# error at three altitudes: one sample (WO-029), then three samples (WO-031), then three
+# prefixes (v18). The rule ends the class instead of lowering its rate.
+#
+# THE DIRECTORY IS THE SCOPE. Files under `<home>/work-orders/` are work-orders by
+# construction, so the filename does not have to prove it is one — it only has to yield an
+# IDENTITY. The prefix therefore carries no meaning and is not inspected: `WO-007-x.md`,
+# `wo_007_x.md`, `bug_007_x.md`, `task_007_x.md`, `WO007-x.md`, `007-x.md` and whatever the
+# next repo invents all resolve. The engine's own form is one sample OF the rule, never the
+# rule (this is the third work-order to say so; it is code now, not prose).
+#
+# The prefix is LETTERS ONLY on purpose: `[A-Za-z0-9]+` would let the regex backtrack a digit
+# out of the prefix and read `wo1234_x.md` as WO-234 — manufacturing an identity out of a
+# name that has none.
+#
+# Tolerance, never blindness: a name with NO resolvable identity is still reported
+# (nonconforming-wo-filename) — `wo_1234_x.md` (four digits), `WO-1-x.md` (one), `notes.md`
+# (none), `wo_029b_x.md` (a suffixed identity this ledger model cannot represent — reported
+# rather than silently flattened onto its unsuffixed sibling).
+#
+# PINNED (WO-033) — the blindness risk, stated rather than wished away: a NON-work-order that
+# does carry an identity (`notes_007_draft.md`) IS adopted as WO-007. No filename signal
+# separates it from `task_007_real-work.md`, and a name-shaped heuristic to tell them apart
+# would re-import the enumeration this rule removes. What is guaranteed is that adoption is
+# never SILENT: with no INDEX row it surfaces as orphan-file; against a real WO-007 it
+# surfaces as duplicate-file naming BOTH files. The cost is a finding with a different LABEL,
+# never a missed one — and it is bounded by a directory that holds nothing but work-orders.
+WO_FILE_RE = re.compile(rf"^(?:[A-Za-z]+[-_.]?)?{IDENT_NNN}[-_.][A-Za-z0-9][\w.-]*\.md$")
+WO_FORM_NAMES = ("<prefix><sep>NNN<sep><slug>.md — an optional letter prefix (WO-, wo_, bug_, "
+                 "task_, ... or none), then EXACTLY three digits, then a separator and a slug; "
+                 "e.g. WO-007-thing.md, wo_007_thing.md, task_007_thing.md")
 NNN_RE = re.compile(r"\d{3}")
 EMDASH = "—"           # resolved rows may carry an em-dash NNN (no work-order number)
 # A prose/blockquote ledger row's IDENTITY position: the NNN at the head of the item, past
 # any blockquote/list markers and bold/code/link decoration, with an optional convention
 # prefix. Anchored at the line head on purpose — an unanchored \d{3} scan would harvest every
 # number in the prose ('240 findings') and manufacture phantom rows. (WO-029 class 3)
+#
+# Shares IDENT_NNN with the filename rule — one notion of "exactly three digits, closed"
+# (WO-033). It deliberately does NOT share that rule's OPEN prefix, and the asymmetry is
+# reasoned, not drift: a FILENAME is bounded by its directory (everything in the ledger dir is
+# a work-order, so any prefix is fine), but a PROSE LINE is bounded by nothing — every
+# sentence in the section is a candidate row. An open prefix here reads `**Fixed 240
+# findings**` as row 240. The prefix stays enumerated precisely BECAUSE the line-head anchor
+# is the only scope this rule has; the filename rule can drop its prefix precisely because it
+# has a stronger scope than an anchor. Same identity core, different scope, hence different
+# prefix policy — recorded so a future author does not "unify" them and reintroduce phantoms.
 PROSE_NNN = re.compile(
-    r"^\s*(?:>+\s*)*(?:[-*+]\s+)?(?:\*\*|__|`|\[)*\s*(?:(?:WO|work|bug)[-_ ]?)?(\d{3})\b",
+    rf"^\s*(?:>+\s*)*(?:[-*+]\s+)?(?:\*\*|__|`|\[)*\s*(?:(?:WO|work|bug)[-_ ]?)?{IDENT_NNN}\b",
     re.IGNORECASE)
 MDLINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 MDLINK_CELL = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
@@ -140,14 +184,13 @@ def _table_rows(lines: list[str]) -> list[list[str]] | None:
 
 
 def wo_nnn(name: str) -> str | None:
-    """The NNN of a work-order filename under ANY known ledger convention, else None.
-    One place decides what a work-order file is named — the ledger scan, the orphan scan and
-    the link scan all key off this, so none of them can go blind on a naming convention."""
-    for rx in WO_FILE_FORMS:
-        m = rx.match(name)
-        if m:
-            return m.group(1)
-    return None
+    """The NNN a work-order filename carries at the identity position, else None — under ANY
+    ledger convention, including ones this engine has never seen (WO_FILE_RE is a rule, not a
+    list of forms). One place decides what a work-order file is named — the ledger scan, the
+    orphan scan and the link scan all key off this, so none of them can go blind on a naming
+    convention, and a repo inventing a new one costs no engine release."""
+    m = WO_FILE_RE.match(name)
+    return m.group(1) if m else None
 
 
 def section_lines(text: str, heading_prefix: str) -> list[str] | None:
@@ -280,14 +323,14 @@ def check_ledger(home: Path) -> list[dict]:
     on_root, bad_root = _wo_files(wo_dir)
     on_res, bad_res = _wo_files(wo_dir / "resolved")
 
-    # every *.md in the ledger dirs matches a known work-order form or is a finding —
-    # a nonconforming name would otherwise be silently invisible to the orphan/link scans
+    # every *.md in the ledger dirs yields an identity or is a finding — a name the identity
+    # rule cannot read would otherwise be silently invisible to the orphan/link scans
     for where, bad in (("work-orders", bad_root), ("work-orders/resolved", bad_res)):
         for name in bad:
             items.append({"kind": "nonconforming-wo-filename", "file": f"{where}/{name}",
-                          "finding": f"{where}/{name} matches no known work-order filename "
-                                     f"form ({WO_FORM_NAMES}) -> rename to one of them or "
-                                     "move it out of the ledger dirs"})
+                          "finding": f"{where}/{name} carries no work-order identity at the "
+                                     f"identity position ({WO_FORM_NAMES}) -> rename it to "
+                                     "carry one or move it out of the ledger dirs"})
 
     idx_text = _read(home / "INDEX.md")
     if idx_text is None:
