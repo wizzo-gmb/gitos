@@ -18,6 +18,33 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v17 — 2026-07-16
+breaking: no
+
+**Payload hygiene, made structural** (WO-030). The publish gate scanned for private filesystem
+*paths* only — so a private **name** (a repo, product, client, or domain) written into a payload
+file sailed straight through it. That is not hypothetical: a dispatched implementer put private
+repo names into `scripts/` comments, and the only thing that caught them was the operator reading
+the diff. The engine's own thesis applies to the engine: **an invariant that depends on someone
+remembering eventually fails.**
+
+- **Publish gate — names, not just paths** (dev tooling): the guard now carries a private-*name*
+  denylist beside its path patterns, word-boundary and case-insensitive, reported the same way
+  (file + line + the rule that fired) and halting the publish identically. The list is dev-only and
+  is structurally unable to ship — it lives under `.gitos/`, which the payload enumeration excludes.
+- **Precision over coverage.** A guard that cries wolf gets switched off, taking the useful patterns
+  with it — so ambiguous names are matched only in their distinctive hyphenated/underscored form
+  (generic spaced prose still passes), and a name that cannot be told apart from ordinary
+  vocabulary is *deliberately not covered*, recorded in the file with its reason rather than shipped
+  as a false-positive generator.
+- **A new acceptance gate proves the detector detects** (positive *and* negative): innocent payload
+  prose passes; real private names are caught; the original leak scenario is reproduced end-to-end
+  and halts.
+- **Directive** — `references/roles/implementer.md` now pins the boundary: private names belong in
+  `.gitos/**` (work-order, notes, INDEX, brain); payload text — **comments included** — describes
+  the **shape**, never the **source**. The trap is that the honest motivation for a change usually
+  *is* "repo X does Y", which makes writing it down feel natural.
+
 ## v16 — 2026-07-16
 breaking: no
 

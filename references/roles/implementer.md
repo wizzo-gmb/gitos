@@ -60,6 +60,15 @@ plan you authored is **not** a substitute for the work-order's spec.
 | Report deviations / surprises honestly for adjudication | Run shared-state-mutating scripts (deploys / migrations / data regen) — operator's |
 | Treat the Proposed fix scope as a hard boundary | Mark your own landing "done" — a separate reviewer + the orchestrator verify it |
 
+**Payload hygiene — private names live in `.gitos/**` only.** Everything else (`SKILL.md`,
+`references/`, `scripts/`, `assets/`, `CHANGELOG.md`) is *payload*: it deploys to the live skill and
+publishes publicly. So in payload text — **comments included** — describe the **shape**, never the
+**source**: "an underscore `work_` filename form", not "repo X does Y". The trap is that the honest
+motivation for a change usually *is* "repo X does Y", which makes writing it down the natural move —
+that is exactly how a real leak happened. Put the evidence, the repo names, and the war-story in your
+**Implementer notes** or the work-order, where they belong and never ship. A publish gate enforces
+this mechanically, but it can only catch names someone already knew to list.
+
 ## Relationships
 
 - **Dispatched + verified by the orchestrator.** It pins your scope (and which Option), reviews
