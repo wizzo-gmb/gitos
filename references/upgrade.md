@@ -137,12 +137,32 @@ Direct the running orchestrator to:
 - **re-point any stale role pointers** — if a role pointer or the memory pointer still
   names an old skill path or the legacy `project_flow_role_brief.md`, repoint it to
   `~/.claude/skills/gitos/...` and `gitos_role_brief.md`;
-- **copy `brain_lint` into the home if missing** — ensure `<home>/tools/brain_lint.py`
-  exists (byte-copy from `~/.claude/skills/gitos/scripts/brain_lint.py`); never clobber an
-  existing copy;
-- **copy `canary.py` into the home if missing** — ensure `<home>/tools/canary.py` exists
-  (byte-copy from `~/.claude/skills/gitos/scripts/canary.py`); never clobber an existing
-  copy;
+- **deliver the engine's home tools — refresh them, don't just seed them.** `<home>/tools/`
+  holds byte-copies of the engine's own scripts (`brain_lint.py`, `canary.py`, and any future
+  tool the engine lays there) — **engine artifacts, not repo content**: a cache of the
+  installed skill that the briefs invoke by home path. For **each** tool the engine ships into
+  `<home>/tools/`, byte-compare the home copy against the skill's
+  (`~/.claude/skills/gitos/scripts/<tool>.py`):
+  - **missing** → byte-copy it in (preserve LF) and report it;
+  - **byte-identical** → no-op, silently — no churn, no false "updated";
+  - **different** → **report it, then refresh it.** A byte-compare proves *different*, not
+    *why*: the copy is stale, or hand-modified, and you cannot tell which — so say exactly
+    that. Name the tool, state that the home copy differed and was replaced from the skill,
+    and note the prior bytes are recoverable from git (the engine requires version control).
+    Don't ask: a stale copy has one right answer, and a prompt per tool per upgrade teaches
+    the operator to skip the very fix the upgrade exists to deliver.
+
+  **Never silently skip; never silently overwrite** — the two are the same failure wearing
+  different clothes. The rule this replaced copied a tool only when it was *absent*, which made
+  an upgrade whose entire value was a `canary.py` fix a **no-op for exactly the repos that had
+  `canary.py`**. To make a tool behave differently, **descope** the category for the repo
+  (SKILL.md → *Canary*) or file a work-order upstream — a forked home copy is not a supported
+  surface and will be refreshed.
+
+  *Delivery is not seeding:* `scaffold.py` deliberately **skips** an existing tool copy, so
+  re-running it never refreshes one — this step is the only thing that does. *And the line is
+  the category, not the folder:* `<home>/agents/` (the lens bullet below) is **operator
+  content**, and is report-and-**ask** by design;
 - **refresh the CLAUDE.md context anchor** — the repo-root `CLAUDE.md` carries the gitos
   `<!-- gitos:agent-system -->` managed block (the canary's durable recovery seed; SKILL.md →
   *Canary*). If `canary.py` reports `anchor/missing` or `anchor/stale`, refresh it: re-run
@@ -174,8 +194,9 @@ from→to versions, which directives were adopted, and any pointers re-pointed. 
 
 **7. Report.**
 Show the `git diff` of what changed (the re-pointed pointers, the stamp, the ADR, any
-newly-copied `brain_lint` / `canary`). The folder layout is unchanged — confirm that
-explicitly in the report.
+`<home>/tools/` copy that was newly copied **or refreshed** — name each refreshed tool and
+say the prior bytes are in git). The folder layout is unchanged — confirm that explicitly in
+the report.
 
 ## What it never does
 

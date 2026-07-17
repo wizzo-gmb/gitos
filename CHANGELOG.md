@@ -18,6 +18,55 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v19 — 2026-07-16
+breaking: no
+
+**`upgrade` never refreshed a home tool, so no tool fix reached any repo that had the tool**
+(WO-032). Step 4 read *"copy `brain_lint`/`canary.py` into the home if missing — never clobber an
+existing copy"*. So a repo that adopted a tool at v14 kept the **v14 tool forever**. v16, v17 and v18
+were each, in substance, a `canary.py` fix; through the documented path, all three reached **zero**
+adopting repos. The engine had been fixing a checker its own upgrade could not deliver — and two
+downstream adoptions each had to declare a **deliberate deviation** to receive the last fix. A rule
+adopters must knowingly break to get value is not a rule; it is a bug with a paper trail.
+
+- **The distinction the old rule missed: engine artifacts are not operator content.**
+  `<home>/tools/*.py` are byte-copies of the engine's own scripts — a *cache of the installed skill*,
+  which the briefs invoke by home path. They are not project state. The never-clobber instinct came
+  from the right place (never overwrite state) and was aimed at something that is not state. Contrast
+  `<home>/agents/` — the lens library, genuinely operator content, correctly report-and-**ask** since
+  v12/v13 and **untouched by this change**. The line is the category, not the folder.
+- **Step 4 now delivers, and says so** (`references/upgrade.md`): **missing** → copy; **byte-identical**
+  → silent no-op (no churn, no false "updated"); **different** → **report it, then refresh it**. A
+  byte-compare proves *different*, not *why* — so the report says exactly that (stale or hand-modified,
+  the tool cannot tell which) and notes the prior bytes are recoverable from git.
+  **Never silently skip; never silently overwrite** — the two are the same failure wearing different
+  clothes, and the old rule traded one for the other.
+- **One rule over `<home>/tools/`, not one bullet per tool.** The predecessor enumerated two tools; any
+  future tool laid in the home would have inherited the trap by default. WO-031's lesson applied at the
+  point of authorship rather than one iteration later: a convention is written as a rule, not as a list
+  of its current samples.
+- **No new engine state.** A manifest of previously-shipped tool versions would positively separate
+  "pristine but stale" from "hand-modified" — and costs a permanent, per-release bookkeeping surface
+  that can itself go stale, to resolve a case that has one right answer anyway. Rejected as out of
+  proportion. The refresh is not asked-about either: a prompt per tool per upgrade trains the operator
+  to skip the very fix the upgrade exists to deliver.
+- **Seeding still is not delivering** (`scripts/scaffold.py` — unchanged, deliberately). Laying a tool
+  into a *fresh* home and delivering a fix to an *existing* one are different acts; scaffold keeps its
+  `SKIP exists`, and its idempotency gate ("second run writes 0") still passes.
+- **New gate 13** (`.gitos/tools/selftest.py`) pins the rule and both boundaries: the shipped directive
+  must express all three branches, forbid silence in both directions, stay one rule over the folder, and
+  claim no authority over `<home>/agents/`; behaviourally, scaffold must still *refuse* to refresh a
+  stale tool and must leave operator lenses byte-untouched. The gate states plainly which half it
+  executes and which half it asserts — an upgrade step is prose an orchestrator performs, and prose is
+  what regressed here.
+
+`breaking: no` — it removes no directive and demands no migration action: adopting it *is* the whole
+change, and an un-migrated repo keeps behaving exactly as it did. It only makes an upgrade deliver what
+it always claimed to. **One thing to know before you run it:** if you have hand-edited a
+`<home>/tools/` copy, the next upgrade will refresh it and tell you — that is the intended correction,
+not a migration burden (a forked tool copy was never a supported surface; descope a canary category or
+file a work-order instead), and your bytes remain in git.
+
 ## v18 — 2026-07-16
 breaking: no
 
