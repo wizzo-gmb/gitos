@@ -18,6 +18,39 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v18 — 2026-07-16
+breaking: no
+
+**The canary's work-order filename list was short by one form** (WO-031) — and it was the form the
+engine's own template implies. v16 replaced a hardcoded filename regex with a list of three known
+forms; the list covered an underscore `work_` form and a diagnostic `bug_` form, but not the forward
+`wo_` sibling that sits alongside `bug_` in any ledger following that template. A repo naming its
+work-orders `wo_NNN_<slug>.md` therefore had every one of them reported as nonconforming, and any
+ledger row whose file could not be resolved to an NNN reported as missing its file — the v16 fix
+reproduced, one iteration in, the exact failure v16 named: **loud *and* blind** on the repo it was
+meant to serve. A category that must be descoped to be usable does not gate.
+
+- **Underscore forms are now ONE pattern, not an enumeration** (`scripts/canary.py`):
+  `<prefix>_NNN_<slug>.md` is a *convention*, so it is written as one regex covering `wo_`/`work_`/
+  `bug_` rather than a fourth sample beside three others. Adding a fourth line would have re-armed
+  the same trap at a lower rate. The operator-facing "rename to one of them" advice now names every
+  accepted form.
+- **Tolerance, never blindness — unchanged and now pinned harder.** This widens tolerance by one
+  prefix; it removes no report. A name matching no form is still reported, including the near-misses
+  the widened pattern must *not* swallow: a 4-digit `wo_1234_x.md` is not an NNN.
+- **The relaxation keeps its true-positive test** (`.gitos/tools/selftest.py`): the external-validity
+  gate now carries a `wo_` fixture reproducing both original findings, and asserts that a duplicate-NNN
+  collision **across two forms** is still caught — the exact defect the enumeration exists to expose.
+  Reverting the pattern turns the gate red.
+- **Recorded, not decided:** enumerating forms — even one level up, as a list of prefixes — is still a
+  strategy that fails once per novel convention. Deriving NNN by a general identity-position rule, or
+  letting a repo declare its form, is deliberately left to an operator decision; this buys back the
+  gate for the conventions that exist today. Noted in the code so the next author does not mistake the
+  pattern for the destination.
+
+Additive and strictly more tolerant: every ledger clean at v17 stays clean (a repo with no
+nonconforming filenames cannot be newly flagged by a wider pattern).
+
 ## v17 — 2026-07-16
 breaking: no
 

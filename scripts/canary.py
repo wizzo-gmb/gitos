@@ -60,12 +60,18 @@ RESOLVED_HEADING = "## Resolved"
 # The engine's own form is ONE SAMPLE, not the schema — hardcoding it made the ledger check
 # loud AND blind on any repo that names its work-orders differently (WO-029 class 1). A name
 # matching no form is still reported (nonconforming-wo-filename) — tolerance, never blindness.
+#
+# The underscore forms are ONE pattern, not three entries: `<prefix>_NNN_<slug>.md` is a
+# convention, and enumerating the prefixes one had happened to see is what made this list
+# short by exactly the prefix nobody sampled (WO-031). Expressing the shape covers the
+# forward `wo_` sibling of the diagnostic `bug_` form the engine's own template prescribes.
+# Note this is still an enumeration of prefixes, one level up — see WO-031's discipline note.
 WO_FILE_FORMS = (
-    re.compile(r"^WO-(\d{3})-[A-Za-z0-9][A-Za-z0-9-]*\.md$"),      # the engine's own hyphen form
-    re.compile(r"^work_(\d{3})_[A-Za-z0-9][\w.-]*\.md$"),          # an underscore work_ form
-    re.compile(r"^bug_(\d{3})_[A-Za-z0-9][\w.-]*\.md$"),           # a diagnostic bug_ form
+    re.compile(r"^WO-(\d{3})-[A-Za-z0-9][A-Za-z0-9-]*\.md$"),         # the engine's own hyphen form
+    re.compile(r"^(?:wo|work|bug)_(\d{3})_[A-Za-z0-9][\w.-]*\.md$"),  # the underscore convention
 )
-WO_FORM_NAMES = "WO-NNN-<slug>.md, work_NNN_<slug>.md, bug_NNN_<slug>.md"
+WO_FORM_NAMES = ("WO-NNN-<slug>.md, wo_NNN_<slug>.md, work_NNN_<slug>.md, "
+                 "bug_NNN_<slug>.md")
 NNN_RE = re.compile(r"\d{3}")
 EMDASH = "—"           # resolved rows may carry an em-dash NNN (no work-order number)
 # A prose/blockquote ledger row's IDENTITY position: the NNN at the head of the item, past
