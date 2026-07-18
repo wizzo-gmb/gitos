@@ -18,6 +18,33 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v24 — 2026-07-17
+breaking: no
+
+**Record each commit's footprint in the ledger — visibility without judgement** (WO-039). Work-loop
+**step 7** now records each landing's *footprint* — the set of paths its commit touched — in an
+append-only footprint log (`<home>/footprints.md`) that the resolved row's sha joins into. It is the
+same staged set the orchestrator already reads back at step 6, written down instead of left buried in
+git history, so a human reading the board can notice a commit whose paths span work-orders — the one
+genuine signal a cross-work-order sweep leaves — rather than relying on an agent to catch it after the
+fact.
+
+- **Visibility, not judgement — recorded, never checked.** The footprint is *disclosed for a human to
+  read*; nothing compares it against a scope field, an owned-paths list, or any expected set, and the
+  step-7 gate is unchanged. A footprint-vs-scope gate was measured against the whole work-order corpus
+  and rejected: scope shape tracks work-order *type* (fix-a-known-surface → path list; investigate /
+  decide → prose), and ownership is a **relation, not a function** — a file is legitimately co-owned
+  across many work-orders, sequenced by a human — so such a gate is *red on correct work*, and a guard
+  that cries wolf gets disabled. The human supplies the judgement a footprint alone cannot; this only
+  makes the footprint legible, and it *cannot prevent* a sweep, only surface one.
+- **One habit, not a git recipe; no new tool, no hook.** Step 7 names the *what* — record the footprint
+  you already read at step 6 — not a sequence of git incantations. A plain `git show --stat <sha>`
+  re-derives a footprint, so no helper script (one more thing to remember to run) and no git hook (an
+  undeliverable, off the engine's delivery path) were added.
+- **Additive.** New disclosure at resolve time; it changes no existing directive, gate, or contract.
+
+---
+
 ## v23 — 2026-07-17
 breaking: no
 

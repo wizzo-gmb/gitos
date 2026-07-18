@@ -109,9 +109,21 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    story — and a sweep you hid is a boundary failure with the evidence deleted.
    *Gate:* **nothing is committed before steps 4–5 pass** — no commit of an unverified or
    un-adjudicated landing — and **the staged set matches this work-order's scope.**
-7. **Update INDEX + maintain the brain.** Move the item open→resolved (with sha); upsert/reconcile,
-   write a decision page on any non-trivial choice, run `brain_lint` + `canary.py`, reflection-pass
-   the forward-positive invariant. → *INDEX lifecycle · Brain stewardship.*
+7. **Update INDEX + maintain the brain.** Move the item open→resolved (with sha), and **record that
+   landing's footprint** — the set of paths its commit touched, i.e. the staged set you already read
+   back at step 6 — in the append-only footprint log (`<home>/footprints.md`), keyed to that same sha
+   (the resolved row already carries it, so the sha is a reader's join from the board into the log).
+   This is **disclosure by default, not a check**: you write the footprint down for a human to read, so
+   a commit whose paths span work-orders is *legible on the board* instead of buried in git history. You
+   **never compare** it against a scope field, an owned-paths list, or any expected set — nothing gates
+   on it, because nothing checks it. That comparison is a machine adjudicator this engine measured
+   against its whole work-order corpus and rejected (ownership is a *relation*, not a function — a file
+   is legitimately co-owned across many work-orders, sequenced by a human, so a footprint-vs-scope gate
+   is red on correct work, and a guard that cries wolf gets disabled); the human supplies the judgement a
+   footprint alone cannot, and this habit only makes the footprint visible — it cannot prevent a sweep,
+   only surface one. Then upsert/reconcile, write a decision page on any non-trivial choice, run
+   `brain_lint` + `canary.py`, reflection-pass the forward-positive invariant.
+   → *INDEX lifecycle · Brain stewardship.*
    *Gate:* the INDEX is honest, `brain_lint` is clean, and **the canary is green** before you move
    on — no work-order is resolved while the canary is red (fix the finding first — normal work;
    this gate joins verify-before-commit).
