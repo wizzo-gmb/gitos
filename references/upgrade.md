@@ -189,7 +189,24 @@ Direct the running orchestrator to:
   **report-and-ask** to refresh the repo copy from the global (never silently clobber — a
   deliberately-forked local variant survives by declining). Then offer any global lens
   *not yet* in the repo as an optional install. Update the repo registry to match what was
-  accepted. No global lenses / no `<home>/agents/` → skip, no-op.
+  accepted. No global lenses / no `<home>/agents/` → skip, no-op;
+- **offer federation — and do not enable it.** Federation lets independent gitos instances **on
+  one machine** reach each other, so work that belongs to a sibling repo can go there instead of
+  crossing the gap by copy-paste. The whole surface, **including the join path**, is
+  `references/federation.md` → *Joining — the shortest honest path*; do not restate it here or in
+  the report. It is **opt-in and invisible when off** (INV-1) — which is exactly *why* an upgrade
+  has to mention it: a repo with no `<home>/federation.json` shows no sign the capability exists,
+  so an operator crossing the versions that added it learns nothing unless this step says so.
+  **When that file is absent**, say once that federation exists, point at that section, and stop.
+  **When it is present**, say nothing — that repo has already decided.
+
+  **This is an offer. `upgrade` runs no federation command and writes no `federation.json`** —
+  the only thing this step reads is whether that one file exists. Opting in is per checkout and
+  is the operator's word, and it is the *first* of two consents (the exposure flags are the
+  second). A repo that came back federated because somebody asked for a directive refresh would
+  have spent a consent nobody gave — the precise surprise the subsystem was built to avoid. Same
+  shape as the pull offer in step 2 and the lens refresh above: **report, then ask** — and here
+  the "ask" is only ever the operator's own next command.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:

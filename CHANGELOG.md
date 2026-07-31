@@ -18,6 +18,483 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v29 — 2026-07-31
+breaking: no
+
+**Federation — adoption: the four built stages become reachable** (stage F5). v25–v28 built
+federation; nothing told anybody it was there. `references/upgrade.md` mentioned it **zero
+times**, so a repo upgrading past those versions got the code refreshed inside its install and
+was told nothing — and the capability is *invisible when off* by design, so there was no sign of
+it to stumble over either. **A feature nobody is told about is a feature nobody has.** No new
+capability ships here; what ships is the way in.
+
+- **`upgrade` now OFFERS federation — and does not enable it.** On a repo with no
+  `<home>/federation.json` the upgrade says once that federation exists, names it as off by
+  default and invisible when off, and points at the one page that carries the join path. On a
+  repo that already has the file it says nothing: that repo has decided. **The step runs no
+  federation command and writes no config** — the only thing it reads is whether that one file
+  exists. *Opting in is per checkout and it is the operator's word, and it is the first of two
+  consents (the exposure flags are the second); a repo that came back federated because somebody
+  asked for a directive refresh would have spent a consent nobody gave — the precise surprise
+  this subsystem was built to avoid.* It is the same **report-then-ask** shape the engine already
+  uses for the engine `git pull` offer and the lens refresh.
+- **How a repo JOINS is written down, once** — in `references/federation.md` → *Joining*, which is
+  the only place the sequence lives. Everything else, this entry included, points at it rather than
+  repeating it: a second copy is what the previous stage spent eight rounds proving drifts.
+- **THE MIXED FLEET: a sibling's engine stamp is REPORTED, and nothing consults it.** A stamp is
+  the version that repo **last ran**, not one it is pinned to — one skill install per machine
+  means "behind" almost always means *"has not run gitos since you upgraded"*, which `last_seen`
+  says better and which running it fixes. So no version gate was added, and one cannot be added
+  quietly: `consult` allowing and `file` landing a real file into a sibling stamped older,
+  stamped newer, or carrying **no stamp at all** — in both orientations — is now pinned end to
+  end through the CLI, in both directions, with the fixture's own stamps asserted so the pin
+  cannot pass while measuring two repos on one version. **A sibling being behind is not a reason
+  to refuse**: that is the *degrade to the status quo, never below* invariant inverted into
+  version form, and one participant's state must not disable a tool for another. The pin holds
+  the reporting half too — report-only fails if the number disappears as surely as if it starts
+  refusing. And whatever is refused, the finding or the question is still open: every refusal
+  already names the by-hand fallback at the point of refusal, which is what keeps an
+  under-versioned or unfederated sibling reachable.
+- **One source of truth, applied to this change and to the page it edits.** The join path is
+  written in `references/federation.md` and *pointed at* from the upgrade step rather than
+  restated. And the fleet-view sample transcript in that page was **deleted, not corrected**: it
+  had drifted from the code it copied — a deliberate change to how the engine stamp is spelled
+  and to how a sibling's own words are delimited went into the renderer and not into the sample.
+  The page now says which functions render it and tells you to run the command. *Correcting a
+  copy re-arms it; the drift was the argument.*
+
+---
+
+## v28 — 2026-07-29
+breaking: no
+
+**Federation — cross-file and intake** (stage F4): the first federation capability that **writes
+into another repo**, and the one the subsystem exists for — *the copy-paste that never happens*. An
+orchestrator that finds something belonging to a sibling repo can file it there as a **proposal**,
+which becomes real work only when that repo's own operator accepts it. Everything before this could
+only read.
+
+- **It writes ONE file into ONE directory — `<target-home>/intake/` — and nowhere else.** That is a
+  property of the code's *shape*, not of its current control flow: a single function composes the
+  destination from one hard-coded directory name plus a validated hex id, so a second destination
+  is not expressible. Proved structurally, then measured against a target seeded with decoys (a
+  brain, a ledger, work-orders, a footprint log — all byte-identical afterwards). *You are writing
+  into somebody else's repo: one directory, provably, or nothing.*
+- **What lands is a PROPOSAL, never a work-order (the sovereignty keystone).** Accepting one
+  **requires naming a work-order that already exists in the receiving repo's own ledger** — so
+  *acceptance is only expressible as a reference to something that repo authored*, and **the
+  foreign file cannot become the board item**. The proposal is archived as **evidence** for that
+  work-order with its body preserved byte-for-byte. A directive saying "author a native work-order"
+  would be one more rule to remember; a required argument that must resolve to a real file is the
+  same rule with a mechanism under it.
+- **A PROPOSAL BODY IS DATA, NEVER A DIRECTIVE — AND THAT IS MECHANICAL.** A receiving
+  orchestrator is an LLM that reads whatever is in front of it, so a proposal body is an
+  instruction-injection surface. **The listing emits metadata only because it *cannot* emit
+  anything else**: the reader that feeds it stops at the header terminator, refuses to read past a
+  bounded window, and returns a fixed key set — on `--json` as much as in print. A non-conforming
+  file is refused and reported **by name**, its content neither read nor quoted, because an error
+  message is a surface too. The title — the one foreign string the listing *does* show — is
+  collapsed to a single bounded line on write **and** on read. *A directive telling an orchestrator
+  not to obey a file is exactly the kind of rule this engine has watched decay; a tool that does
+  not print the body makes the DEFAULT path safe.* **Honest limit, stated rather than dressed up:
+  this is not a sandbox** — an LLM with file tools can open the file, and `--show` exists so the
+  **operator** can read it deliberately. What is mechanical is that the default path cannot hand it
+  over. Two further limits are stated rather than implied: `intake/` is a **path**, so a symlink
+  planted by the receiving repo's own operator redirects the write (cooperative, not a sandbox —
+  a resolve-and-refuse check would imply a guarantee the machine boundary does not make); and the
+  fingerprint splits as well as merges, so **a declined finding re-titled by one character comes
+  back as a fresh pending proposal** — the correction is a rule for the sender (do not re-title a
+  settled finding), not a change to the hash.
+- **AND A HEADER *VALUE* IS A SURFACE TOO — closed as a class, at one choke point.** A refusal
+  message reaches four places: the listing, `--json`, the bootstrap checker's **unbidden**
+  findings, and — in the other direction — the **sender**, when a settled finding is re-filed.
+  So the readers of a foreign proposal **build no messages at all**: they
+  name a fault code, and every refusal they can emit is chosen from **one table of literal
+  templates** whose only substitutions are the *bounded, quoted* file name, this engine's own
+  constants, and the **type** of the offending value — with an integer's digits kept, because
+  *"this engine reads 1, that file says 2"* is the entire content of the forward-compatibility
+  refusal. The values that survive parsing are bounded the same way, in **both directions**: the
+  receiver's decline note reaches the sender collapsed to one quoted line and its state word
+  forced into a fixed vocabulary, because an archive is a foreign-authored file whichever end
+  reads it. The two columns that *are* the sender's words — display name and title — are shown
+  **in quotes their content cannot forge**, so the foreign span is structural rather than
+  positional. *The lesson banked with it: any foreign value in any message is a surface, and
+  reasoning about that field by field is exactly how the field nobody reasoned about ships.*
+- **AND THE COMPLETENESS QUESTION IS ASKED WITH THE QUANTIFIER THE OTHER WAY ROUND.** Two rounds
+  answered *"a message is a surface"* by widening the list of what counts as foreign — nine header
+  fields, then an enumerated category of foreign-controlled inputs — and each time the next channel
+  shipped anyway: first the **file name** (foreign, but not a header field), then **archive names**,
+  the **target repo's display name** and the whole **registry tier**. A list of what IS foreign is
+  an *open-world* claim: anything unlisted is implicitly safe, which cannot be proved finished. So
+  the guarantee is now the opposite one, and it is the shape this engine already had twice — *the
+  listing cannot reach the body reader*, *the header readers contain no formatting at all*. The
+  enumeration of foreign inputs is kept, and is now described as what it is: *the map, not the
+  authority.*
+- **AND CLASSIFICATION IS A RUNTIME PROPERTY, ENFORCED AT ONE SERIALIZER.** The inversion above was
+  first built as a static walk over the emitters, and that lost: ten shapes put unbounded foreign
+  prose on a default surface with every gate green — two of them *inside* an emitter's own body, one
+  through a helper that mutated the returned payload **in place** (so the value appears in no
+  expression at any depth), and the acceptance test that certified the whole mechanism went green on
+  a **rename**, because classifiers were matched by call *name*. Static analysis of a dynamic
+  language loses that game, so the leak is now **impossible to express** rather than detectable.
+  Every string placed into a surface payload says which it is — `Engine` (ours) or `Foreign`
+  (somebody else's) — and **one serializer** produces every default surface from it. A **bare,
+  unmarked string reaching it is a hard refusal**, values and keys alike, so a channel nobody has
+  thought of fails at the boundary instead of sailing through it. `Foreign` is not a string and
+  refuses every rendering operation there is, so a leak cannot even be *composed*; the cap and the
+  delimiter are applied **at serialization**, which makes a forgotten render impossible rather than
+  merely unlikely. And because the check runs on the value **actually being emitted, at the moment
+  it is emitted**, in-place mutation, out-parameters and renaming are irrelevant to it *by
+  construction*.
+- **AND THE MARKING HAPPENS WHERE THE BYTES ARRIVE, NOT WHERE THEY ARE PRINTED.** The serializer
+  makes an unmarked string unemittable; what it cannot see is a caller *lying* about provenance.
+  While that mark was applied where a value was placed into a payload, it was a **one-word edit at
+  an emission site with nothing behind it** — and three of them (`home_path`, `last_seen`, a fleet
+  member's `groups`) each put a ~4,900-character `<system-reminder>` back on `status --json` with
+  every gate green. So the four readers that ingest another repo's file now **return records whose
+  foreign fields are already marked**. No payload builder downstream sees a bare string for those
+  fields, and a mis-mark stops being a one-word edit: `Engine` is a `str` subclass, so wrapping a
+  value that arrived foreign **raises at the line where somebody writes it**, on every run that
+  touches a record. A tenant record gets a *walk* — every string at every depth — rather than a
+  field list, because `home_path` was the field nobody listed four rounds running and a record is
+  arbitrary JSON that somebody else will add a field to. *A per-site obligation is a directive; a
+  value that arrives already typed is a mechanism.* **And that walk is TOTAL** — values, dict
+  **keys** and **numbers**, at every depth. Numbers are not safe merely for not being strings:
+  `engine_version` is an integer in every record this engine writes, `json.loads` accepts `NaN` and
+  `Infinity` by default, and an unmarked number went verbatim onto `--json`, so one sibling could
+  hand every consumer of that surface a document **no strict JSON parser accepts**. Keys were left
+  bare on the stated ground that *"nothing hands a raw record to a surface (every consumer
+  projects)"* — but the fleet view projects **by copy**, so an object-valued field handed the whole
+  subtree, keys included, to the serializer. Booleans and `null` stay bare, and that exception is
+  closed rather than convenient: three tokens this engine spells itself, of fixed length, with no
+  prose available through them.
+- **One participant's malformed record no longer breaks the tool for every repo on the machine.**
+  A registry is a directory every tenant writes into **by design**, so a half-written record from a
+  crashed process is an ordinary event — and two shapes of one were measured taking
+  `federation status` to **exit 1 in repos that did not write the record**: a `name` that was an
+  object ("*an internal emission fault … a defect in the tool, not something to repair in this
+  repo*" — false, the fault was a sibling's file) and a `groups` that was not a list ("*fix `groups`
+  in federation.json*" — pointing at the reader's **own** file for a fault in a file they do not own
+  and the message never named). That is `INV-10` inverted, and it is the failure a *cooperative*
+  design is most exposed to. The fleet reader already reported an **unreadable** record as a row;
+  that contract now covers **malformed-but-readable** ones too, naming which record and which
+  field, with a correction that points at the repo that owns it. **A fleet reader degrades per
+  record or it is not a fleet reader.**
+- **A carve-out is a claim about a category, so it is restricted to that category.** Paths were
+  rendered uncapped on the human surface because *a truncated path stops resolving* — true for a
+  path this engine derived from a directory it resolved, and false for a `home_path` sitting in a
+  file somebody else wrote, which is never opened at all. 200 KB of directive text reached the
+  canary's **unbidden bootstrap report** through that gap, twice. The carve-out now takes a path
+  *object* and refuses a raw string and refuses an already-marked value, so a `home_path` read out
+  of a registry record cannot be passed to it; and it is bounded at the OS's own path limit for the
+  case where the type is unavoidably lost. The documented justification's closing sentence —
+  *"what bounds them is the filesystem that has to hold them, not this engine"* — was false for
+  exactly that case, and is corrected rather than softened. The justification's *other* clause —
+  "a path this engine *composed*" — over-claimed at two refusals that pass the resolved directory
+  itself with nothing of ours joined on; the words are narrowed to what the code does (**a
+  directory this process confirmed exists**), because that is the case where "the filesystem that
+  has to hold it" is most literally a real bound.
+- **A sentence describing behaviour is a second source of truth, and it drifts.** The claim about
+  what the canary's surfaces carry was corrected six times — and the sixth false instance was
+  written **by the round that was correcting the fifth**, on the lines being corrected, in a new
+  spelling the class check meant to prevent it could not see (that check tested whether a sentence
+  contained one of eighteen substrings, several of which occur naturally in a fresh affirmative
+  sentence). Six rounds is a long enough experiment. The prose is **deleted** rather than corrected
+  a seventh time: the property is measured by one named assertion, the documents point at that
+  assertion, the pointers are checked live, and the drifted spelling is banned outright.
+  *Do not describe behaviour beside the thing that measures it — point at the measurement.*
+  **[CORRECTED in WO-043 Revision 9. The ban did not work: EIGHT restatements survived it — seven
+  found in the eighth round, and an eighth in a gate summary string, which a comments-and-docstrings
+  scan does not read. The successor remedy (a generated table plus a claim-shape detector) was
+  defeated by ordinary paraphrase and exempted long paragraphs by length, which is exactly where
+  the eighth was. Revision 9 deleted the prose, the generated table and the detector together;
+  what a canary finding carries is described by the assertion that measures it.]**
+- **Three foreign-controlled inputs no longer produce a traceback where a refusal was promised.**
+  `intake --decline <id> --json` with no `--reason` exited 1 with a stack trace instead of 2 with a
+  sentence — *the mechanism worked and the integration did not*, since the serializer correctly
+  refused an unmarked string from the one command return that skipped the payload builder and
+  nothing caught it. A proposal whose **body is not valid UTF-8** listed fine and could never be
+  shown, accepted or declined: it pended forever and reddened the receiver's canary forever, which
+  is **a denial-of-service on the human checkpoint, available to any sender**. And a `home_path`
+  past the OS path limit crashed the canonicalizer *before* the `target-path-unresolvable` refusal
+  that exists for exactly that case could run — `INV-10` promises degrade-to-fallback, and a
+  traceback is below the status quo it promises never to fall under.
+- **`--json` carries no foreign string at all.** Machine surfaces are read by tooling, so ids,
+  counts, ages and engine-derived paths are sufficient — a display name, an engine stamp, a
+  `last_seen`, a home path, a decline note and a foreign object **key** are all withheld from
+  `status --json`, `file --json`, `consult --json`, `intake --json` and `canary --json`. A surface
+  that carries no foreign data needs no classifier, no bound, and **cannot regress**. A person
+  reads a name on the human surface; a program that needs an identifier gets the **id**, which this
+  engine mints.
+- **The registry is a weaker tier, and it is no longer treated as an absent one.** A tenant record
+  lives on the operator's own machine, but it is still a directory other repos write into, and its
+  strings reach `federation status`. A record's **file name**, a sibling's **display name**, a
+  **group label** (`normalize_group` does not bound length) and the engine stamps are all bounded
+  and delimited there now, and a record that will not parse is reported with **one sentence of
+  ours** — never the parser's, which names the *path*. The **target repo's own display name** is
+  bounded at the reader every cross-repo action goes through, and delimited at every print —
+  including the outbound confirm preview, the line directly above the one asking the operator to
+  authorize a write into somebody else's repo.
+- **The OUTBOUND CONFIRM is a named gate AT THE SEND STEP.** `file` is **dry-run by default** — the
+  same shape every other outward-facing action in this engine ships with — and without `--confirm`
+  nothing is written, not even the intake directory. The gate binds **by reference** to the
+  orchestrator's standing *irreversible / outward-facing actions* boundary rather than restating
+  it, and it is printed only where it applies: *a rule placed away from its step is read at
+  dispatch time and applied many turns later.* **Both ends confirm** — the sender's operator
+  authorizes the send, the receiver's authorizes the receive.
+- **Payload minimization is a rule, not advice.** A summary plus a **required** pointer back to the
+  sender's own work-order, never verbatim evidence: the file lands in the receiver's *git-tracked*
+  home and rides their history forever. An over-cap summary is refused with nothing written — the
+  tool will not trim somebody's finding on their behalf.
+- **The proposal id is a fingerprint of sender + title + source-ref, so re-filing is safe.** The
+  same finding re-filed **overwrites its own proposal** instead of accumulating duplicates, and a
+  byte-identical re-file writes *nothing at all* (no churn in the receiver's git history). A
+  reworded summary is the same finding said again and updates in place, **preserving the original
+  `filed` stamp** so a noisy sender cannot keep resetting the receiver's ageing clock; a different
+  title is a different proposal; and a finding the receiver already accepted or declined is
+  **refused**. *Idempotence is what keeps the human checkpoint from decaying into rubber-stamping —
+  a queue that grows a duplicate on every re-run is a queue that gets skimmed.* False-merge risk
+  stated honestly: same sender + same title + same source-ref collide, and the correction is to
+  name distinct findings distinctly.
+- **One authorization path, not two.** `consult` and `file` go through the *same* function — live
+  re-read of the target's own `federation.json`, group intersection first, then that action's flag.
+  A second decision procedure would be a second place for the act-time re-read to rot. The
+  write-side revocation is immediate and asserted: a live `accept_proposals: off` behind a cached
+  `on` is refused.
+- **Delivery observability, so the motivating case cannot fail silently.** A successful send is
+  recorded in the sender's own home, and `federation status` correlates each outbound against that
+  target's `last_seen` — *"filed 9d ago, target last ran 41d ago"*. Without it a proposal rots in a
+  dormant repo while the sender believes it delivered, which is **worse** than copy-paste, where
+  the operator at least knew. **Delivery is not acknowledgement and the view does not pretend
+  otherwise.**
+- **The canary gained the intake's observer** (the stage that ships a capability ships its watcher):
+  a malformed proposal · a sender with no tenant record · **proposals pending while
+  `accept_proposals: off`** — the flag is *cooperative*, so this check is the only thing that
+  notices it was not honoured — · a proposal pending past 14 days. All **local and gating**, because
+  every one is fixable here by the operator who is already in this repo. **A repo with no `intake/`
+  gets no finding, no skip and no line** — not-applicable is not skipped, one level down from where
+  that rule was pinned. A bootstrap finding arrives in the orchestrator's context unbidden, so the
+  checker is deliberately stricter than the listing; the `CANARY-SURFACE-CONTENTS` assertion in
+  `.gitos/tools/selftest.py` is what measures its surfaces.
+- **Refusals stay outcomes**: every one exits 0, names what would change the answer, and prints the
+  fallback — hand the finding over the way you would have before federation. **A refused cross-file
+  must never become a dropped finding.**
+- **Unfederated repos are unaffected**, which is why this is `breaking: no`: no new step, no new
+  output, no new failure mode. A federated repo gains two subcommands and one bootstrap line that
+  exists only once somebody has actually filed something into it.
+
+---
+
+## v27 — 2026-07-29
+breaking: no
+
+**Federation — consult** (stage F3): the first federation capability that **acts across repos**, and
+the only one that ever exposes a repo's content. An orchestrator in one repo can ask a sibling repo's
+brain a question and get an answer *in that repo's context* — refusable by the target and recorded on
+the asking side. Everything before this was plumbing that touched nobody else. It is read-only in two
+different ways, stated apart rather than together: **the tool writes nothing into the target**
+(mechanical, asserted), and **the dispatched agent is *directed* read-only** by the role contract it
+inherits — a directive, not a sandbox.
+
+- **The tool AUTHORIZES; the orchestrator CONSULTS — and they are deliberately different things.**
+  `federation consult TARGET` is a **function**: resolve the target through the registry, **re-read
+  that target's own `federation.json` at that path, at act time**, apply the group intersection and
+  then `consultable`, and answer **ALLOW + a path** or **REFUSE + a reason**. Dispatching the agent,
+  framing the question and deciding what is worth recording is **judgement** and stays with the
+  orchestrator. The authorization half is code rather than prose because *"re-read the source of
+  truth, never the cache"* is exactly the kind of rule that decays when it is a directive — a
+  function makes authorizing from the cache **impossible** rather than merely forbidden.
+- **A revocation takes effect immediately.** The cached record is a snapshot of the last time that
+  repo ran; a decision made from it would keep granting access until the revoker's next session,
+  which is a revocation that did not happen. **A target whose live file says `consultable: off` is
+  refused even while its registry row still says `on`** — asserted in both directions, because a
+  program that always refuses would satisfy the one-sided test.
+- **Groups are checked before the flag, and the order is observable.** A target you cannot reach must
+  not have its exposure posture reported to you at all: a group-disjoint target that is *also*
+  `consultable: off` reports the **group** reason. Reporting the flag would answer a question the
+  caller was not entitled to ask, and would send the operator to request a flag flip when the real
+  gap is a group label. **The verdict discloses to match**: a `no-shared-group` refusal names the
+  target and both group sets but does **not** carry `consultable` — on `--json` as much as in print,
+  because a disclosure rule that only one surface obeys is a courtesy rather than a rule.
+- **Every refusal is distinct, actionable, and exits 0.** Nine reasons — this repo not federated ·
+  unknown target · ambiguous name (**both ids named; the tool never guesses which repo gets read**) ·
+  target path unresolvable · target no longer federated · target config unparseable · no shared group
+  · `consultable: off` · target is this repo — each naming what would change the answer. **A refusal
+  is an outcome, not a tool error**; non-zero is reserved for the tool genuinely failing.
+- **The exposure flags are never coerced, in either direction.** A live file saying
+  `"consultable": "off"` carries a *string* — and a truthy one — so it is refused as an unreadable
+  config rather than read as `on`. Guessing at a malformed posture would grant an access the target
+  never granted (or silently close one it did); a malformed posture is a fault to report.
+- **The tool dispatches nothing and reads no brain.** Structurally, not by good manners: it imports no
+  process, thread or network library at all; the deciding function reaches an allowlisted set of
+  helpers that excludes every registry reader; discovery hands back `{id, name, home_path}` and
+  nothing else, so a cached flag has no route into the decision; and the only path it ever opens under
+  a target is that target's `federation.json`.
+- **Said plainly, and not softened: "scoped to the target's brain" is a PROMPT-LEVEL SCOPE, NOT A
+  SANDBOX.** The dispatched agent is an LLM with file tools, and the read-only contract it inherits
+  is a **directive**: it addresses **writes** rather than read breadth, and even that write half is a
+  role contract, not a sandbox. On one operator's machine that is proportionate — any session there
+  can already read the drive — and it is documented rather than dressed up as enforcement. Anything
+  that must not be readable belongs on a different machine. **The ALLOW verdict says this at the
+  terminal too**, separating what is *directed* (the agent's scope) from what is *enforced* (this
+  tool authorized; it dispatched nothing and read no brain).
+- **Exposure ratchets one way, so the asking side records the minimum.** The answer is recorded in the
+  **asking** repo's brain (question → answer → target id) and the target's brain is never mirrored
+  across. Whatever lands thereafter lives under the recording repo's posture and remotes:
+  responsibility for re-exposure sits with the repo that writes it down.
+- **A refused or unreachable target falls back to the manual path**, and the command prints that line
+  on every refusal. Federation must never make a cross-repo question *less* likely to be answered
+  than it already was.
+- **Unfederated repos are unaffected**, which is why this is `breaking: no` — there is no new step, no
+  new output and no new failure mode for a repo that never opted in. For a repo that *is* federated
+  nothing changes either until someone runs the new subcommand: it adds a capability and removes none.
+
+---
+
+## v26 — 2026-07-29
+breaking: no
+
+**Federation — the canary category and the fleet view** (WO-041; stage F2, the observer half of the
+pair v25 opened). v25 shipped the bootstrap heartbeat as a directive with **nothing watching it**, which
+is the decay shape this engine keeps naming. This version supplies the watcher — and puts fleet-wide
+freshness where it informs without blocking.
+
+- **The canary gains a `federation` category, and it is STRICTLY LOCAL.** For a federated repo it
+  reports: **no tenant record** (the heartbeat has never run here, or the record was removed), **a record
+  that has not been refreshed recently** (the heartbeat has stopped), **a record that names another
+  checkout's home path** (something that is not this repo is refreshing it, so its freshness proves
+  nothing here), **a record stamped in the future** (a clock that jumped forward or a hand-edit — a
+  stamp ahead of now is not evidence the heartbeat ran, and a one-sided staleness test would read it
+  as fresh forever, hiding a heartbeat that had stopped behind it), **a record with no usable
+  `home_path`** (the heartbeat always writes one, so a missing or non-string value is a corrupt
+  record — and without it, which checkout owns the record cannot be established), and **a corrupt
+  `federation.json` or record** (a parse failure is a finding, never a silent "not federated"). Each
+  names its correction, and each says what it actually saw rather than reaching for the nearest
+  existing label. It **reads no other tenant** — it opens this repo's
+  own opt-in file and the single record its own id names, and never enumerates the registry, so a
+  sibling's state cannot redden this board.
+- **Read this if you are already federated: a repo whose heartbeat is not running now goes RED where it
+  was green.** Nothing about federation changed — the finding was always deserved and nothing was
+  watching for it. The correction is one idempotent command (`federation heartbeat`, which the
+  orchestrator's First action already runs every session). For **unfederated** repos this version is
+  purely additive and byte-for-byte invisible, which is why it is `breaking: no`.
+- **Not-applicable is not skipped** — the rule this version pins, because two of the canary's own
+  disciplines collide here. A repo that never opted in does not *have* this module: there is no check
+  that failed to run, so it gets **no line at all** and appears in **neither `checked` nor `skipped`**. A
+  repo that **is** federated but where the check cannot run takes the ordinary **visible skip**, because
+  there the question was asked and went unanswered. Both halves are asserted.
+- **"Refreshed recently" is an honest proxy, and the payload says so.** The question worth asking is
+  *"was my record refreshed this session"*, and a timestamp cannot answer it — there is no session marker
+  to read, and inventing one is the heartbeat's business, not a checker's. The check asks the strongest
+  observable question instead, *"was it refreshed in the last 12 hours"*, and owns both error directions:
+  a session running longer than the window will see the finding (harmless — the record really is that
+  old, and the named correction is the right action, so the false positive self-clears), and a heartbeat
+  that died under 12 hours ago still looks healthy (a **latency bound**, not a session boundary — a dead
+  heartbeat is caught within one window and stays caught).
+- **Federation gets its own thresholds, rather than overloading one knob across three contracts.** The
+  local check is **hours-scale and not a knob at all**; reusing the canary's `--stale-days` (60 — "is this
+  brain page stale") would let a presence record rot for two months and still pass, which is the exact
+  blindness the observer exists to end. The fleet view gets `--dormant-days` (default 30) for "has this
+  tenant run recently" — **report-only**, so a mis-tuned value is cosmetic rather than board-freezing.
+- **`federation status` becomes the fleet view.** Tenants grouped by group, each member with derived
+  freshness, posture flags, engine version, and markers for dormancy and a home path that no longer
+  resolves; defaults to this repo's groups, `--all` shows every group on the machine. The
+  **singleton-group line is informational, not a finding** — a solo group is normal while a domain is
+  stood up, and it exists so a typo'd group name is at least legible.
+- **The gating split, stated plainly: local gates, fleet reports.** `status` exits `0` whatever it finds.
+  With one operator and many repos, dormancy is the *steady state* and external drives unmount routinely,
+  so gating on a sibling's silence would redden every federated board over repos doing nothing wrong —
+  and the only remedy would be switching the check off. What gates is what is fixable *here*.
+- **Freshness is derived at read time and never persisted** — no `stale` field is written, ever; the mark
+  *is* the report. The canary never writes the registry, never refreshes a heartbeat, never prunes.
+- **The first cross-tenant reader is named for what it is.** v25 deliberately shipped none, so that "read
+  the cache and act" could not become the idiom. The one that now exists is `read_fleet_for_report` —
+  **read-to-report**, documented at its definition as never an authorization path: consult and cross-file
+  will re-read the target's own `federation.json` at act time, because a revocation that waits for the
+  revoker's next session is a revocation that did not happen.
+- **Selftest 19 → 21 gates, and the invisible-when-off gate got wider.** Its "no registry read" half
+  instrumented only the module's parsed-read path, so a bare `stat`/`exists` probe under the registry
+  slipped past it (measured: such a mutation stayed *green*). It now records the whole stdlib filesystem
+  surface underneath the module, so a *look* is caught, not only a read. Twenty-one mutations across
+  both directions — neutered checks, over-broadened ones, a fleet reader wired into the gating path, a
+  persisted staleness mark, and `status` made to gate — were all caught, each with an anchor `count == 1`
+  asserted before it was applied. The new category's own gate also stopped measuring the wrong thing:
+  its invisible-when-off assertion read the *whole rendered report*, whose header embeds the repo's
+  absolute path, so it was coupled to what the fixture directory happened to be **called**. It now
+  asserts over the report's `[OK]`/`[!!]`/`[--]` category lines — the rows the rule actually governs —
+  and the fixture is deliberately named with "federation" in it so the coupling cannot return unnoticed.
+
+---
+
+## v25 — 2026-07-29
+breaking: no
+
+**Federation — the primitive, the opt-in, and groups** (WO-040; stage F1 of a new subsystem). Independent
+gitos instances **on one machine** can now declare themselves, join groups, and register their presence, so
+a later stage can route work that belongs to a sibling repo instead of leaving it to a copy-paste that never
+happens. This version ships the **plumbing only**: the per-repo opt-in file, the machine-level registry, the
+`federation` command, the bootstrap heartbeat, and the one group-reachability predicate. **Nothing here acts
+on another repo** — no consult, no cross-filing, no intake.
+
+- **Invisible when off — proven by a test, not intended.** A repo with no `<home>/federation.json` produces
+  **no registry entry, no registry read or write, no extra output line, and no error**; the tenants directory
+  is not even created, and the repo's tree is byte-identical before and after a heartbeat. Opting in is one
+  explicit command. Unfederated repos are unaffected by this version, which is why it is `breaking: no`.
+- **`<home>/federation.json` is the source of truth, and it is git-IGNORED.** It carries a stable `id`, a
+  display `name`, `groups`, and the exposure flags `consultable` (**off** by default — the one capability
+  that reveals repo content) and `accept_proposals` (on). Ignoring it makes opt-in **per checkout**: a clone
+  or worktree arrives unfederated instead of inheriting an identity and an exposure posture. **Exactly one
+  path is ignored** — the rest of the pipeline home stays tracked, because the ledger and the brain are the
+  audit trail. `scaffold` seeds the line for new repos; `federation enable` back-fills it for existing ones.
+- **Identity is minted once and derived from nothing** — so it survives a **rename** *and* a **move**. Not
+  derived from the path (a move would change the identity — the identity-by-position lesson in path form)
+  and not from the repo's history (every clone would derive the same id and two checkouts would fight over
+  one record). A changed path is a **move**: the same record's `home_path` is updated, never forked.
+- **The registry is ONE FILE PER TENANT** at `~/.claude/gitos-federation/tenants/<id>.json`, and a session
+  writes **only its own** (write-temp-then-`os.replace`). A single shared registry file has no per-row write,
+  so two sessions refreshing at once would silently lose each other's updates; with one file per tenant there
+  is no lost-update window and no cross-tenant merge to get wrong. `home_path` is **stored and compared
+  canonicalized** (resolved + case-folded) — one repo has many live spellings, and comparing raw strings
+  manufactures phantom conflicts out of OS artifacts.
+- **The cache is never the authority.** A tenant record's `groups` and `flags` are **discovery hints**;
+  whether anyone may act on a repo is decided by re-reading **that repo's** `federation.json` at act time.
+  Without that rule a revocation would be silently ineffective until the revoker's next session — so the
+  shape is pinned now, before the first caller exists.
+- **Groups scope reachability by set intersection** (`reachable()` — **exactly one implementation**, exported,
+  and shipped with its tests before any caller exists, so later stages cannot drift on what *reachable* means).
+  Names are normalized (trimmed, lowercased, deduped, order-insensitive); no `groups` field means `[default]`,
+  so a machine that never partitions behaves exactly as one ungrouped federation. **Multi-membership is the
+  sharing primitive** — a repo several domains depend on joins them all. Groups answer *who can reach me*;
+  the flags answer *what they may do*; neither does the other's job. A typo makes a silent group of one, and
+  the mitigation is **legibility** (`federation status` lists the groups), not validation — flagging a solo
+  group would cry wolf while a domain is being stood up.
+- **The heartbeat is a BOOTSTRAP step, never a canary check.** A federated repo refreshes **its own** record
+  and stamps `last_seen` at first-action — beside ensure-git and the engine-drift check, and **before** the
+  canary. Refreshing your own presence is an *attendance signature*, not a repair; a checker reports and
+  never mutates shared state. Staleness is derived at read time and is **never persisted**.
+- **Cooperative, not a sandbox — stated plainly everywhere.** No daemon, no process, no network: the registry
+  is a lazy cache maintained as a side effect of participants running gitos, and it is eventually consistent.
+  Federation is machine-local **by construction**, so the machine is the only isolation involved. Flags and
+  groups are graduated-sharing policy that participants honor — they reduce blast radius and noise; they are
+  not an enforcement boundary and they keep no secrets. Presence is *machine-visible metadata*, not "none".
+- **Known gap, stated rather than hidden:** the heartbeat is a directive whose observer (the canary category
+  that notices a federated repo whose own record is missing or not refreshed this session) is the **next**
+  stage. Delivery and its observer ship as a pair, and until the second half lands this step is a directive
+  with no observer — the decay shape this engine has named before, accepted only because the pair closes it.
+- **Opting out is clean under a live heartbeat.** `disable` removes the **truth file first**, then the
+  record, then sweeps once more after a brief settle. `federation.json` is the master switch, so once it is
+  gone any heartbeat that *starts* writes nothing — deleting it first is what makes the window *closeable*
+  rather than merely narrow; the settled second sweep collects a writer that was already in flight. The
+  other order leaves a record naming an opted-out repo's path, groups and flags that nothing will ever
+  refresh. *Residual, stated rather than implied away:* a heartbeat descheduled longer than the settle
+  between its read and its write can still leave a row — this is a cooperative mechanism, not a lock, and
+  the next stage's own-record observer is what reports such a row.
+- Selftest gains **five** gates (primitive/groups/reachability; opt-in + registry incl.
+  rename/move/canonical path/legacy homes/`.gitignore` precision; invisible-when-off; concurrency; and the
+  opt-out race), each mutation-tested both directions.
+
+---
+
 ## v24 — 2026-07-17
 breaking: no
 

@@ -160,6 +160,42 @@ import the orchestrator normalizes your prompt into the engine's voice and you c
 imported steering reads like the rest of gitos. It's injected context, not a fifth role.
 
 
+## Federation — optional, off by default
+
+If you run gitos in more than one repo on the same machine, those instances can **find each other**.
+An orchestrator that discovers a bug belonging to a sibling repo can file it *there* instead of you
+copy-pasting it across; one that needs something a sibling already learned can read that sibling's
+brain instead of you opening the folder. Nobody gives up authority over their own repo.
+
+```text
+federation enable                        opt this repo in (mints an id; writes one ignored file)
+federation status                        who else is on this machine, and what they allow
+federation set --consultable on          let siblings read this repo's brain  (off by default)
+federation consult <target>              read a sibling's brain, if it allows it
+federation file <target> --title …       file a finding into a sibling's intake
+federation intake                        what siblings have proposed to THIS repo
+```
+
+**Two-stage consent.** Opting in is one decision; what you expose is a separate one. `consultable`
+is **off** by default — a sibling can see you exist, not read your brain. Groups partition a machine
+when one box hosts unrelated domains, so reachability is a set intersection rather than "everyone."
+
+**A proposal is data, never a directive.** A finding filed into your repo lands in `intake/` as a
+*proposal*. It becomes work only when **you** accept it — and on accept, your repo authors its own
+work-order; the foreign file stays evidence and never becomes an item on your board. The listing
+shows metadata only and **cannot render a proposal's body**, because that body is text another
+repo's LLM wrote and your orchestrator reads whatever is in that directory. Reading one is a
+deliberate act (`intake --show`), and the operator is who does it.
+
+**What it is not.** This is **cooperative, not a sandbox** — machine-local by construction, no
+daemon, no network, no privileged process. The flags are policy that participants honor; they reduce
+blast radius and noise, and they keep no secrets. The isolation boundary is **the machine**: if two
+bodies of work must not see each other, put them on different machines, which is what you'd do
+anyway. Opting in is per checkout and reversible (`federation disable`), and a repo that never opts
+in is byte-for-byte unchanged — no registry entry, no extra output, no new failure mode.
+
+The full surface, the invariants, and the honest limits: **`references/federation.md`**.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

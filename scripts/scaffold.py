@@ -335,6 +335,16 @@ def starter_gitignore(home_label: str, brain_on: bool) -> str:
             f"{home_label}/brain/raw/_extracted/*",
             f"!{home_label}/brain/raw/_extracted/.gitkeep",
         ]
+    # Federation opt-in is PER CHECKOUT (scripts/federation.py): the opt-in file carries a
+    # stable id and an exposure posture, so a clone/worktree must arrive UNFEDERATED rather
+    # than inherit them. Exactly ONE path inside the home is ignored — everything else there
+    # is the audit trail and stays tracked. Laid unconditionally: federation is orthogonal to
+    # the brain, and a repo that opts in later should not need this line back-filled.
+    lines += [
+        "",
+        "# Federation opt-in is per checkout — this ONE file in the tracked home stays untracked.",
+        f"{home_label}/federation.json",
+    ]
     return "\n".join(lines) + "\n"
 
 
