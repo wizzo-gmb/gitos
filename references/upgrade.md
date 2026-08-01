@@ -201,16 +201,26 @@ Direct the running orchestrator to:
   **It prints nothing when there is nothing to offer** — no siblings on the machine, or a repo
   already in every group that exists. In that case this step is over; say nothing.
 
-  When it prints, it has computed one of two asks, and it has already named the command that
-  applies each. **Put its output to the operator as a question and stop there.** Do not restate
-  the join path from `references/federation.md`, and do not run any other federation command.
+  When it prints, **ask with the harness's interactive question UI** — in Claude Code, the
+  `AskUserQuestion` tool. The full procedure, including the exact options and the two rounds, is
+  `references/federation.md` → *Asking is a PROMPT, not a paragraph*. Follow it there; do not
+  restate the join path here, and run no federation command other than the single one the
+  operator's answers select.
 
-  **This is an offer. `upgrade` runs no command that writes, and writes no `federation.json`** —
-  `offer` is read-only and creates nothing, so a repo that is offered and declines is
-  byte-for-byte the repo that was never asked. Opting in is per checkout and it is the operator's
-  word, and it is the *first* of two consents (the exposure flags are the second). A repo that
-  came back federated because somebody asked for a directive refresh would have spent a consent
-  nobody gave — the precise surprise this subsystem was built to avoid.
+  **Never render the choices as a prose list and wait for a typed reply.** That was measured: an
+  earlier version of this bullet said only "put its output to the operator as a question", and an
+  orchestrator satisfied it with a paragraph of bulleted options — a wall of text where a
+  two-click choice belonged. The offer is computed in code precisely so the ask is not prose.
+
+  **This is an offer, and the operator's answer is the only thing that can write.** `offer` itself
+  is read-only and creates nothing. A repo whose operator declines — or that is never asked,
+  because there was nothing to offer — is byte-for-byte the repo that never ran this step. The
+  *only* way `upgrade` writes a `federation.json` is an operator selecting a group in the prompt,
+  which is consent given at the moment of the write. Opting in is per checkout and it is the
+  operator's word, and it is the *first* of two consents (the exposure flags are the second, asked
+  in the same flow). A repo that came back federated because somebody asked for a directive
+  refresh would have spent a consent nobody gave — the precise surprise this subsystem was built
+  to avoid.
 
   **Declining stores nothing**, deliberately: there is no "I said no" file, so the offer is
   computed fresh every upgrade and the capability stays discoverable. The cost of that is one

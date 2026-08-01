@@ -258,20 +258,57 @@ saying anybody's words. A label flagged **NOT JOINABLE BY NAME** is one that can
 display intact — retyping it would make a new group of one that looks exactly like joining, so it
 is reported rather than offered.
 
-**When the offer is `enable` and the operator says yes, there are three questions, in this order.**
-Ask them one at a time; each has a default, and a default accepted is a complete answer:
+### Asking is a PROMPT, not a paragraph
 
-1. **Which group?** Pick from the list `offer` printed, or name a new one. Default: `default`.
-2. **`consultable`** — default **off**. Frame it as what it is: *a standing grant for sibling
-   repos to read this repo's brain.* Off means a sibling can see this repo exists and nothing more.
-3. **`accept_proposals`** — default **on**. Frame it as what it is: *a sibling may queue a
-   proposal here, which lands in `intake/` and becomes work only when you accept it.* A proposal
-   is data, never a directive.
+**Use the harness's interactive question UI — in Claude Code, the `AskUserQuestion` tool. Do NOT
+write the choices out as prose and wait for a typed reply.**
 
-Both flags are one command: `federation enable --groups <name> --consultable on|off
---accept-proposals on|off`. **On upgrade, questions 2 and 3 are asked only when the operator has
-just said yes to enabling** — a repo that is already federated has answered them, and re-asking
-on every upgrade is how a checkpoint becomes noise.
+This is a directive about mechanism, and it is here because the mechanism was left unstated once
+and the result was immediate: an orchestrator told to "put the offer to the operator as a
+question" rendered a tidy paragraph of bulleted options and a "want to enable it, or leave it off
+for now?" — a wall of text where a two-click choice belonged. **A question the operator has to
+answer in prose is not a checkpoint, it is homework.** The whole point of computing the offer in
+code was to end the era of the offer being prose; asking in prose puts it straight back.
+
+**Round 1 — one question: join, and which group.** Options come from `offer`'s pick-list:
+
+- one option per **joinable** group, labelled with that group's name and its member count
+  (`"quantitative-trading" — 3 members`), most members first, **at most three**;
+- plus a final option **"Leave federation off"**, described as: nothing is written, and the offer
+  is recomputed on the next upgrade;
+- if more than three joinable groups exist, say so in the question text — the operator can name
+  any other group through the prompt's own free-text answer;
+- a group flagged **NOT JOINABLE BY NAME** is never an option. Mention it in the question text if
+  it exists, so the operator knows a group is there that they must get the exact label for.
+
+If the operator leaves it off, **stop. Write nothing, store nothing**, and do not ask the flag
+questions — declining is a complete answer, not a step on the way to a different one.
+
+**Round 2 — only after a group is chosen: the two exposure flags, in one prompt, two questions.**
+Each is a two-option choice whose **default is listed first and marked as recommended**:
+
+| Question | Default (first option) | The other option |
+|---|---|---|
+| `consultable` — may siblings read this repo's brain? | **Off** — a sibling can see this repo exists, nothing more | On — a standing grant to read this repo's brain |
+| `accept_proposals` — may siblings file findings into this repo's intake? | **On** — a proposal queues in `intake/` and becomes work only when you accept it | Off — refuse proposals outright |
+
+Describe each option by what it *does*, not by the flag's name: the operator is deciding exposure,
+and `consultable = true` is not a thing anyone can consent to on its face.
+
+**Then run exactly one command** with all three answers, and report what it wrote:
+
+```
+federation enable --groups <chosen> --consultable on|off --accept-proposals on|off
+```
+
+**Already federated, and a new group exists?** One prompt, one question — join that group, or
+leave it. On accept the command is `federation set --groups <every group this repo should be in>`,
+because `--groups` **replaces** the set. **Never re-ask the exposure flags on upgrade**: that repo
+has answered them, and a prompt people learn to dismiss has stopped being a checkpoint.
+
+**No interactive prompt in the harness?** Then print the offer, name the one command that applies
+each choice, and stop — an offer the operator can act on beats a question nothing can answer. That
+is a fallback, not the path.
 
 **Applying an answer is an existing command, run by the operator.** `offer` never writes:
 

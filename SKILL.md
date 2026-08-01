@@ -287,7 +287,9 @@ python <SKILL_DIR>/scripts/federation.py intake  [ROOT] [--show|--accept|--decli
 **`/gitos federation` — the adoption mode.** `federation offer` computes what should be asked of
 the operator (enable? join a group that exists?) and prints nothing when the answer is nothing.
 `upgrade` runs it as one step; `/gitos federation` runs it and additionally offers the exposure
-flags and leaving a group. Procedure: `references/federation.md` → *The adoption flow*.
+flags and leaving a group. **Ask with the harness's interactive question UI (in Claude Code, the
+`AskUserQuestion` tool) — never as a prose list of options.** Procedure:
+`references/federation.md` → *The adoption flow*, and *Asking is a PROMPT, not a paragraph*.
 
 - **`<home>/federation.json` is the source of truth** — a stable `id` (minted once at opt-in, so
   it survives rename *and* move), a `name`, `groups`, and the exposure flags `consultable`

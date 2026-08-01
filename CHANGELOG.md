@@ -18,6 +18,40 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v31 — 2026-07-31
+breaking: no
+
+**The adoption offer is asked with a PROMPT, not a paragraph.** v30 moved the offer from prose
+into code — the tool computes what needs asking — and then left the *asking* unspecified: the
+directive said only "put its output to the operator as a question". That was satisfied, on the
+first real upgrade, by a tidy paragraph of bulleted options ending in "want to enable it, or leave
+it off for now?". **A question the operator has to answer in prose is not a checkpoint, it is
+homework** — and computing the offer in code to end the era of prose, then asking in prose, puts
+it straight back.
+
+- **`references/federation.md` gains *Asking is a PROMPT, not a paragraph*** — the mechanism,
+  stated: use the harness's interactive question UI (in Claude Code, `AskUserQuestion`), never a
+  prose list awaiting a typed reply. It specifies both rounds exactly: **round 1** is one question
+  built from `offer`'s pick-list (one option per joinable group, labelled with its member count,
+  most members first, at most three, plus "Leave federation off"); **round 2** — only after a
+  group is chosen — is the two exposure flags as two-option questions with the safe default listed
+  first and marked recommended. A group flagged NOT JOINABLE BY NAME is never an option.
+- **Declining ends it.** Nothing is written, nothing is stored, and the flag questions are not
+  asked — a decline is a complete answer, not a step toward a different one.
+- **Options are described by what they DO**, not by the flag's name: an operator can consent to
+  "siblings may read this repo's brain", not to `consultable = true`.
+- **`references/upgrade.md` step 4 now points at that procedure** and states the write rule
+  accurately: `offer` is read-only, and the *only* way `upgrade` writes a `federation.json` is an
+  operator selecting a group in the prompt — consent given at the moment of the write. The old
+  wording ("runs no command that writes") would have become false the moment the flow worked.
+- **A harness with no interactive prompt** falls back to printing the offer and naming the one
+  command that applies each choice. That is a fallback, not the path.
+
+No code changed: `federation offer` and gate 26 are v30's and are unchanged. What changed is the
+directive that consumes them.
+
+---
+
 ## v30 — 2026-07-31
 breaking: no
 
