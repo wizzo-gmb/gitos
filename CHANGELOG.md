@@ -18,6 +18,43 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v30 — 2026-07-31
+breaking: no
+
+**Federation — adoption becomes a mechanism instead of a directive.** v29 added the offer as
+*prose in `references/upgrade.md` telling the orchestrator to ask*. A directive with no mechanism
+is one an agent can skip with nothing noticing — the exact decay this subsystem spent nine
+revisions of WO-043 learning to distrust. And `federation set --groups` required knowing a group's
+name in advance, so there was no way to discover what existed on the machine and join it.
+
+- **New read-only command `federation offer`.** It answers one question — *what, if anything,
+  should be offered to this repo right now?* — and **prints nothing when the answer is nothing**.
+  Unfederated with siblings on the machine: offer to enable, and list the groups that exist.
+  Federated: offer only groups this repo is not in. Otherwise: silence. *An empty offer is a
+  result, not an absence — a line that says "nothing to offer" is one every operator learns to
+  scroll past.*
+- **It never writes.** Applying an answer is `enable` / `set`, which already existed. No new write
+  path means no new boundary to prove.
+- **The pick-list is indexed, and labels stay on the human surface.** A group label is a sibling
+  operator's word: capped and delimited where a person reads it, withheld from `--json` entirely,
+  where an index, a member count and a `joinable` flag say which row without saying anybody's
+  words. **R28 keeps no exception.**
+- **`joinable` is asked OF the renderer, not restated.** A label that cannot survive display
+  intact is flagged rather than offered, because retyping it would make a new group of one that
+  looks exactly like joining — membership is a set intersection, so that failure is silent.
+- **`upgrade` step 4 runs the command instead of reciting the join path.** Declining still stores
+  nothing (no second inert state beside `federation.json`), and exposure flags are never
+  re-litigated on upgrade.
+- **`/gitos federation`** is the on-demand mode: the same offer, plus the exposure flags and
+  leaving a group. It is what makes *keeping federation disabled* a deliberate act rather than
+  only the result of declining a prompt.
+- **Gate 26** pins it: empty ⇒ silent, no writer reachable transitively, labels absent from every
+  `--json`, a 5,000-character and a whitespace-bearing label both capped and flagged, 7 faulty
+  registry records degrading per record, an injected engine defect that must *escape* the
+  per-record guard, and an over-restriction control so an always-empty offer cannot pass.
+  `offer` also joins gate 21's R43 sweep, so it is exercised against every malformed record
+  shape in that corpus from the day it exists.
+
 ## v29 — 2026-07-31
 breaking: no
 

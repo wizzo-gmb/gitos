@@ -190,23 +190,35 @@ Direct the running orchestrator to:
   deliberately-forked local variant survives by declining). Then offer any global lens
   *not yet* in the repo as an optional install. Update the repo registry to match what was
   accepted. No global lenses / no `<home>/agents/` → skip, no-op;
-- **offer federation — and do not enable it.** Federation lets independent gitos instances **on
-  one machine** reach each other, so work that belongs to a sibling repo can go there instead of
-  crossing the gap by copy-paste. The whole surface, **including the join path**, is
-  `references/federation.md` → *Joining — the shortest honest path*; do not restate it here or in
-  the report. It is **opt-in and invisible when off** (INV-1) — which is exactly *why* an upgrade
-  has to mention it: a repo with no `<home>/federation.json` shows no sign the capability exists,
-  so an operator crossing the versions that added it learns nothing unless this step says so.
-  **When that file is absent**, say once that federation exists, point at that section, and stop.
-  **When it is present**, say nothing — that repo has already decided.
+- **offer federation — the tool computes the ask; you ask it.** Federation lets independent gitos
+  instances **on one machine** reach each other, so work that belongs to a sibling repo can go
+  there instead of crossing the gap by copy-paste. Run:
 
-  **This is an offer. `upgrade` runs no federation command and writes no `federation.json`** —
-  the only thing this step reads is whether that one file exists. Opting in is per checkout and
-  is the operator's word, and it is the *first* of two consents (the exposure flags are the
-  second). A repo that came back federated because somebody asked for a directive refresh would
-  have spent a consent nobody gave — the precise surprise the subsystem was built to avoid. Same
-  shape as the pull offer in step 2 and the lens refresh above: **report, then ask** — and here
-  the "ask" is only ever the operator's own next command.
+  ```text
+  python <SKILL_DIR>/scripts/federation.py offer [ROOT]
+  ```
+
+  **It prints nothing when there is nothing to offer** — no siblings on the machine, or a repo
+  already in every group that exists. In that case this step is over; say nothing.
+
+  When it prints, it has computed one of two asks, and it has already named the command that
+  applies each. **Put its output to the operator as a question and stop there.** Do not restate
+  the join path from `references/federation.md`, and do not run any other federation command.
+
+  **This is an offer. `upgrade` runs no command that writes, and writes no `federation.json`** —
+  `offer` is read-only and creates nothing, so a repo that is offered and declines is
+  byte-for-byte the repo that was never asked. Opting in is per checkout and it is the operator's
+  word, and it is the *first* of two consents (the exposure flags are the second). A repo that
+  came back federated because somebody asked for a directive refresh would have spent a consent
+  nobody gave — the precise surprise this subsystem was built to avoid.
+
+  **Declining stores nothing**, deliberately: there is no "I said no" file, so the offer is
+  computed fresh every upgrade and the capability stays discoverable. The cost of that is one
+  keystroke; the cost of the alternative is a second inert state beside `federation.json`.
+
+  **Exposure flags are never re-litigated here.** `offer` asks a federated repo about new groups
+  and nothing else — changing `consultable` or `accept_proposals` is a deliberate act via
+  `/gitos federation`. A prompt people learn to skip has stopped being a checkpoint.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:

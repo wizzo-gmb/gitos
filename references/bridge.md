@@ -70,9 +70,10 @@ canonical worked example.
 ## Then the wrapped `upgrade` finishes the job
 
 After SYNC / PRESERVE / MERGE, the BRIDGE hands off to `references/upgrade.md` for the closing
-steps — the **federation offer** (step 4's last bullet: report that it exists, never enable it;
-a profiled repo is exactly the kind that has siblings, so it must not be the one class the offer
-misses), **stamp** the synced version (which writes `last_reconciled_engine`), **ADR + log**,
+steps — the **federation offer** (step 4's last bullet: run `federation offer` and ask only when
+it says to, never enable anything itself; a profiled repo is exactly the kind that has siblings,
+so it must not be the one class the offer misses), **stamp** the synced version (which writes
+`last_reconciled_engine`), **ADR + log**,
 and **report** the `git diff` (engine files + stamp + ADR only; profile and state untouched;
 layout unchanged). If the repo's stamp already equals the skill's `ENGINE_VERSION`, report
 "engine up to date (vN)" and stop — the whole BRIDGE is a no-op when nothing upstream changed.

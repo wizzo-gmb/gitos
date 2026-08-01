@@ -14,6 +14,14 @@ directory, as a proposal that the receiving repo's operator can decline.**
 `federation.json`, and every federation step is *not a step*: no registry entry, no registry
 read or write, no extra output line, no error. Opting in is one explicit command.
 
+**One exception, and it is a read, not a step.** `federation offer` — the one command an
+operator can point at an unfederated repo *on purpose*, and the one `references/upgrade.md`
+step 4 runs on **every** repo — reads the registry to answer "is there anything here to tell
+you about?", even before opting in. It creates nothing, writes nothing, and prints nothing
+when the answer is no. "Invisible when off" is a promise about the *unbidden* path: nothing
+runs on its own, nothing is registered, and the repo tree is byte-identical whether or not
+`offer` was run. See *The adoption flow*, below.
+
 **Machine-local by construction.** There is no daemon, no process, and no network — the
 registry is a lazy cache maintained as a side effect of participants running gitos, and it is
 eventually consistent. Repos on different machines cannot federate.
@@ -161,8 +169,10 @@ python ~/.claude/skills/gitos/scripts/federation.py <subcommand> [ROOT]
 | `consult` | **authorize only** — may this repo read `TARGET`'s brain *right now*? → ALLOW + a path, or REFUSE + a reason. It dispatches nothing and reads no brain. See *Consult*, below. |
 | `file` | **cross-file a finding** into `TARGET`'s intake as a **proposal**. Dry-run by default; `--confirm` is the outbound confirm gate. See *Cross-file*, below. |
 | `intake` | the receiving half: list pending proposals **by metadata**, and accept / decline / defer them. See *Intake*, below. |
+| `offer` | what should be offered to THIS repo right now (read-only). See *The adoption flow*, below. |
 
 ```
+federation.py offer   [ROOT]
 federation.py enable  --groups finance,shared-libs --consultable on
 federation.py set     --accept-proposals off
 federation.py status  [--all] [--dormant-days N]
@@ -220,6 +230,62 @@ Steps 1–3 write only inside your own repo (`federation.json`, the ignore line)
 registry record. **Step 4 is the first one that writes into ANOTHER repo at all** — and opting in
 does disclose this repo's id, name, groups, flags and path to every other tenant on the machine,
 which is what makes step 1 a consent decision rather than a formality.
+
+---
+
+## The adoption flow — what the tool computes and what you ask
+
+`/gitos federation` is the on-demand entry point, and `upgrade` runs the same first step. **The
+split is the one this whole subsystem is built on: the tool computes what needs asking; the
+orchestrator asks it.** Whether an offer is warranted is mechanical, so it is derived on every run
+rather than remembered. Rendering the question and reading the answer is judgement, and it needs
+an operator to talk to.
+
+`federation offer` answers exactly one question — *what, if anything, should be offered here right
+now?* — and prints **nothing** when the answer is nothing:
+
+| repo state | what it offers |
+|---|---|
+| unfederated, siblings on the machine | enable, plus the groups that exist |
+| unfederated, no siblings | nothing — silence |
+| federated, a group exists it is not in | those groups only |
+| federated, nothing new | nothing — silence |
+
+**The pick-list is indexed, and the labels are on the human surface only.** A group label is a
+sibling operator's word, so it is capped and delimited where a person reads it and withheld from
+`--json` entirely, where an index, a member count and a `joinable` flag say which row without
+saying anybody's words. A label flagged **NOT JOINABLE BY NAME** is one that cannot survive
+display intact — retyping it would make a new group of one that looks exactly like joining, so it
+is reported rather than offered.
+
+**When the offer is `enable` and the operator says yes, there are three questions, in this order.**
+Ask them one at a time; each has a default, and a default accepted is a complete answer:
+
+1. **Which group?** Pick from the list `offer` printed, or name a new one. Default: `default`.
+2. **`consultable`** — default **off**. Frame it as what it is: *a standing grant for sibling
+   repos to read this repo's brain.* Off means a sibling can see this repo exists and nothing more.
+3. **`accept_proposals`** — default **on**. Frame it as what it is: *a sibling may queue a
+   proposal here, which lands in `intake/` and becomes work only when you accept it.* A proposal
+   is data, never a directive.
+
+Both flags are one command: `federation enable --groups <name> --consultable on|off
+--accept-proposals on|off`. **On upgrade, questions 2 and 3 are asked only when the operator has
+just said yes to enabling** — a repo that is already federated has answered them, and re-asking
+on every upgrade is how a checkpoint becomes noise.
+
+**Applying an answer is an existing command, run by the operator.** `offer` never writes:
+
+- enable, in a chosen group — `federation enable --groups <name>`
+- join another group — `federation set --groups <every group this repo should be in>`
+  (**`--groups` replaces the set** — name the ones you are already in too)
+- change exposure — `federation set --consultable on|off --accept-proposals on|off`
+- leave — `federation disable`
+
+**On demand, `/gitos federation` does more than `upgrade` does.** `upgrade` offers *new* things
+only — enable, or a group this repo is not in. The on-demand mode additionally walks the exposure
+flags and leaving a group, which upgrade deliberately never touches. That is what makes *keeping
+federation disabled* something an operator can do on purpose rather than only by declining a
+prompt.
 
 ---
 

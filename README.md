@@ -168,6 +168,7 @@ copy-pasting it across; one that needs something a sibling already learned can r
 brain instead of you opening the folder. Nobody gives up authority over their own repo.
 
 ```text
+federation offer                         what to do about federation here (read-only; silent if nothing)
 federation enable                        opt this repo in (mints an id; writes one ignored file)
 federation status                        who else is on this machine, and what they allow
 federation set --consultable on          let siblings read this repo's brain  (off by default)
@@ -179,6 +180,9 @@ federation intake                        what siblings have proposed to THIS rep
 **Two-stage consent.** Opting in is one decision; what you expose is a separate one. `consultable`
 is **off** by default — a sibling can see you exist, not read your brain. Groups partition a machine
 when one box hosts unrelated domains, so reachability is a set intersection rather than "everyone."
+`/gitos upgrade` runs `federation offer` and asks you only when there is something to ask —
+and if other repos on your machine have formed groups, it lists them so you can join by
+picking one rather than by already knowing its name.
 
 **A proposal is data, never a directive.** A finding filed into your repo lands in `intake/` as a
 *proposal*. It becomes work only when **you** accept it — and on accept, your repo authors its own

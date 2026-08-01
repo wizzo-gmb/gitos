@@ -3211,6 +3211,165 @@ def ensure_gitignore(root: Path, home: Path) -> "tuple[str, str | None]":
     return "appended", pattern
 
 
+# --------------------------------------------------------------------------- offer (adoption)
+# THE SPLIT THIS SECTION HOLDS: **the tool computes what needs asking; the orchestrator asks it.**
+#
+# Whether an offer is warranted - am I federated, do siblings exist, which groups am I not in - is
+# MECHANICAL, so it is derived on every run rather than remembered. An offer that lives only as
+# prose in an upgrade directive is one an agent can skip without anything noticing; an offer
+# computed here can be asserted on. Rendering the question and collecting the answer is judgement
+# and stays with the orchestrator, which is the half that has an operator to talk to.
+#
+# **NOTHING HERE WRITES.** Applying an answer is `enable` / `set`, which already exist. That is
+# deliberate: a capability that touches no write surface adds no boundary to prove.
+
+OFFER_NONE = "none"
+OFFER_ENABLE = "enable"
+OFFER_GROUPS = "groups"
+
+
+def label_roundtrips(label: object) -> bool:
+    """Can an operator JOIN this group by typing its label back? Asked of the renderer itself.
+
+    A group is joined by naming it (`set --groups ...`), and a label reaches the operator through
+    `render_foreign`, which collapses whitespace, drops unprintable characters and caps the result.
+    A label that does not survive that intact is one an operator would retype WRONG - and because
+    membership is a set intersection over normalized labels, a wrong retype silently makes a group
+    of one that looks exactly like success. That is a silent wrong outcome, so it is answered here
+    rather than left to be noticed.
+
+    **IT COMPARES AGAINST THE RENDERER RATHER THAN RESTATING ITS RULE** (a length test would be a
+    second source that drifts the moment the cap or the stripping changes). Where a rule ranges
+    over what another function does, ask that function.
+    """
+    raw = normalize_group(label)
+    if not raw:
+        return False
+    shown = render_foreign(Foreign(raw))
+    return shown[len(FOREIGN_QUOTE):-len(FOREIGN_QUOTE)] == raw
+
+
+def offer_view(cfg: "dict | None", entries: "list[dict]") -> dict:
+    """What, if anything, should be offered to this repo right now.
+
+    `cfg` is this repo's own `federation.json` (`None` when unfederated); `entries` is
+    `read_fleet_for_report`'s output. Neither is read here - this function touches no filesystem,
+    which is what makes it testable and what keeps "did it write?" a question about the caller.
+
+    **AN EMPTY OFFER IS A RESULT, NOT AN ABSENCE.** `kind == OFFER_NONE` is the signal that the
+    upgrade says nothing at all, and the printer honours it by printing nothing.
+
+    **IT DEGRADES PER RECORD (R38)**, on the same footing as `fleet_view`: a sibling's record that
+    cannot be projected is a COUNT here, never an exception in a repo that did not write it.
+    """
+    own_id = None if cfg is None else emission_text(mark_id(cfg.get("id")))
+    mine = set() if cfg is None else set(normalize_groups(cfg.get("groups")))
+    siblings = 0
+    unreadable = 0
+    found: "dict[str, dict]" = {}
+    for entry in entries:
+        if entry.get("error") or not isinstance(entry.get("record"), dict):
+            unreadable += 1
+            continue
+        try:
+            rec = entry["record"]
+            rid = emission_text(mark_id(rec.get("id", entry.get("id"))))
+            labels = marked_group_labels(rec.get("groups"))
+        except (FederationError, EmissionError):
+            # NARROW ON PURPOSE, exactly as in `fleet_view`: these two classes are "this data
+            # cannot be projected". Anything else is a defect in THIS tool and must keep
+            # surfacing as one - a blanket except would dress an engine bug up as a bad record.
+            unreadable += 1
+            continue
+        if own_id is not None and rid == own_id:
+            continue                      # this repo's own row is not a sibling
+        siblings += 1
+        for label in labels:
+            key = normalize_group(label)
+            if not key or key in mine:
+                continue                  # already in it: there is nothing to offer
+            slot = found.setdefault(key, {"label": label, "members": 0})
+            slot["members"] += 1
+    # **EVERY OFFERED LABEL IS `Foreign`, INCLUDING THE ONE THAT SPELLS THIS ENGINE'S OWN
+    # CONSTANT.** `marked_group_labels` falls back to `Engine(DEFAULT_GROUP)` for a record that
+    # declares no groups - correct there, because that IS this engine's word for "unpartitioned".
+    # Here it is not: what this row asserts is *a sibling repo is in a group you are not in*, and
+    # that claim comes out of somebody else's record whatever the spelling coincides with. Marking
+    # it makes "no label reaches --json" TOTAL rather than true-in-the-common-case - measured:
+    # left as `Engine`, a sibling record with `groups` absent put `"label": "default"` on
+    # `offer --json`, one phase after this gate's own assertion forbidding it.
+    groups = [payload(index=i, label=Foreign(found[key]["label"]),
+                      members=found[key]["members"],
+                      joinable=label_roundtrips(found[key]["label"]))
+              for i, key in enumerate(sorted(found), start=1)]
+    if cfg is None:
+        kind = OFFER_ENABLE if siblings else OFFER_NONE
+    else:
+        kind = OFFER_GROUPS if groups else OFFER_NONE
+    return payload(kind=Engine(kind), ask=kind != OFFER_NONE, federated=cfg is not None,
+                   siblings=siblings, unreadable=unreadable, groups=groups)
+
+
+def _print_offer(r: dict) -> None:
+    """The human half - **and it prints NOTHING when there is nothing to offer.**
+
+    Silence is the result, not an absence: `upgrade` runs this on every repo, so an offer that
+    said "nothing to offer" would be a line every operator learns to scroll past, and a prompt
+    people learn to skip has stopped being a checkpoint.
+
+    THE LABELS LIVE HERE AND ONLY HERE. A group label is a sibling operator's word, so it is
+    `Foreign` and the serializer has already capped and delimited it by the time this runs; the
+    machine half withholds it entirely (R28), which is why the pick-list is INDEXED - an index is
+    this engine's own arithmetic and says which row without saying anybody's words.
+    """
+    if not r["ask"]:
+        return
+    if r["kind"] == OFFER_ENABLE:
+        print(f"federation: {r['siblings']} other gitos repo(s) on this machine are federated; "
+              f"this one is not.")
+    else:
+        print(f"federation: {len(r['groups'])} group(s) on this machine that this repo is not in.")
+    for g in r["groups"]:
+        mark = "" if g["joinable"] else "   NOT JOINABLE BY NAME"
+        print(f"  [{g['index']}]  {g['label']}   {g['members']} member(s){mark}")
+    if r["kind"] == OFFER_ENABLE:
+        print("  join      `federation enable --groups <name>`  - or plain `federation enable` "
+              "to start in the default group")
+        print("  exposure  after enabling, consultable is OFF (siblings cannot read this repo's "
+              "brain) and accept-proposals is ON (a sibling can queue a proposal for you to "
+              "adjudicate). `federation set` changes either.")
+    else:
+        # **`--groups` REPLACES THE SET.** Saying so here is the difference between joining a
+        # group and silently LEAVING every other one, which is the same silent-wrong-outcome
+        # class `joinable` exists for, one command further on.
+        print("  join      `federation set --groups <every group this repo should be in>` - "
+              "`--groups` REPLACES the set, so name the ones you are already in too")
+    if any(not g["joinable"] for g in r["groups"]):
+        print("  NOT JOINABLE BY NAME means the label does not survive display intact (too long, "
+              "or carrying characters a line cannot show), so retyping it would make a new group "
+              "of one rather than join that one. Ask that repo's operator for the exact label.")
+    if r["unreadable"]:
+        print(f"  note      {r['unreadable']} registry record(s) could not be read; "
+              f"`federation status --all` names them. They are not counted above.")
+    print("  nothing is written unless you run one of those commands.")
+
+
+def cmd_offer(root: Path, home: Path, args: argparse.Namespace) -> "tuple[int, dict]":
+    """What should be offered to this repo right now. **READ-ONLY, and silent when empty.**
+
+    It READS the registry - which is what INV-1 has always allowed an explicitly-invoked command
+    to do (`status --all` does it from an unfederated repo for the same reason). What INV-1
+    forbids is the unbidden path leaving a trace: this creates no directory, writes no file and
+    registers nothing, so a repo that runs it and declines is byte-for-byte the repo that never
+    ran it.
+    """
+    del root
+    view = offer_view(read_federation(home), read_fleet_for_report(args.registry))
+    if not args.json:
+        _print_offer(emit_human(view))
+    return 0, view
+
+
 # --------------------------------------------------------------------------- CLI
 def cli_sentence(template: str, **subs: object) -> str:
     """A sentence about a SHELL ARGUMENT, rendered through the ONE choke point. (R41/R45)
@@ -3986,7 +4145,7 @@ def cmd_intake(root: Path, home: Path, args: argparse.Namespace) -> "tuple[int, 
 
 COMMANDS = {"status": cmd_status, "enable": cmd_enable, "set": cmd_set,
             "disable": cmd_disable, "heartbeat": cmd_heartbeat, "consult": cmd_consult,
-            "file": cmd_file, "intake": cmd_intake}
+            "file": cmd_file, "intake": cmd_intake, "offer": cmd_offer}
 
 
 class _Parser(argparse.ArgumentParser):

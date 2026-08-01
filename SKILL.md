@@ -269,15 +269,25 @@ a sibling repo can eventually reach it instead of crossing the gap by copy-paste
 
 **Invisible when off.** A repo with no `<home>/federation.json` is byte-for-byte today's gitos:
 no registry entry, no registry read/write, no extra output line, no error. Every federation step
-simply does not happen. Opting in is one explicit command.
+simply does not happen. Opting in is one explicit command. The one command an operator can point
+at an unfederated repo deliberately — `federation offer`, which `upgrade` runs — **reads** the
+registry to answer "is there anything here to tell you about?" and creates nothing, writes
+nothing, and prints nothing when the answer is no. Invisible when off is a promise about the
+*unbidden* path: nothing runs on its own, nothing is registered, and the repo tree is
+byte-identical either way.
 
 ```
-python <SKILL_DIR>/scripts/federation.py {status|enable|set|disable|heartbeat} [ROOT]
+python <SKILL_DIR>/scripts/federation.py {status|enable|set|disable|heartbeat|offer} [ROOT]
 python <SKILL_DIR>/scripts/federation.py consult TARGET [ROOT]
 python <SKILL_DIR>/scripts/federation.py file    TARGET [ROOT] --title T --summary S \
                                                  --source-ref R [--confirm]
 python <SKILL_DIR>/scripts/federation.py intake  [ROOT] [--show|--accept|--decline|--defer ID]
 ```
+
+**`/gitos federation` — the adoption mode.** `federation offer` computes what should be asked of
+the operator (enable? join a group that exists?) and prints nothing when the answer is nothing.
+`upgrade` runs it as one step; `/gitos federation` runs it and additionally offers the exposure
+flags and leaving a group. Procedure: `references/federation.md` → *The adoption flow*.
 
 - **`<home>/federation.json` is the source of truth** — a stable `id` (minted once at opt-in, so
   it survives rename *and* move), a `name`, `groups`, and the exposure flags `consultable`
