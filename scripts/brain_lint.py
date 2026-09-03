@@ -5,7 +5,9 @@ that the orchestrator's reflection pass tends to miss:
 
   - duplicate / near-duplicate pages   (same slug-stem, or high title + wikilink overlap)
   - orphans                            (no inbound [[links]] and not listed in index.md)
-  - stale                              (frontmatter `updated:` older than --stale-days)
+  - stale                              (frontmatter `updated:` older than --stale-days;
+                                        record-dated pages are exempt, and the exemption
+                                        is counted and reported, never silent)
   - broken wikilinks                   ([[target]] with no matching page)
   - cross-layer redundancy             (page restates a work-order, or mirrors code)
 
@@ -30,6 +32,20 @@ from datetime import date, datetime
 from pathlib import Path
 
 PAGE_TYPES = ("sources", "entities", "concepts", "decisions")
+# Page types whose date is a RECORD, not a freshness claim. A decision record's `updated:`
+# is the date the decision was made — it cannot be renewed without asserting that a past
+# decision was re-made today, so flagging one as stale demands the single remedy the engine
+# forbids (writing a false date) and can never be cleared truthfully.
+#
+# Exempt from the STALE check ONLY: duplicates, orphans, broken wikilinks and cross-layer
+# redundancy still apply — a decision record can absolutely carry a rotted link. Any page of
+# any type opts out the same way with `historical: true` in frontmatter (a page transcribing
+# a fixed source, say, whose date records a transcription rather than a freshness claim).
+#
+# Exemptions are COUNTED and surfaced in the report: a check that silently skips pages claims
+# a health it did not verify.
+RECORD_DATED_PTYPES = ("decisions",)
+FM_TRUE = {"true", "yes", "1"}
 WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 WORKORDER = re.compile(r"\b(?:WO-\d+|bug_\d{2,})\b", re.IGNORECASE)
 FENCE = re.compile(r"^\s*```")
@@ -62,6 +78,7 @@ class Page:
     wikilinks: set[str] = field(default_factory=set)   # slugified targets
     body: str = ""
     fm_work_order: bool = False
+    fm_historical: bool = False   # `historical: true` -> opt out of the stale check
 
 
 def parse_page(path: Path, ptype: str) -> Page:
@@ -94,6 +111,7 @@ def parse_page(path: Path, ptype: str) -> Page:
         path=path, ptype=ptype, slug=path.stem, title=title, title_slug=slugify(title),
         updated=updated, wikilinks=links, body=body,
         fm_work_order=bool(fm.get("work_order")),
+        fm_historical=fm.get("historical", "").strip().strip("\"'").lower() in FM_TRUE,
     )
 
 
@@ -143,13 +161,20 @@ def lint(brain_dir: Path, stale_days: int, today: date) -> dict:
                 inbound[hit.slug] = inbound.get(hit.slug, 0) + 1
 
     orphans, stale, cross_layer = [], [], []
+    stale_exempt = 0
     for p in pages:
         listed = (p.slug in index_text) or (p.title_slug in index_text)
         if inbound.get(p.slug, 0) == 0 and not listed:
             orphans.append({"page": str(p.path)})
         if p.updated and (today - p.updated).days > stale_days:
-            stale.append({"page": str(p.path), "updated": p.updated.isoformat(),
-                          "age_days": (today - p.updated).days})
+            # Counted only when the exemption actually SUPPRESSED a finding, so the reported
+            # number is the size of what was withheld from this run — not a census of how many
+            # exempt pages happen to exist.
+            if p.ptype in RECORD_DATED_PTYPES or p.fm_historical:
+                stale_exempt += 1
+            else:
+                stale.append({"page": str(p.path), "updated": p.updated.isoformat(),
+                              "age_days": (today - p.updated).days})
         # cross-layer: restates a work-order (in body, not the legit frontmatter field)
         wo_hits = len(WORKORDER.findall(p.body))
         if wo_hits >= 2 and not p.fm_work_order:
@@ -189,6 +214,7 @@ def lint(brain_dir: Path, stale_days: int, today: date) -> dict:
         "duplicates": dups,
         "orphans": orphans,
         "stale": stale,
+        "stale_exempt": stale_exempt,
         "broken_wikilinks": broken,
         "cross_layer_redundancy": cross_layer,
     }
@@ -208,7 +234,11 @@ def print_report(r: dict) -> None:
         items = r[key]
         total += len(items)
         flag = "OK" if not items else "!!"
-        print(f"[{flag}] {title}: {len(items)}")
+        # No false CLEAN: when the stale check held pages back, its own line says how many.
+        # An unreported exemption would read as a health this run never actually verified.
+        exempt = r.get("stale_exempt", 0) if key == "stale" else 0
+        suffix = f" ({exempt} exempt: record-dated)" if exempt else ""
+        print(f"[{flag}] {title}: {len(items)}{suffix}")
         for it in items:
             print(f"       - {json.dumps(it, ensure_ascii=False)}")
     print(f"\n{'CLEAN - nothing flagged.' if total == 0 else f'{total} item(s) flagged. Fix small ones inline; large restructures -> a consolidation work-order in INDEX.md.'}")

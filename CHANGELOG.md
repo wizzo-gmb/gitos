@@ -18,6 +18,44 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v32 — 2026-09-01
+breaking: no
+
+**`brain_lint`'s stale check stops flagging record-dated pages.** The staleness test applied to
+every page type with no exemption — but **a decision record's `updated:` is the date the decision
+was made**. It is not a freshness claim and cannot be renewed: the only way to clear the flag is to
+write a date asserting a past decision was re-made today, which is exactly the lie the engine
+forbids telling a checker. So every decision page in every repo turned red at day 61 with **no
+correct action available**, and because the canary gates work-order resolution on a red brain, the
+observed remedy was to descope the whole stale category — losing the check's real value over
+`sources`/`entities`/`concepts` in order to escape its false half. A gate that cannot go green
+stops being a gate.
+
+- **`scripts/brain_lint.py` exempts record-dated pages from the STALE check only.** Two narrow
+  predicates, both at one named constant so the reason is legible at the definition site:
+  `RECORD_DATED_PTYPES = ("decisions",)` by page type, plus **`historical: true` in frontmatter**
+  as a per-page opt-out on any type — for the same class of page that is not a decision, such as a
+  source transcribing a fixed text, whose date records a transcription. Only the literal truthy
+  values count, so `historical: false` does not exempt.
+- **Staleness only.** Duplicates, orphans, broken wikilinks and cross-layer redundancy still apply
+  to exempt pages in full — a decision record can absolutely carry a rotted link, and it is still
+  reported.
+- **The exemption is COUNTED, never silent** — the doctrine here is no-false-CLEAN. The report
+  carries `stale_exempt` (so `--json` carries it too) and the text line reads
+  `Stale pages: 0 (3 exempt: record-dated)`. It counts only pages the exemption actually held
+  back, so the number is the size of what was withheld from *this* run rather than a census of
+  exempt pages. Exempting a page from a check it cannot meaningfully pass is correct; hiding that
+  it happened would report a health the run never verified.
+- **No new switch.** `--stale-days` and its default are unchanged — the threshold was never the
+  bug, the page class was — and nothing re-enables staleness on decisions, since a flag whose only
+  function is to restore a known-false positive is not a feature.
+
+Additive: the check gets strictly narrower and one report key appears. `canary.py` folds
+`brain_lint`'s findings by an explicit key list and inherits the fix with no change. Downstream
+repos that locally descoped the stale category can re-scope it on adopting this.
+
+---
+
 ## v31 — 2026-07-31
 breaking: no
 
