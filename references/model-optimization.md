@@ -47,6 +47,73 @@ sessions run no helper, discovery, optimization reporting, or learning. Explicit
 status/configuration commands remain available. Disable preserves mappings, WO
 evidence, and learned guidance. Re-enable refreshes discovery before using them.
 
+## Session observation
+
+When enabled, initialize one session baseline before the first optimized dispatch.
+Use the active harness session/thread identity when exposed, or assign one stable
+opaque identity for this GitOs session and carry it through resumes. Do not reuse
+an identity for a different session or take the shared record's identity as proof
+that it belongs to this session. If identity cannot be established after resume,
+explicitly initialize a distinct new baseline and label it as such. Record model and effort independently, each
+from an active **harness** observation or an **operator** report:
+
+```text
+python <skill>/scripts/model_optimization.py session-init <repo> --harness codex --session session-a --lead lead-model --model-source harness --lead-effort high --effort-source operator
+```
+
+Replace example values with evidence for this session. Omit an unavailable value
+and its source; it becomes JSON `null` (unknown), not the string `unknown`. Omit
+both pairs when neither is observable. `default` retains only the fixed/default
+meaning described below; it does not stand in for an unknown active effort.
+The helper validates provenance labels, not the truth of the supplied observation.
+
+The baseline means **GitOs initialization / first observation**, not the harness
+process's launch setting. Starting GitOs late cannot reconstruct earlier settings.
+Repeating `session-init` with the same identity and harness preserves both original
+baseline and latest current observation; it never fills unknown initial values
+from later evidence. Resume with that same identity. A deliberate new session uses
+a distinct identity and `--new-session` to replace the record:
+
+```text
+python <skill>/scripts/model_optimization.py session-init <repo> --harness codex --session session-b --new-session
+```
+
+One transient, untracked `<home>/model-optimization-session.json` stores only the
+identity, harness, initial/current component values and provenance. Keep it out of
+commits; no history, brain page, raw runtime document or additional ledger is
+created. Commands must be serialized through the orchestrator: one active
+optimization session per checkout. Atomic writes prevent partial files, not
+concurrent lost updates. A displaced session must not dispatch against the new
+owner's baseline. Use separate checkouts for simultaneous sessions; when taking
+over this checkout deliberately, initialize a distinct new identity. Malformed
+state fails without overwrite, even with `--new-session`: inspect/correct it or
+explicitly remove the damaged transient record, then initialize a new baseline
+whose collection time is understood. Never claim a discarded baseline was restored.
+
+Before **each** optimized dispatch, refresh the current pair and supply it to
+`select` with the same identity and component sources. Missing fresh values become
+unknown even if the previous current observation was known. `select` reports
+`changes.model`, `changes.effort`, and overall `change`: any known difference means
+`changed`; both known equal components mean `unchanged`; otherwise `unknown`.
+Unknown initial values can coexist with a valid known current pair. Missing or
+mismatched session state, or an unknown current pair, cannot be dispatch-ready.
+Every selection checks current evidence against the configured ceiling. If it
+changed, revalidate the mapping; once it matches, selection can proceed while the
+original baseline remains unchanged. Baseline drift alone is not a permanent block.
+
+**Observation limits.** GitOs does not introspect hidden reasoning settings. In
+Codex, use session/turn metadata only when the active client exposes the actual
+pair for this session. `config/read` resolves on-disk settings; model catalogs,
+saved defaults and a separately spawned app-server do not reveal the current
+session's effort. Per-turn overrides can differ from those defaults. In Claude,
+use exposed active-session metadata or an operator report of the active effort
+display (for example after `/effort`). Saved settings and agent frontmatter alone
+do not prove the lead's current effort. Neither path infers effort from behavior
+or scans private session histories. If the agent cannot observe a field, retain
+unknown or request an operator report; do not claim automatic change detection.
+[Codex app-server](https://learn.chatgpt.com/docs/app-server),
+[Claude model and effort settings](https://code.claude.com/docs/en/model-config).
+
 ## Mapping + ceiling
 
 Start workers at **standard**. Choose **light** for bounded judgment with reliable
@@ -231,11 +298,14 @@ override matching the route can supply a control absent from the invocation tool
 Omitted evidence remains unknown; the example is not a blanket attestation.
 
 ```text
-python <skill>/scripts/model_optimization.py select <repo> --harness codex --tier standard --lead lead-model --lead-effort high --runtime runtime.json --require text --require tools
+python <skill>/scripts/model_optimization.py select <repo> --harness codex --session session-a --tier standard --lead lead-model --model-source harness --lead-effort high --effort-source operator --runtime runtime.json --require text --require tools
 ```
 
-Use `--harness claude` identically with that harness's mapping. `select` is read-only;
-temporary inputs need not be retained. Exit 0: disabled or dispatch-ready; exit 2:
+Use `--harness claude` identically with that harness's mapping and initialized
+session. `select` replaces the session record's current observation, including on
+a valid blocked/recommendation-only decision; it never changes the baseline or
+routing configuration. Temporary inputs need not be retained. Exit 0: disabled,
+session-ready or dispatch-ready; exit 2:
 invalid input; exit 3: blocked or recommendation-only. **Dispatch-ready is a checked
 request, never confirmed execution.** Recommendation-only means no certified
 optimized dispatch: disclose the limitation and use the established lead/inherited

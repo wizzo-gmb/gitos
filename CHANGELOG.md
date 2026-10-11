@@ -18,6 +18,21 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v34 — 2026-10-11
+breaking: yes
+
+**Session model and effort comparison.** Enabled optimization captures one session
+baseline and compares fresh pre-dispatch observations with both that baseline and
+the configured ceiling. Unknown components remain unknown, and later observations
+do not rewrite the initial values. A changed lead requires a matching revalidated
+mapping; no model or effort setting is changed automatically.
+
+**Adoption:** direct callers of `model_optimization.py select` must initialize a
+session with `session-init`, supply its identity on selection, and label the source
+of each observed model/effort value. See `references/model-optimization.md` for the
+commands. The configuration format is unchanged. Disabled optimization remains
+inert; the single replaceable session record is not another ledger.
+
 ## v33 — 2026-10-11
 breaking: no
 

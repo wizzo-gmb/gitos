@@ -17,6 +17,7 @@ TIERS = ("light", "standard", "deep")
 HARNESSES = ("codex", "claude")
 HOMES = (".gitos", "outputs/debug", ".pipeline", "docs/agents")
 FILENAME = "model-optimization.json"
+SESSION_FILENAME = "model-optimization-session.json"
 
 
 class Invalid(ValueError):
@@ -148,10 +149,14 @@ def load_config(home):
 
 def save_config(home, config):
     validate_config(config)
+    save_json(home, FILENAME, config)
+
+
+def save_json(home, filename, value):
     # Explicit configuration requires an existing pipeline; never scaffold by accident.
     require(home.is_dir(), "Pipeline home missing; initialize GitOs first")
-    path = home / FILENAME
-    data = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
+    path = home / filename
+    data = json.dumps(value, indent=2, ensure_ascii=False) + "\n"
     if path.exists() and path.read_text(encoding="utf-8-sig") == data:
         return
     temporary = None
@@ -166,7 +171,76 @@ def save_config(home, config):
             temporary.unlink()
 
 
-def select(config, harness, tier="standard", lead=None, lead_effort=None, runtime=None, required=()):
+def observation(model=None, effort=None, model_source=None, effort_source=None):
+    result = {}
+    for key, value, source in (("model", model, model_source), ("effort", effort, effort_source)):
+        require(value is None or isinstance(value, str) and bool(value.strip()), f"Invalid observed {key}")
+        require(value is None or value.strip().lower() != "unknown", f"Omit unknown {key}; do not supply a sentinel")
+        require((value is None and source is None) or
+                (value is not None and source in ("harness", "operator")),
+                f"Known {key} requires harness/operator source; unknown requires no source")
+        result[key] = {"value": value, "source": source}
+    return result
+
+
+def validate_observation(value):
+    require(isinstance(value, dict) and set(value) == {"model", "effort"}, "Invalid observation")
+    for component in value.values():
+        require(isinstance(component, dict) and set(component) == {"value", "source"},
+                "Invalid observation component")
+    observation(value["model"]["value"], value["effort"]["value"],
+                value["model"]["source"], value["effort"]["source"])
+
+
+def validate_session(state):
+    require(isinstance(state, dict) and set(state) ==
+            {"schema_version", "session_id", "harness", "initial", "current"}, "Invalid session state")
+    require(type(state["schema_version"]) is int and state["schema_version"] == 1,
+            "Unsupported session schema_version")
+    require(isinstance(state["session_id"], str) and bool(state["session_id"].strip()),
+            "Session identity required")
+    require(state["harness"] in HARNESSES, "Invalid session harness")
+    validate_observation(state["initial"])
+    validate_observation(state["current"])
+    return state
+
+
+def load_session(home):
+    path = home / SESSION_FILENAME
+    return validate_session(read_json(path)) if path.exists() else None
+
+
+def initialize_session(home, config, harness, session_id, initial, new_session=False):
+    validate_config(config)
+    if not config["enabled"]:
+        return {"status": "disabled", "reason": "Optimization is off; no session state accessed"}
+    proposed = validate_session({"schema_version": 1, "session_id": session_id, "harness": harness,
+                                 "initial": initial, "current": copy.deepcopy(initial)})
+    previous = load_session(home)  # Even explicit replacement must not hide corrupt state.
+    if previous is not None:
+        same = (previous["session_id"], previous["harness"]) == (session_id, harness)
+        if same:
+            require(not new_session, "Use a distinct identity for a new session; baseline preserved")
+            return {"status": "session-ready", "session": previous}
+        require(new_session and previous["session_id"] != session_id,
+                "Session identity/harness mismatch; deliberately initialize a distinct --new-session")
+    save_json(home, SESSION_FILENAME, proposed)
+    return {"status": "session-ready", "session": proposed}
+
+
+def compare_observations(initial, current):
+    changes = {}
+    for key in ("model", "effort"):
+        before, after = initial[key]["value"], current[key]["value"]
+        changes[key] = ("unknown" if before is None or after is None else
+                        "unchanged" if before == after else "changed")
+    overall = ("changed" if "changed" in changes.values() else
+               "unchanged" if all(v == "unchanged" for v in changes.values()) else "unknown")
+    return {"change": overall, "changes": changes}
+
+
+def select(config, harness, tier="standard", lead=None, lead_effort=None, runtime=None, required=(),
+           session=None, session_id=None, model_source=None, effort_source=None):
     """Validate a proposed dispatch. Does not observe execution or select task tier."""
     validate_config(config)
     result = {"status": "disabled", "reason": "Optimization is off; use existing dispatch behavior"}
@@ -178,6 +252,14 @@ def select(config, harness, tier="standard", lead=None, lead_effort=None, runtim
         return {**result, "status": status, "reason": reason}
 
     require(harness in HARNESSES and tier in TIERS, "Unknown harness or tier")
+    if session is None:
+        return stop("Session baseline missing; run session-init before optimized dispatch")
+    validate_session(session)
+    if not session_id or (session["session_id"], session["harness"]) != (session_id, harness):
+        return stop("Session identity/harness mismatch; resume its identity or explicitly initialize a new session")
+    current = observation(lead, lead_effort, model_source, effort_source)
+    result["session"] = {**session, "current": current}
+    result.update(compare_observations(session["initial"], current))
     mapping = config["harnesses"].get(harness)
     if mapping is None:
         return stop("Configure this harness after discovery; no cross-harness fallback")
@@ -230,7 +312,7 @@ def select(config, harness, tier="standard", lead=None, lead_effort=None, runtim
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("status", "enable", "disable", "skip", "configure", "select", "catalog"))
+    parser.add_argument("command", choices=("status", "enable", "disable", "skip", "configure", "session-init", "select", "catalog"))
     parser.add_argument("root", nargs="?", default=".")
     parser.add_argument("--home", choices=("auto",) + HOMES, default="auto")
     parser.add_argument("--harness", choices=HARNESSES)
@@ -238,6 +320,10 @@ def main(argv=None):
     parser.add_argument("--tier", choices=TIERS, default="standard")
     parser.add_argument("--lead")
     parser.add_argument("--lead-effort")
+    parser.add_argument("--session", help="Explicit identity of this active GitOs session")
+    parser.add_argument("--new-session", action="store_true", help="Deliberately replace a different session baseline")
+    parser.add_argument("--model-source", choices=("harness", "operator"))
+    parser.add_argument("--effort-source", choices=("harness", "operator"))
     parser.add_argument("--runtime", help="JSON evidence from current native harness, never settings to apply")
     parser.add_argument("--require", action="append", default=[], dest="required")
     args = parser.parse_args(argv)
@@ -263,11 +349,20 @@ def main(argv=None):
                 config["harnesses"][args.harness] = merged
                 save_config(home, config)
                 output = config
+            elif args.command == "session-init":
+                initial = (observation(args.lead, args.lead_effort, args.model_source, args.effort_source)
+                           if config["enabled"] else None)
+                output = initialize_session(home, config, args.harness, args.session, initial, args.new_session)
             elif args.command == "select":
                 require(args.harness, "select requires --harness")
+                require(not args.new_session, "--new-session is only valid with session-init")
                 # A disabled invocation reads no runtime/discovery input, even if supplied.
                 runtime = read_json(args.runtime) if config["enabled"] and args.runtime else None
-                output = select(config, args.harness, args.tier, args.lead, args.lead_effort, runtime, args.required)
+                session = load_session(home) if config["enabled"] else None
+                output = select(config, args.harness, args.tier, args.lead, args.lead_effort, runtime, args.required,
+                                session, args.session, args.model_source, args.effort_source)
+                if "session" in output:
+                    save_json(home, SESSION_FILENAME, output["session"])
             else:
                 output = config
         print(json.dumps(output, indent=2, ensure_ascii=False))

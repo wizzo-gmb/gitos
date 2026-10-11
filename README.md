@@ -169,6 +169,11 @@ within the operator-selected orchestrator's configured ceiling. Native harness
 controls apply the selection where supported; requested settings remain distinct
 from confirmed execution.
 
+When enabled, one session record preserves the initial observed model/effort and
+compares fresh observations before dispatch. Changes require checking the current
+ceiling; unavailable runtime values stay unknown. This depends on harness or
+operator evidence, not an assumption that saved defaults are active.
+
 Existing work-order notes hold outcomes. Normal closeout may retain a useful,
 repo-local model-selection lesson in the existing brain for future dispatches.
 No advisor or additional ledger is needed, and no lesson is required. Disabling

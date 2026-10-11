@@ -72,8 +72,9 @@ If a memory pointer named the default role as you, this is where you resume.
 
 **Optional model optimization.** During the state read, inspect
 `<home>/model-optimization.json` only if present. Absent/disabled → no optimization
-helper, discovery, reporting, or learning. Enabled → use
-`references/model-optimization.md` for dispatch and normal closeout. Malformed state
+helper, discovery, reporting, or learning. Enabled → initialize/resume its explicit
+session identity and observed model/effort baseline per
+`references/model-optimization.md`, then use that policy for dispatch and normal closeout. Malformed state
 does not enable routing; surface the configuration error without replacing it.
 
 ## The work loop
@@ -218,7 +219,8 @@ work-orders — one ledger, no parallel system.
 When you delegate implementation to agents:
 
 - **When model optimization is enabled**, consult the repo's applicable routing
-  guidance, select and validate the model/effort within the actual lead's configured
+  guidance, refresh the actual lead's current model/effort evidence (unknown stays
+  unknown), compare it with the session baseline, and validate the worker pair within the configured
   ceiling, then use the native dispatcher. Include the compact requested/effective
   model entry in the WO; unknown execution settings stay unknown. The policy's SSOT
   is `references/model-optimization.md`; it leaves the scope and acceptance gates intact.
