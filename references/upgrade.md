@@ -127,6 +127,12 @@ If the repo's stamp equals the skill's `ENGINE_VERSION`, report **"engine up to 
 
 **4. Adopt the latest directives.**
 Direct the running orchestrator to:
+- **offer optional model optimization once during adoption**, only if the repo has
+  no recorded preference. Follow `references/model-optimization.md` for the
+  Disabled (default) / Enabled question and persist the choice (unanswered → skipped,
+  off). Preserve existing mappings and lessons. The helper runs from the installed
+  skill; no home-tool copy is required. An absent setting stays off, and ordinary
+  resume never repeats this offer;
 - **re-read the canonical brief** (`SKILL.md` + `references/roles/orchestrator.md` +
   `references/agent-system.md`) and adopt any new behaviors — for example, the
   **implementer-notes accept/reject loop** (have each implementer fill the work-order's

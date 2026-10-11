@@ -42,6 +42,10 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
 3. **Fill the work-order's Implementer notes** on completion — deviations, surprises, durable
    facts, process notes, follow-ups. This is your only write-back channel; "nothing notable" is a
    valid answer.
+   If dispatched with model optimization enabled, complete its existing compact
+   model/outcome entry: observed settings or explicit unknown, revisions/escalation,
+   and a material reason. Do not infer execution from the requested model, write
+   routing memory, or add a mandatory lesson. See `references/model-optimization.md`.
 4. **Return.** Your report is a *claim*; the orchestrator trust-but-verifies the diff and
    adjudicates your notes (ACCEPT / REJECT). You do not move the work-order, update the INDEX,
    bump VERSION/CHANGELOG, or touch the brain.

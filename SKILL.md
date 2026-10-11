@@ -45,6 +45,10 @@ relate. Read it if the picture isn't clear.
 
 ## First action: detect state, then route
 
+For `/gitos optimization` (inspect / enable / disable / configure), use
+`references/model-optimization.md`. This explicit preference action does not repeat
+inception. Missing configuration means off.
+
 Whatever the user said, resolve it to exactly one mode by detecting whether the repo
 is initialized. This is the single entry point — "start working on this repo" always
 lands somewhere.
@@ -377,6 +381,9 @@ the brain, process lessons into your dispatch, follow-ups into new work-orders) 
 it with a one-line reason.
 
 ## Reference index (read on demand)
+
+- `references/model-optimization.md` — optional model routing; load for its explicit
+  command, enabled dispatch/closeout, or the inception offer.
 
 - `references/roles/{inception,orchestrator,diagnostic}.md` — the three operator-entry role briefs.
 - `references/roles/implementer.md` — the dispatched implementer (its boundary's SSOT).

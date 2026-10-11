@@ -70,6 +70,12 @@ Bootstrap your state before doing anything:
 
 If a memory pointer named the default role as you, this is where you resume.
 
+**Optional model optimization.** During the state read, inspect
+`<home>/model-optimization.json` only if present. Absent/disabled → no optimization
+helper, discovery, reporting, or learning. Enabled → use
+`references/model-optimization.md` for dispatch and normal closeout. Malformed state
+does not enable routing; surface the configuration error without replacing it.
+
 ## The work loop
 
 Run this **in order**; each step's **gate** is non-skippable. The most common orchestrator failure
@@ -211,6 +217,11 @@ work-orders — one ledger, no parallel system.
 
 When you delegate implementation to agents:
 
+- **When model optimization is enabled**, consult the repo's applicable routing
+  guidance, select and validate the model/effort within the actual lead's configured
+  ceiling, then use the native dispatcher. Include the compact requested/effective
+  model entry in the WO; unknown execution settings stay unknown. The policy's SSOT
+  is `references/model-optimization.md`; it leaves the scope and acceptance gates intact.
 - Each agent reads its work-order **in full** before coding.
 - **State the scope bound at dispatch.** An implementer edits **only what its work-order's
   Proposed fix scope specifies**; treat any out-of-scope footprint in the landing as a
@@ -240,6 +251,10 @@ When you delegate implementation to agents:
   a fact, until you accept it (the same trust-but-verify posture you apply to the landing
   itself). This harvest is the main way implementer experience becomes durable memory; it
   is part of the brain maintenance loop below (upsert → reconcile).
+- **Enabled model optimization only:** during this same adjudication, optionally
+  upsert a reusable model-selection lesson into the existing repo brain, per
+  `references/model-optimization.md` → *Normal closeout → next selection*. No lesson
+  is required; this adds no general handoff-improvement duty or review stage.
 - **Need something another repo on this machine knows?** If both repos are federated, run
   `federation consult <target>` first — it authorizes (or refuses, naming the fix) and hands you
   the target's brain path. **The tool authorizes; you consult**: dispatch the read-only agent,

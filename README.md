@@ -148,6 +148,7 @@ reload your editor so the agent loads the new skill.
 /gitos diagnostic      a read-only audit pass → evidence-first work-orders
 /gitos agent import    import your own specialist prompt as a domain-tagged "lens"
 /gitos agent list      list the lenses you've imported (the registry)
+/gitos optimization    inspect, enable, disable, or configure repo-local model routing
 ```
 
 To run a single work-order, point a fresh window at it — *"implement `wo_046`"*. That lands as the
@@ -159,6 +160,21 @@ its work when the domain matches, *within that role's boundary* (a read-only rol
 import the orchestrator normalizes your prompt into the engine's voice and you confirm the result, so
 imported steering reads like the rest of gitos. It's injected context, not a fifth role.
 
+
+## Model optimization — optional, off by default
+
+Enable through `/gitos optimization` or the initialization/upgrade offer. GitOs maps
+light, standard, and deep tasks to available model/effort choices in Codex or Claude,
+within the operator-selected orchestrator's configured ceiling. Native harness
+controls apply the selection where supported; requested settings remain distinct
+from confirmed execution.
+
+Existing work-order notes hold outcomes. Normal closeout may retain a useful,
+repo-local model-selection lesson in the existing brain for future dispatches.
+No advisor or additional ledger is needed, and no lesson is required. Disabling
+optimization preserves previous evidence and guidance.
+
+Configuration, harness support, and limits: [model optimization](references/model-optimization.md).
 
 ## Federation — optional, off by default
 

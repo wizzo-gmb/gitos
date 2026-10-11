@@ -16,6 +16,12 @@ inception proceeds), **recomputed each reply**. Slipped / stale → the reinject
 
 ## Phase 1 — The interview (~7 questions, conversational)
 
+Include the one-time optional **model optimization** preference: Disabled (default)
+or Enabled, using the harness question UI where available. Follow
+`references/model-optimization.md` → *Preference + commands*; persist the choice
+after scaffolding, including skipped/off when unanswered. A recorded preference is
+not asked again. Scaffolding alone never enables routing.
+
 Ask these in a single pass, conversationally (not as a numbered form). Adapt the
 wording to the user's domain and vocabulary. Every answer feeds the handoff and seeds
 the brain — collect them before running the scaffold.

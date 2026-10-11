@@ -18,6 +18,22 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v33 — 2026-10-11
+breaking: no
+
+**Optional repo-local model optimization.** Initialization and upgrade offer a
+disabled-by-default preference; `/gitos optimization` inspects or changes it.
+Enabled dispatch maps light, standard, and deep tasks to model/effort pairs within
+the operator-selected orchestrator's configured ceiling, using native Codex or
+Claude controls. Requested settings remain distinct from observed execution.
+
+`references/model-optimization.md` owns the policy and native harness procedures;
+`scripts/model_optimization.py` handles local configuration, catalog normalization,
+and proposed-route validation. Missing configuration preserves existing behavior.
+Existing WO notes hold outcomes; normal closeout may retain an evidenced,
+repo-specific model-selection lesson in the existing brain for later dispatches.
+No advisor, additional ledger, or mandatory learning stage is introduced.
+
 ## v32 — 2026-09-01
 breaking: no
 

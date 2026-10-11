@@ -118,6 +118,12 @@ and acts on them.
 
 "Nothing notable" is a valid and useful answer.]
 
+[Only when model optimization was enabled at dispatch: one compact model/outcome
+entry — requested model/effort; confirmed effective values or explicit unknown;
+acceptance/revisions/escalation and a material reason. Optional observed usage only.
+The orchestrator adjudicates any model-selection lesson at normal closeout;
+no lesson is required. SSOT: references/model-optimization.md.]
+
 ## Revisions (post-landing — the verify→revise loop)
 
 [Empty when this work-order is authored. After it lands and the operator verifies it, requested
