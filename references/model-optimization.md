@@ -117,10 +117,39 @@ unknown or request an operator report; do not claim automatic change detection.
 ## Mapping + ceiling
 
 Start workers at **standard**. Choose **light** for bounded judgment with reliable
-checks; choose **deep** for unresolved ambiguity, consequential decisions, or
-evidence the lower route is inadequate. Use deterministic tools when sufficient.
-Classify at dispatch/checkpoints, not per tool call. These are task tiers, not
-three mandatory distinct models.
+checks; choose **deep** for **execution ambiguity** — the question only the work
+itself answers, with no operator in the loop to ask — for consequential decisions,
+or for evidence the lower route is inadequate. **Spec ambiguity caps the tier; it
+does not raise it.** An unpinned Option, an unrun Part-0 probe, or a scope naming no
+files is orchestrator-side work: pin the Option, run the probe, name the files, then
+route. Effort against an unsettled spec buys a more confident reading, not a better
+one. Use deterministic tools when sufficient. Classify at dispatch/checkpoints, not
+per tool call. These are task tiers, not three mandatory distinct models.
+
+Read the tier off countable work-order properties, so two orchestrators on one order
+reach the same answer:
+
+- `## Verification` demands a negative control, an adversarial wave, a fuzzer, or
+  mutation testing → **deep**; that is the edge-case signal, where measured gains
+  concentrate.
+- `## Proposed scope` carries a diff sketch → **standard**; the judgment is spent.
+- Read-only work, or one named file with no Options → **light**.
+
+Where rules conflict, the highest tier among the matching rules wins: effort buys
+verification, so a verification demand is the dominant signal, and a settled approach
+does not cancel a hidden edge-case burden. Where no rule matches, **standard** stands
+as the opening default. The ceiling binds after the rule resolves.
+
+Treat this mapping as a **prior pending local data**, re-derivable once enough
+dispatches carry a recorded tier and effort. Its support is one community-sourced
+benchmark whose failure categories a model judge assigned and which are therefore
+approximate; the published runs used internal settings with safety interventions off
+and no internet for security tasks, so the source states the figures will not line
+up with the public leaderboard; and **Software** — this engine's own category —
+gained least of the technical categories (43% → 56%, against Hardware 34% → 75%).
+That is a limit on the mapping, not a guarantee behind it.
+Source: [Using Claude Code: Spending your effort](https://claude.dev/blog/spending-your-effort/),
+Thariq Shihipar, claude.dev Engineering, 2026-09-25.
 
 Discover choices from the active dispatch-tool schema first, a supported local
 catalog second, or an explicitly supplied model-picker/mapping. Keep one preferred

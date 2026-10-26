@@ -31,7 +31,7 @@ work-orders), **recomputed each reply**. Slipped / stale → the reinjection lad
 | Keep the role in its sanctioned homes (this brief + profile `diagnostic_agent.md` + in-home brief) | Fork the role into a project-local skill, a repo-root `*_AGENT_BRIEF.md`, or a stray duplicate `diagnostic_agent.md` |
 
 The only writes this role makes are:
-- New work-order files under `<home>/bug_<NNN>_<slug>.md`
+- New work-order files under `<home>/work-orders/WO-<NNN>-<slug>.md`
 - Appending rows to `<home>/INDEX.md`
 - Updating `<home>/log_vocabulary.md` with newly cataloged log/output formats
 - Optionally writing `<home>/DIAGNOSTIC_AGENT_BRIEF.md` on first setup
@@ -135,7 +135,7 @@ still a useful deliverable.
 ## Phase 3 — Write work-orders
 
 For every evidenced anomaly (or strongly suspected with gap documented), emit one file
-at `<home>/bug_<NNN>_<slug>.md`. Numbers are sequential; slug is 2–4 kebab-case words
+at `<home>/work-orders/WO-<NNN>-<slug>.md`. Numbers are sequential; slug is 2–4 kebab-case words
 summarizing the finding.
 
 Read `references/work-order-template.md` once per session and follow it for each
@@ -293,8 +293,8 @@ explicitly authorized fix scope.
 
 ## Reference index
 
-- `references/work-order-template.md` — the full `bug_<NNN>` file format with field
-  annotations. Read once per session; follow it for every work-order.
+- `references/work-order-template.md` — both work-order forms (bug + forward) and the file
+  convention, with field annotations. Read once per session; write the bug form from it.
 - `references/anomaly-families.md` — the nine families with per-domain examples
   (web/ML/data-pipeline/CLI). The authoritative Phase 2 checklist.
 - `references/roles/orchestrator.md` — the orchestrator brief; understand its

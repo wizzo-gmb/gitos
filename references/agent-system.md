@@ -41,8 +41,8 @@ Investigates without editing. Three phases:
 
 1. Build the **vocabulary** — catalogue what logs/outputs exist before scanning them.
 2. **Scan** across the anomaly families (`references/anomaly-families.md`).
-3. Write evidence-first **work-orders** (`bug_<NNN>_<slug>.md`), one per distinct
-   finding, and append each to `INDEX.md`.
+3. Write evidence-first **work-orders** in the bug form (`references/work-order-template.md` holds
+   both forms and the file convention), one per distinct finding, and append each to `INDEX.md`.
 
 The Diagnostic never edits source code or configuration. All fixes flow through
 work-orders dispatched by the Orchestrator.

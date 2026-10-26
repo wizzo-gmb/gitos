@@ -389,7 +389,7 @@ it with a one-line reason.
 - `references/roles/implementer.md` — the dispatched implementer (its boundary's SSOT).
 - `references/agent-system.md` — the role + brain map and bridge diagram.
 - `references/brain-schema.md` — brain layout, page types, the maintenance/anti-redundancy protocol.
-- `references/work-order-template.md` — the `bug_<NNN>` / forward work-order format.
+- `references/work-order-template.md` — both work-order forms (bug / forward) and the file convention.
 - `references/anomaly-families.md` — the nine anomaly families + per-domain adaptations.
 - `references/acceptance-criteria.md` — generic promotion/acceptance gates (project-defined).
 - `references/production-handoff-contract.md` — generic production-handoff contract skeleton.

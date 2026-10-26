@@ -18,6 +18,50 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v35 — 2026-10-25
+breaking: no
+
+**Work-order documentation matches practice, and effort stops being spent on ambiguity it
+cannot resolve.** Three corrections that ship together because each one leaves the others
+half-true.
+
+**The template documents both work-order forms.** The glossary has always named two — *bug
+work-order* (evidence-first) and *forward work-order* (objective-first) — while
+`references/work-order-template.md` carried only the bug form and opened by asserting every
+file lives at `outputs/debug/bug_<NNN>_<slug>.md`, a legacy home. Measured across one engine
+home's 37 resolved orders, the forward sections led: `## Objective` 24, `## Proposed scope` 23,
+`## Acceptance` 21, `## Part-0 probe` 18, against `## Proposed fix scope` 4 and `## Evidence` 3.
+The dominant shape was the one the single source of truth never defined, so an author who read
+the documentation first wrote the wrong form. Both forms are now documented with a selector,
+the four shared sections are stated once, and the file convention is
+`<home>/work-orders/WO-<NNN>-<slug>.md` with legacy homes noted and needing no retrofit. The
+forms are not mutually exclusive: **the lead section is the choice, not the whole section list.**
+
+**The diagnostic brief points at that convention.** `references/roles/diagnostic.md` instructed
+the role that authors bug work-orders to write `<home>/bug_<NNN>_<slug>.md` — a flat path with
+the legacy prefix — which the corrected template contradicts. Fixed there and in two reference
+descriptors (`references/agent-system.md`, `SKILL.md`). The legacy **home** is untouched:
+`outputs/debug/` and `.pipeline/` remain supported detection paths, and only the legacy
+work-order **filename** was stale. Nothing is retrofitted; existing files in legacy homes still
+read correctly.
+
+**Effort routes on the ambiguity it can actually resolve.** `references/model-optimization.md`
+sent "unresolved ambiguity" to the **deep** tier. Published Terminal-Bench 3.0 measurement shows
+effort reduces edge-case failures while leaving a wrong approach intact — across 370 attempts per
+setting, *a bug its tests missed* fell 40 → 14 and *wrong or incomplete fix* 31 → 10, while
+*picked the wrong reading* rose 25 → 47, from 11% to 30% of remaining failures. The clause now
+separates two cases: **spec ambiguity caps the tier** (an unpinned Option or an unrun Part-0
+probe is orchestrator-side work — pin it, run it, then route), while **execution ambiguity with
+no operator in the loop still routes deep**, which is a dispatched implementer's normal
+condition. The tier is read off countable order properties, highest matching rule wins, and the
+mapping is marked a prior pending local data with its source and limits cited inline.
+
+Additive. No configuration format, schema, tier set, ceiling rule or helper behaviour changes;
+no existing work-order or repo layout is affected. A repo adopting v35 gains corrected
+documentation and a narrower effort rule.
+
+---
+
 ## v34 — 2026-10-11
 breaking: yes
 
