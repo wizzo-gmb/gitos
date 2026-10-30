@@ -17,7 +17,7 @@ Everything is rooted at three overridable locations so selftests never touch the
 (default <claude-home>/.claude.json when CLAUDE_CONFIG_DIR is set, else ~/.claude.json).
 
 Usage:
-    python harness.py audit|drift|offer|update|sync [--home <repo>/.gitos] [--json] [--apply]
+    python harness.py audit|drift|offer [--measure]|update|sync [--home <repo>/.gitos] [--json] [--apply]
 Exit codes: 0 = ok / clean, 1 = drift findings (drift only), 2 = usage or unreadable declaration.
 """
 
@@ -56,8 +56,11 @@ LIMITS = (
     "Removal is an override (skillOverrides off, enabledPlugins false), never a deletion.",
     "disableClaudeAiConnectors is all-or-none: declaring a subset of connectors cannot be "
     "expressed; claude.ai connectors are only enumerable if ~/.claude.json lists them.",
-    "claude.ai-synced skills live outside the disk locations scanned here and cannot be "
-    "enumerated; only the sync switch state is reported.",
+    "claude.ai-synced skills are on disk in <claude-home>/skills/synced/ (Claude Code v2.1.273+) "
+    "and are enumerated as scope `synced`; they are hidden per repo by skillOverrides off with sync "
+    "left on. UNVERIFIED: whether skillOverrides matches a synced skill by its short name or only "
+    "as `anthropic-skills:<name>`, and whether a repo-local syncClaudeAiSkills false trashes the "
+    "synced skills machine-wide; the second is why that switch is all-or-none and asked separately.",
     "Managed (enterprise) settings are not read; a managed value can override anything reported.",
     "The tool-definition count is a LOWER BOUND (MCP tools observed in this repo's session logs "
     "plus counts you declare). Built-in and not-yet-invoked MCP tool counts are not on disk.",
@@ -328,7 +331,8 @@ def scan_machine(root: Path, ch: Path, cj_path: Path) -> dict:
                             "(its skills/hooks/MCP cannot be enumerated)")
 
     # skills / agents / hooks
-    skills = _skills_in(ch / "skills", "user") + _skills_in(root / ".claude" / "skills", "project")
+    skills = (_skills_in(ch / "skills", "user") + _skills_in(ch / "skills" / "synced", "synced")
+              + _skills_in(root / ".claude" / "skills", "project"))
     agents = _agents_in(root / ".claude" / "agents", "project") + _agents_in(ch / "agents", "user")
     hooks = []
     for scope in ("user", "project", "local"):
@@ -412,26 +416,68 @@ def read_usage(root: Path, ch: Path) -> dict:
     format that is not a contract: unreadable lines are counted, not guessed."""
     d = ch / "projects" / _slug(root)
     use = {"dir": str(d), "sessions": 0, "skills": {}, "agents": {}, "mcp_tools": set(),
-           "hooks": {}, "bad_lines": 0, "found": d.is_dir()}
+           "hooks": {}, "bad_lines": 0, "found": d.is_dir(), "unreadable": 0,
+           "skills_tool": {}, "skills_slash": {}, "slash_deduped": 0,
+           "first_day": "", "last_day": "", "_pending": {}}
     if not d.is_dir():
         return use
     for f in sorted(d.glob("*.jsonl")):
         use["sessions"] += 1
+        use["_pending"] = {}
         try:
             fh = f.open(encoding="utf-8", errors="replace")
         except OSError:
+            use["unreadable"] += 1
             continue
         with fh:
             for ln in fh:
-                if '"tool_use"' not in ln and "hook" not in ln.lower():
+                tm = _TS.search(ln)
+                if tm:
+                    day = tm.group(1)
+                    use["first_day"] = min(use["first_day"] or day, day)
+                    use["last_day"] = max(use["last_day"], day)
+                st = ln.strip()
+                if st and not (st[0] == "{" and st[-1] == "}"):
+                    use["bad_lines"] += 1           # truncated/garbled, even if it names nothing
+                    continue
+                if ('"tool_use"' not in ln and "hook" not in ln.lower()
+                        and "<command-name>" not in ln and not _HUMAN.search(ln)):
                     continue
                 try:
                     obj = json.loads(ln)
                 except ValueError:
                     use["bad_lines"] += 1
                     continue
+                _slash_usage(obj, use)
                 _walk_usage(obj, use)
+    use.pop("_pending", None)
     return use
+
+
+_TS = re.compile(r'"timestamp"\s*:\s*"(\d{4}-\d\d-\d\d)')
+_HUMAN = re.compile(r'"kind"\s*:\s*"human"')
+_SLASH = re.compile(r"\A\s*<command-message>[^<]*</command-message>\s*<command-name>/?([^<\s]+)</command-name>"
+                    r"(?:\s*<command-args>(.*?)</command-args>)?", re.S)
+
+
+def _slash_usage(o: dict, use: dict) -> None:
+    """Operator-typed `/skill args` is logged as a TOP-LEVEL user record whose string content is
+    `<command-message>x</command-message>\n<command-name>/x</command-name>\n<command-args>..`
+    (no tool_use). Anchored to the record: the same text quoted inside a tool result, an attachment
+    or an api-request blob is not a use. The model then often re-loads the skill with a Skill tool
+    call carrying the same args - one action, so that call is absorbed (counted once). A pending
+    slash is forgotten at the next human turn."""
+    if not isinstance(o, dict) or o.get("type") != "user":
+        return
+    c = _dict(o.get("message")).get("content")
+    mt = _SLASH.match(c) if isinstance(c, str) else None
+    if mt:
+        nm, args = mt.group(1), (mt.group(2) or "").strip()
+        use["skills_slash"][nm] = use["skills_slash"].get(nm, 0) + 1
+        use["skills"][nm] = use["skills"].get(nm, 0) + 1
+        use["_pending"][nm] = args
+    elif _dict(o.get("origin")).get("kind") == "human":
+        use["_pending"].clear()
 
 
 def _walk_usage(o: object, use: dict) -> None:
@@ -439,7 +485,14 @@ def _walk_usage(o: object, use: dict) -> None:
         if o.get("type") == "tool_use":
             nm, inp = str(o.get("name", "")), _dict(o.get("input"))
             if nm == "Skill" and inp.get("skill"):
-                use["skills"][inp["skill"]] = use["skills"].get(inp["skill"], 0) + 1
+                sk = inp["skill"]
+                pend = use.get("_pending", {})
+                if sk in pend and str(inp.get("args") or "").strip() == pend[sk]:
+                    del pend[sk]                    # the same action the slash line already counted
+                    use["slash_deduped"] += 1
+                else:
+                    use["skills"][sk] = use["skills"].get(sk, 0) + 1
+                use["skills_tool"][sk] = use["skills_tool"].get(sk, 0) + 1
             elif nm in ("Task", "Agent") and inp.get("subagent_type"):
                 use["agents"][inp["subagent_type"]] = use["agents"].get(inp["subagent_type"], 0) + 1
             elif nm.startswith("mcp__"):
@@ -491,6 +544,83 @@ def listing_budget(m: dict, usage: dict, window: int, only: "set | None" = None)
             "context_window": window, "fraction": m["listing_fraction"], "rows": rows}
 
 
+PROTECTED_SKILLS = frozenset({"gitos"})   # the audit runs inside gitos: never a removal candidate
+
+
+def vouch_usage(usage: dict) -> dict:
+    """Can a ZERO be trusted? Only if logs exist, every log opened, every relevant line parsed.
+    The span is stated so 'zero' reads as 'zero across N sessions over D..D2', not 'zero in the
+    one log that loaded'. When it cannot vouch it says why; the audit then proposes no removal."""
+    why = []
+    if not usage["found"]:
+        why.append("no session-log directory for this repo")
+    elif usage["sessions"] == 0:
+        why.append("no session logs")
+    if usage["unreadable"]:
+        why.append(f"{usage['unreadable']} log file(s) unreadable")
+    if usage["bad_lines"]:
+        why.append(f"{usage['bad_lines']} log line(s) unparseable")
+    span = (f"{usage['sessions']} session(s), {usage['first_day']}..{usage['last_day']}"
+            if usage["first_day"] else f"{usage['sessions']} session(s), span unknown")
+    if not why and not usage["first_day"]:
+        why.append("logs carry no timestamps, so their span cannot be stated")
+    return {"ok": not why, "why": why, "span": span}
+
+
+def removal_plan(m: dict, usage: dict, lb: dict, vouch: dict) -> dict:
+    """Removal candidates = vouched-unused x listing cost, biggest first. This dict IS the contract
+    `audit --json` hands the operator-confirmation popup (WO-063): the popup may offer only what is
+    listed here. A skill with ANY observed use, and `gitos`, never appear; with usage not
+    established, nothing does. A standalone skill is switched off via skillOverrides; a plugin's
+    skills cannot be split, so a plugin is a candidate only when ALL its listed skills are unused,
+    and the mechanism is enabledPlugins for the whole plugin."""
+    used = set(usage["skills"])
+    plan = {"vouched": vouch["ok"], "span": vouch["span"], "why_not": vouch["why"],
+            "candidates": [], "reclaim_chars": 0, "sufficient": None, "still_over_by": 0,
+            "over_budget": lb["over_budget"], "protected": sorted(PROTECTED_SKILLS)}
+    if not vouch["ok"]:
+        return plan
+    by_name = {r["name"]: r for r in lb["rows"]}
+    uses0 = {"slash": 0, "tool": 0, "total": 0}
+
+    def is_used(sk: dict) -> bool:
+        return sk["name"] in used or sk["dir"] in used
+
+    def is_protected(sk: dict) -> bool:
+        return sk["name"].split(":")[-1] in PROTECTED_SKILLS or sk["dir"] in PROTECTED_SKILLS
+
+    cands, plugins = [], {}
+    for sk in m["skills"]:
+        r = by_name.get(sk["name"])
+        if r is None:
+            continue
+        if sk["scope"].startswith("plugin:"):
+            plugins.setdefault(sk["scope"], []).append((sk, r))
+        elif not is_used(sk) and not is_protected(sk):
+            cands.append({"name": sk["name"], "scope": sk["scope"], "mechanism": "skillOverrides",
+                          "desc_chars": r["chars"], "uses": dict(uses0), "span": vouch["span"],
+                          "vouched": True,
+                          "reason": f"Never invoked ({vouch['span']}) and its listing entry costs "
+                                    f"{r['chars']} chars."})
+    for scope, members in plugins.items():
+        if any(is_used(sk) or is_protected(sk) for sk, _ in members):
+            continue
+        chars = sum(r["chars"] for _, r in members)
+        cands.append({"name": scope[len("plugin:"):], "scope": scope, "mechanism": "enabledPlugins",
+                      "desc_chars": chars, "skill_count": len(members), "uses": dict(uses0),
+                      "span": vouch["span"], "vouched": True,
+                      "reason": f"None of its {len(members)} skill(s) was invoked ({vouch['span']}); "
+                                f"disabling the whole plugin reclaims {chars} listing chars."})
+    cands.sort(key=lambda c: (-c["desc_chars"], c["name"]))
+    plan["candidates"] = cands
+    plan["reclaim_chars"] = sum(c["desc_chars"] for c in cands)
+    if lb["over_budget"]:
+        over = -lb["headroom"]
+        plan["sufficient"] = plan["reclaim_chars"] >= over
+        plan["still_over_by"] = max(0, over - plan["reclaim_chars"])
+    return plan
+
+
 def tool_search_state(m: dict) -> dict:
     v = str(m["env"].get("ENABLE_TOOL_SEARCH", "")).strip().lower()
     forced_off = []
@@ -538,11 +668,12 @@ def audit(root: Path, home: Path, ch: Path, cj_path: Path, window: int = DEFAULT
     ts = tool_search_state(m)
     used_skills = set(usage["skills"])
     visible_names = {s["name"] for s in m["skills"]} | {s["dir"] for s in m["skills"]}
-    skills_unused = sorted(s["name"] for s in m["skills"]
-                           if skill_mode(m, s) != "off" and s["name"] not in used_skills
-                           and s["dir"] not in used_skills and not s["scope"].startswith("plugin:"))
+    vouch = vouch_usage(usage)
+    plan = removal_plan(m, usage, lb, vouch)
+    skills_unused = sorted(c["name"] for c in plan["candidates"] if c["mechanism"] == "skillOverrides")
     used_undeclared = sorted(s for s in used_skills if d and s not in d["skills"]
-                             and s not in d["base_skills"] and ":" not in s)
+                             and s not in d["base_skills"] and ":" not in s
+                             and (s in usage["skills_tool"] or s in visible_names))
     hooks_by_scope: dict[str, int] = {}
     for h in m["hooks"]:
         hooks_by_scope[h["scope"]] = hooks_by_scope.get(h["scope"], 0) + 1
@@ -550,19 +681,39 @@ def audit(root: Path, home: Path, ch: Path, cj_path: Path, window: int = DEFAULT
     proposals = []
     for s in used_undeclared:
         proposals.append(f"declare skill '{s}' (invoked {usage['skills'][s]}x in this repo's logs)")
-    if d:
-        for s in sorted(d["skills"] - used_skills):
-            proposals.append(f"skill '{s}' is declared but never invoked here: keep, or drop it")
-    for s in skills_unused[:20]:
-        proposals.append(f"skill '{s}' is loaded here and never invoked in this repo: "
-                         "candidate for skillOverrides off")
+    if d and vouch["ok"]:
+        for s in sorted(d["skills"] - used_skills - PROTECTED_SKILLS):
+            proposals.append(f"skill '{s}' is declared but never invoked here "
+                             f"({vouch['span']}): keep, or drop it")
+    if not vouch["ok"]:
+        proposals.append("usage not established (" + "; ".join(vouch["why"]) + "): no skill is "
+                         "proposed for removal, because an unmeasured zero is not a zero")
+    for c in plan["candidates"][:20]:
+        if c["mechanism"] == "enabledPlugins":
+            proposals.append(f"plugin '{c['name']}' costs {c['desc_chars']} listing chars and none of its "
+                             f"skills was invoked ({vouch['span']}): candidate for enabledPlugins false")
+        else:
+            proposals.append(f"skill '{c['name']}' costs {c['desc_chars']} listing chars and has 0 observed "
+                             f"uses ({vouch['span']}): candidate for skillOverrides off")
+    if plan["candidates"] and plan["sufficient"] is False:
+        proposals.append(f"removing EVERY candidate above reclaims {plan['reclaim_chars']} chars and the "
+                         f"listing is still over budget by {plan['still_over_by']}: skill-by-skill pruning "
+                         "will not get there; the lever is plugin-level (disable whole plugins - "
+                         "skillOverrides cannot split them)")
+    elif lb["over_budget"] and not plan["candidates"] and vouch["ok"]:
+        proposals.append("listing is over budget and no loose skill is a vouched candidate: the lever is "
+                         "plugin-level (disable whole plugins - skillOverrides cannot split them)")
     rep = {
         "repo": str(root), "declaration": ("none" if decl is None else
                                            "adopted" if is_adopted(decl) else "present-not-adopted"),
         "declaration_error": derr,
         "usage": {"sessions": usage["sessions"], "log_dir": usage["dir"], "found": usage["found"],
                   "skills": usage["skills"], "agents": usage["agents"], "hooks": usage["hooks"],
-                  "bad_lines": usage["bad_lines"]},
+                  "bad_lines": usage["bad_lines"], "unreadable": usage["unreadable"],
+                  "skills_by_tool": usage["skills_tool"], "skills_by_slash": usage["skills_slash"],
+                  "slash_deduped": usage["slash_deduped"], "span": vouch["span"],
+                  "vouched": vouch["ok"], "not_vouched_because": vouch["why"]},
+        "removal": plan,
         "skills": {"visible": len(m["skills"]), "listed": lb["listed"], "unused_here": skills_unused,
                    "used_undeclared": used_undeclared},
         "listing_budget": {k: v for k, v in lb.items() if k != "rows"},
@@ -597,6 +748,12 @@ def render_audit(r: dict) -> str:
     u = r["usage"]
     L.append(f"usage (THIS repo only): {u['sessions']} session log(s) in {u['log_dir']}"
              + ("" if u["found"] else "  [no log dir: usage counts are zero, not measured]"))
+    ts_, ss_ = sum(u["skills_by_tool"].values()), sum(u["skills_by_slash"].values())
+    L.append(f"  skill uses counted: {ts_} by Skill tool call, {ss_} by operator slash command, "
+             f"{u['slash_deduped']} tool call(s) absorbed as the same action as a slash command; "
+             f"span {u['span']}")
+    L.append("  zero-use evidence: " + ("vouched" if u["vouched"] else
+             "NOT ESTABLISHED (" + "; ".join(u["not_vouched_because"]) + ") - no removal proposed"))
     b = r["listing_budget"]
     L.append(f"skill listing: {b['used_chars']} / {b['budget_chars']} chars "
              f"({b['fraction']:.0%} of an assumed {b['context_window']} window); "
@@ -784,6 +941,37 @@ def offer(home: Path) -> "str | None":
     return None
 
 
+def measure_summary(root: Path, home: Path, ch: Path, cj_path: Path,
+                    window: int = DEFAULT_CONTEXT_WINDOW) -> str:
+    """The upgrade's few-line budget finding. Read-only, and it can never fail the caller.
+
+    Asks whether the DECLARED-OR-UNDECLARED load is too much, which drift cannot: a repo with no
+    drift at all can still sit multiples over the listing budget. Any trouble becomes a one-line
+    `not measured (reason)`; nothing here raises.
+    """
+    try:
+        if not ch.is_dir():
+            return f"harness budget: not measured (no Claude home at {ch})"
+        r = audit(root, home, ch, cj_path, window)
+        b, t, u = r["listing_budget"], r["tool_definitions"], r["usage"]
+        lines = [f"harness budget: skill listing {b['used_chars']} / {b['budget_chars']} chars, "
+                 f"headroom {b['headroom']}" + ("  ** OVER BUDGET **" if b["over_budget"] else "")
+                 + f"; tool definitions >= {t['lower_bound']} (lower bound)"]
+        if b["at_risk"]:
+            lines.append("  descriptions dropped first: " + ", ".join(b["at_risk"][:5])
+                         + (", ..." if len(b["at_risk"]) > 5 else ""))
+        lines.append(f"  assumes a {b['context_window']}-token window and an estimated per-line "
+                     "overhead; the tool count misses what no log shows, so read it as an "
+                     "estimate, not a verdict"
+                     + ("" if u["found"] else "; no session logs found, so the drop order is "
+                        "not usage-ranked"))
+        if r["declaration_error"]:
+            lines.append(f"  declaration unreadable: {r['declaration_error']}")
+        return chr(10).join(lines)
+    except Exception as e:  # a measurement must never abort an upgrade
+        return f"harness budget: not measured ({type(e).__name__}: {e})"
+
+
 # --------------------------------------------------------------------------- update (auto/review)
 def update(root: Path, home: Path, ch: Path, cj_path: Path, apply: bool, approve: "list | None") -> dict:
     """The auto/review pass. Report-only; with --apply it records `auto` plugin versions and
@@ -852,13 +1040,17 @@ def _write_json(p: Path, obj: object) -> None:
     os.replace(tmp, p)
 
 
-def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
+def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path, confirmed: "dict | None" = None,
+              accept: "frozenset | set" = frozenset()) -> dict:
     """The exact write surface, computed without writing. Owns ONLY:
       - <root>/.claude/skills/<declared library skill>/            (copy, pin-gated)
       - <root>/.claude/settings.local.json: enabledPlugins, skillOverrides, permissions.allow,
         syncClaudeAiSkills, syncClaudeAiPlugins, disableClaudeAiConnectors
       - <claude-json> projects[<root>].disabledMcpServers          (the `/mcp` field)
-    Any other key is never read-modified-written differently from how it was found."""
+    Any other key is never read-modified-written differently from how it was found.
+    `confirmed` (from resolve_confirmation) adds ONLY the operator-confirmed removals. `accept`
+    names the claude.ai sync switches the operator ACCEPTED in the popup (e.g. "syncClaudeAiSkills").
+    A switch not accepted is never written, even when the declaration says off: unasked is declined."""
     decl, derr = load_declaration(home)
     plan = {"error": derr, "refused": None, "copies": [], "local": {}, "disable_mcp": [],
             "enable_mcp": [], "proposals": [], "pins": []}
@@ -900,6 +1092,9 @@ def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
         if sk["scope"] == "user" and sk["name"] not in keep_skills and ov.get(sk["name"]) != "off" \
                 and m["overrides"].get(sk["name"]) != "off":
             want_over[sk["name"]] = "off"
+    for n in (confirmed or {}).get("skills", []):
+        if ov.get(n) != "off" and m["overrides"].get(n) != "off":
+            want_over[n] = "off"
     drop_over = [n for n in ov if n in d["skills"] and ov[n] == "off"]
     # enabledPlugins
     ep = dict(_dict(local_obj.get("enabledPlugins")))
@@ -910,14 +1105,19 @@ def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
         pl = m["plugins"].get(pname)
         if pl and not pl["enabled"]:
             want_plugins[pname] = True
+    for pname in (confirmed or {}).get("plugins", []):
+        if pname in m["plugins"] and m["plugins"][pname]["enabled"]:
+            want_plugins[pname] = False
     # permissions
     add_allow = [a for a in _dict(decl.get("permissions")).get("allow") or []
                  if a not in m["allow"]]
     ca = _dict(decl.get("claude_ai"))
     scalar = {}
-    if ca.get("sync_skills") is False and local_obj.get("syncClaudeAiSkills") is not False:
+    if ca.get("sync_skills") is False and local_obj.get("syncClaudeAiSkills") is not False \
+            and "syncClaudeAiSkills" in accept:
         scalar["syncClaudeAiSkills"] = False
-    if ca.get("sync_plugins") is False and local_obj.get("syncClaudeAiPlugins") is not False:
+    if ca.get("sync_plugins") is False and local_obj.get("syncClaudeAiPlugins") is not False \
+            and "syncClaudeAiPlugins" in accept:
         scalar["syncClaudeAiPlugins"] = False
     if ca.get("connectors") == [] and local_obj.get("disableClaudeAiConnectors") is not True:
         scalar["disableClaudeAiConnectors"] = True
@@ -944,6 +1144,86 @@ def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
                                      "scope outside the baseline; set it false there with the "
                                      "operator's approval")
     return plan
+
+
+POPUP_MAX_Q, POPUP_MAX_OPT = 4, 4     # AskUserQuestion: 1-4 questions, 2-4 options each
+KEEP_ALL = "Keep everything (no change)"
+
+
+def popup_questions(removal: dict, sync_question: bool = False) -> dict:
+    """AskUserQuestion payload from `audit --json`'s `removal` block (WO-063). A plugin is ONE option
+    carrying its skill count and reclaimed chars; options are filled in budget order; what does not
+    fit is STATED (count + chars), never dropped. Nothing is pre-selected. The claude.ai sync switch,
+    when asked, is its own single-select question."""
+    cands = list(removal.get("candidates") or [])
+    room = POPUP_MAX_Q - (1 if sync_question else 0)
+    shown, rest = cands[:room * POPUP_MAX_OPT], cands[room * POPUP_MAX_OPT:]
+    qs = []
+    if shown:
+        nq = -(-len(shown) // POPUP_MAX_OPT)
+        base, extra = divmod(len(shown), nq)
+        i = 0
+        for q in range(nq):
+            size = base + (1 if q < extra else 0)
+            opts = []
+            for c in shown[i:i + size]:
+                if c["mechanism"] == "enabledPlugins":
+                    label = f"{c['name']} (plugin, {c.get('skill_count', '?')} skills, {c['desc_chars']} chars)"
+                else:
+                    label = f"{c['name']} ({c['desc_chars']} chars)"
+                opts.append({"label": label, "description": c["reason"], "name": c["name"]})
+            i += size
+            if len(opts) < 2:
+                opts.append({"label": KEEP_ALL, "description": "Select nothing here.", "name": None})
+            qs.append({"question": "Switch these off in THIS repo? Ticked = confirmed; unticked = kept.",
+                       "header": f"Remove {q + 1}/{nq}", "multiSelect": True, "options": opts})
+    if sync_question:
+        qs.append({"question": "Also turn off claude.ai skill sync? All-or-none: synced skills stop "
+                               "updating, and whether it affects other repos is unverified.",
+                   "header": "Sync", "multiSelect": False, "options": [
+                       {"label": "Leave sync on", "description": "Writes nothing.", "name": None},
+                       {"label": "Turn sync off", "description": "Writes syncClaudeAiSkills false here.",
+                        "name": "syncClaudeAiSkills"}]})
+    remainder = {"count": len(rest), "chars": sum(c["desc_chars"] for c in rest)}
+    remainder["text"] = (f"{remainder['count']} more candidate(s) holding {remainder['chars']} chars are "
+                         "not shown; a second popup can be offered." if rest else "")
+    return {"questions": qs, "remainder": remainder, "claude_only": True,
+            "note": "AskUserQuestion is a Claude Code tool; elsewhere present these options as a "
+                    "numbered text list and take the answer in text."}
+
+
+def resolve_confirmation(removal: dict, confirmed_names, headroom: "int | None" = None) -> dict:
+    """The operator's answer -> what may be applied. Only names that are audit candidates pass; an
+    unknown name (an 'Other' entry) is held for an evidence check, and `gitos` never passes by any
+    route. Empty answer -> nothing. Silence is never consent."""
+    by = {c["name"]: c for c in removal.get("candidates") or []}
+    out = {"skills": [], "plugins": [], "refused": []}
+    reclaimed = 0
+    for raw in confirmed_names or []:
+        n = str(raw).strip()
+        if not n or n == KEEP_ALL:
+            continue
+        short = n.split("@")[0].split(":")[-1].lower()
+        if short in PROTECTED_SKILLS:
+            out["refused"].append((n, "protected: never removable"))
+        elif n not in by:
+            out["refused"].append((n, "not an audit candidate: check against the same evidence "
+                                      "and confirm back before anything is applied"))
+        elif by[n]["mechanism"] == "enabledPlugins":
+            out["plugins"].append(n)
+            reclaimed += by[n]["desc_chars"]
+        else:
+            out["skills"].append(n)
+            reclaimed += by[n]["desc_chars"]
+    out["reclaimed"] = reclaimed
+    if headroom is None or headroom >= 0:
+        out["verdict"] = "listing is within budget" if headroom is not None else "budget unknown"
+    elif reclaimed >= -headroom:
+        out["verdict"] = f"confirmed set reclaims {reclaimed} chars: listing gets within budget"
+    else:
+        out["verdict"] = (f"confirmed set reclaims {reclaimed} chars: still over budget by "
+                          f"{-headroom - reclaimed}; the lever is a whole plugin")
+    return out
 
 
 def plan_empty(plan: dict) -> bool:
@@ -1067,7 +1347,7 @@ def canary_check(home: Path) -> "tuple[list, str | None, bool]":
 # --------------------------------------------------------------------------- CLI
 def main(argv: "list | None" = None) -> int:
     ap = argparse.ArgumentParser(description="Per-project harness profile (audit/drift/sync).")
-    ap.add_argument("cmd", choices=("audit", "drift", "offer", "update", "sync"))
+    ap.add_argument("cmd", choices=("audit", "drift", "offer", "update", "sync", "popup"))
     ap.add_argument("--home", default=".gitos", help="the gitos home (default ./.gitos)")
     ap.add_argument("--root", default=None, help="repo root (default: parent of --home)")
     ap.add_argument("--claude-home", default=None)
@@ -1076,6 +1356,14 @@ def main(argv: "list | None" = None) -> int:
     ap.add_argument("--apply", action="store_true", help="sync/update: actually write")
     ap.add_argument("--approve", action="append", default=None, help="update: move this review pin")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--confirm", action="append", default=[],
+                    help="sync: a candidate the operator confirmed (repeatable); only these are removed")
+    ap.add_argument("--accept-sync-skills", action="store_true",
+                    help="sync: the operator ACCEPTED turning claude.ai skill sync off; without it nothing is written")
+    ap.add_argument("--accept-sync-plugins", action="store_true",
+                    help="sync: the operator ACCEPTED turning claude.ai plugin sync off; without it nothing is written")
+    ap.add_argument("--measure", action="store_true",
+                    help="offer: first print the read-only budget summary (the upgrade uses this)")
     a = ap.parse_args(argv)
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -1089,7 +1377,14 @@ def main(argv: "list | None" = None) -> int:
         print(json.dumps(obj, indent=2, ensure_ascii=False, default=list) if a.json else text)
 
     if a.cmd == "offer":
-        line = offer(home)
+        if a.measure:
+            print(measure_summary(root, home, ch, cj, a.context_window))
+        try:
+            line = offer(home)
+        except Exception as e:  # --measure runs inside an upgrade: never fail it
+            if not a.measure:
+                raise
+            line = f"harness: offer not available ({type(e).__name__}: {e})"
         if line:
             print(line)
         return 0
@@ -1114,7 +1409,23 @@ def main(argv: "list | None" = None) -> int:
                           + [f"  {n}" for n in r["notices"]]
                           + [f"  {k}: {len(v)} diff line(s)" for k, v in r["diffs"].items()]))
         return 0
-    plan = plan_sync(root, home, ch, cj)
+    if a.cmd == "popup":
+        r = audit(root, home, ch, cj, a.context_window)
+        decl, _e = load_declaration(home)
+        sq = bool(decl) and not r["claude_ai"]["sync_skills_off"] \
+            and _dict(decl.get("claude_ai")).get("sync_skills") is False
+        print(json.dumps(popup_questions(r["removal"], sq), indent=2, ensure_ascii=False))
+        return 0
+    confirmed = None
+    if a.confirm:
+        r = audit(root, home, ch, cj, a.context_window)
+        confirmed = resolve_confirmation(r["removal"], a.confirm, r["listing_budget"]["headroom"])
+        for n, why in confirmed["refused"]:
+            print(f"harness sync: NOT applied - {n}: {why}", file=sys.stderr)
+        print(f"harness sync: {confirmed['verdict']}")
+    plan = plan_sync(root, home, ch, cj, confirmed,
+                     ({"syncClaudeAiSkills"} if a.accept_sync_skills else set())
+                     | ({"syncClaudeAiPlugins"} if a.accept_sync_plugins else set()))
     if plan["refused"] and plan["error"]:
         emit(plan, render_plan(plan))
         return 2

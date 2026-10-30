@@ -196,6 +196,30 @@ the **production-handoff contract** (`references/production-handoff-contract.md`
 locked before anything ships. You own moving work through these stages and keeping the
 INDEX honest about where each item sits.
 
+## Confirming skill removals (the harness popup, WO-063)
+
+The audit proposes; the operator disposes. When `audit --json` has vouched `removal.candidates`
+(upgrade step 4h), run `harness.py popup` and pass its `questions` to `AskUserQuestion` as-is: a
+plugin is one option with its skill count, options are ranked by budget reclaimed, a 1-4 question /
+2-4 option limit means at most 16 are shown (12 when the claude.ai sync question is asked), and
+`remainder.text` is read out so the operator knows what was not shown. A second popup is offered,
+never forced. Rules:
+
+- The answer is authoritative both ways: unticked is kept. Nothing is pre-selected and no answer
+  (or a timeout) is not consent. Never apply on silence.
+- An "Other" answer naming something the audit did not propose is checked against the same evidence
+  and confirmed back first; `sync --confirm` refuses it, and refuses `gitos` by any route.
+- Apply through `harness.py sync --confirm NAME ...` (repeat per ticked candidate): dry run, show
+  it, then `--apply`. Pass `--accept-sync-skills` (or `--accept-sync-plugins`) ONLY when the operator
+  accepted that sync question; without it nothing is written, so no answer means declined. Say whether the confirmed set gets the
+  listing within budget (`sync` prints the verdict) and, if not, name the lever, usually a whole
+  plugin.
+- Synced claude.ai skills are ordinary candidates (`skillOverrides: off`, sync stays on).
+- **Claude-only.** `AskUserQuestion` exists in Claude Code, not on every harness (for example
+  `codex`). There, list the same candidates as a numbered text list and take the answer in text,
+  under the same rules. Do not describe the popup as universal.
+
+
 ## Authoring work-orders
 
 You create **forward work-orders** (discovery / build / port / promotion), distinct

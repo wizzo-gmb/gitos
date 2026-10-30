@@ -20,6 +20,42 @@ When it overflows, descriptions drop **least-invoked-first**, which removes the 
 own skills need to trigger. Unused skills do not mainly cost tokens; they evict the descriptions of
 the skills this repo uses. `audit` reports the headroom and names the skills at risk.
 
+### What `audit` may propose to switch off (WO-062)
+
+The audit exists to find useless skills that bloat the listing, and a wrong "switch it off" is the
+one output that does damage. Three rules, enforced in `harness.py` (`PROTECTED_SKILLS`,
+`vouch_usage`, `removal_plan`); preserve them:
+
+1. **`gitos` is never a removal candidate**, whatever its count reads. The audit runs inside gitos,
+   and this holds even if a future log format defeats the parser. Narrow on purpose: one name, not a
+   list of "important" skills.
+2. **Evidence protects everything else.** Any observed use (operator slash command or `Skill` tool
+   call) exempts a skill. A zero counts only if the audit can vouch for it: logs present, every file
+   readable, every relevant line parsed. The audit states the span (sessions, first..last day). When
+   it cannot vouch it says *usage not established* and proposes nothing.
+3. **Rank by purpose.** Candidates are ordered by listing cost (largest first), and the audit says
+   plainly when removing every one still leaves the listing over budget: then the lever is
+   plugin-level, because `skillOverrides` cannot split a plugin.
+
+Usage counts both forms: a `Skill` tool call, and the operator-typed `<command-name>/x</command-name>`
+user record. A slash command followed by a `Skill` call for the same skill and args (before the next
+human turn) is one action and counts once.
+
+### Removals are confirmed, never assumed (WO-063)
+
+The audit proposes; only the operator's confirmation disposes. `harness.py popup` renders the
+`removal` block as `AskUserQuestion` questions (a plugin is one option with its skill count;
+ranked by budget; what does not fit is stated). `sync --confirm NAME` applies exactly the confirmed
+names, to `settings.local.json` only: `skillOverrides: off` for a skill (synced claude.ai skills
+included, sync left on) or `enabledPlugins: false` for a whole plugin. An empty confirmation applies
+nothing; `gitos` is refused by any route; a name the audit did not propose is refused until checked.
+No default-on selection, no apply on timeout. The claude.ai skill-sync switch is all-or-none and is
+asked as its own question. `sync` writes `syncClaudeAiSkills`/`syncClaudeAiPlugins` only with
+`--accept-sync-skills`/`--accept-sync-plugins`; unasked counts as declined.
+Unverified: whether `skillOverrides` matches a synced skill by short name or only as
+`anthropic-skills:<name>`, and whether a repo-local `syncClaudeAiSkills: false` trashes synced skills
+machine-wide. The popup itself is Claude-only; other harnesses get a numbered text list.
+
 ## `harness.json`
 
 | key | meaning |

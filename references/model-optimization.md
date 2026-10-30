@@ -312,11 +312,24 @@ close the gap, and neither is "look at the file":
   (requires a recent client). **Frontmatter alone never proves an effective pair** —
   the same observation limit this policy already states for the lead.
 
-**Binding the tier, not merely a typed pair.** A `model`/`effort` pair proves a route
-was *written down*, not that it matches the tier the work-order derives. So where the
-repo **has** a tier to bind to — optimization enabled, with a configured mapping —
-the gate additionally requires a **routing receipt** that `select` authorized, and
-compares the dispatched pair against it:
+**Binding the tier, not merely a typed pair — a separate opt-in.** A `model`/`effort`
+pair proves a route was *written down*, not that it matches the tier the work-order
+derives. An operator who wants that enforced can switch on the **tier binding**: the
+gate then additionally requires a **routing receipt** that `select` authorized, and
+compares the dispatched pair against it. The binding is **off unless asked for**, and
+`enabled: true` is **not** the ask — `enabled` means *route dispatches by tier*, never
+*refuse a dispatch that lacks a receipt*. The opt-in is its own top-level key in
+`model-optimization.json`, honoured only as exactly JSON `true` and only while
+optimization is enabled (there must be a tier to bind to):
+
+```json
+{"schema_version": 1, "enabled": true, "preference": "enabled", "dispatch_binding": true, "harnesses": {}}
+```
+
+Nothing writes `dispatch_binding`; it is set by hand. **Absent means off**, and so does
+`false` or any non-boolean value — every repo that installed the gate before this key
+existed carries no such key, so absence read as on would refuse every one of their
+correctly routed dispatches. With the binding on, every dispatch needs a fresh receipt:
 
 ```text
 python <skill>/scripts/model_optimization.py select <repo> --harness claude --tier deep ... > decision.json
@@ -333,9 +346,9 @@ cannot go red. It is spent on the dispatch it authorized and expires on a clock,
 a receipt dated in the future is treated as a moved clock rather than as fresher
 evidence. It lives outside the repo, in the per-user temp area, because a
 single-use token for one dispatch is not repo content and must never travel in a
-commit. With optimization **off** the receipt layer does not apply at all; the floor
-still refuses an unrouted dispatch, because off has never meant *spend the ceiling by
-default*.
+commit. With optimization **off**, or on without `dispatch_binding: true`, the receipt
+layer does not apply at all; the floor still refuses an unrouted or half-routed
+dispatch, because off has never meant *spend the ceiling by default*.
 
 **The gate never blocks by accident.** On this event a nonzero exit is itself a
 refused tool call, so the gate speaks **only** through its decision on stdout and

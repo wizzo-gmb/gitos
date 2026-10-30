@@ -28,11 +28,18 @@ TYPED, not that it matches the tier the work-order derives. So:
 
   * THE FLOOR, always on, no configuration required: both components must be set. This is the
     measured defect - a dispatch with a model and no effort key at all, and one with neither.
-  * THE TIER BINDING, on only where the repo HAS a tier to bind to (optimization enabled with a
-    configured mapping): the pair must match a routing RECEIPT that `select` authorized. A
-    receipt is single-use and short-lived, because a stale receipt that authorizes every later
-    dispatch is an assertion that cannot go red - see
+  * THE TIER BINDING, on only where an operator DELIBERATELY ASKED for it (see BINDING_KEY) AND
+    the repo has a tier to bind to (optimization enabled): the pair must match a routing
+    RECEIPT that `select` authorized. A receipt is single-use and short-lived, because a stale
+    receipt that authorizes every later dispatch is an assertion that cannot go red - see
     .gitos/brain/wiki/concepts/assertions-that-cannot-go-red.md.
+
+`enabled` IS NOT CONSENT TO THE BINDING. `enabled: true` means "route dispatches by tier"; it
+never meant "refuse a dispatch that lacks a receipt". Reading it as the second turned a routing
+preference into a hard gate that nothing in the workflow supplies receipts for, and every
+correctly routed dispatch in an enabled repo was refused. The binding is therefore its own
+opt-in, and an ABSENT opt-in is OFF - every repo that installed the gate before the opt-in
+existed has no such key, so reading absence as on would refuse all of their dispatches again.
 
 WHAT THIS DOES NOT COVER, stated rather than implied:
   * CLAUDE ONLY. The tool-call event is a Claude Code surface. A Codex session never runs this,
@@ -69,6 +76,20 @@ RECEIPT_TTL_SECONDS = 900
 # is. Small tolerance for an unsynchronized clock; beyond it the receipt is not evidence.
 RECEIPT_SKEW_SECONDS = 60
 RECEIPT_PREFIX = "gitos-dispatch-receipt-"
+# THE BINDING OPT-IN: a top-level key of the repo's optimization setting, honoured only when it
+# is exactly JSON `true`. Absent, `false`, a string, a number - all OFF. Nothing writes it; an
+# operator who wants the receipt round trip enforced sets it by hand.
+BINDING_KEY = "dispatch_binding"
+
+
+def binding_requested(config):
+    """Whether the tier binding applies under this (validated) optimization setting.
+
+    BOTH conditions, and neither implies the other: optimization enabled (there is a tier to
+    bind to) AND the separate opt-in set to exactly `true` (an operator asked for receipts).
+    `enabled` alone is a routing preference, not consent to refuse unreceipted dispatches.
+    """
+    return config.get("enabled") is True and config.get(BINDING_KEY) is True
 
 
 def _engine():
@@ -164,6 +185,38 @@ ADVICE = ("Derive the tier from the work-order's countable properties "
           "A full-context fork inherits the lead and is exempt.")
 
 
+# The Agent tool's `model` accepts only these aliases, while a mapping may record the full id
+# (`claude-opus-5-5`). Spelling is not routing: the alias and an id of its family are one model.
+CLAUDE_ALIASES = ("opus", "sonnet", "haiku", "fable")
+
+
+def model_family(name):
+    """`claude-opus-5-5` -> `opus`; an alias -> itself; anything else -> None."""
+    n = name.strip().lower()
+    if n in CLAUDE_ALIASES:
+        return n
+    parts = n.split("-")
+    if len(parts) >= 2 and parts[0] == "claude" and parts[1] in CLAUDE_ALIASES:
+        return parts[1]
+    return None
+
+
+def same_model(requested, recorded):
+    """Whether a dispatch's model is the one a receipt authorized.
+
+    Exact match, or an alias against a full id OF THAT FAMILY (the only form the Agent tool can
+    send). Two full ids must still match exactly: `claude-opus-4` is not `claude-opus-5-5`.
+    What an alias resolves to is the client's, and this gate cannot observe it.
+    """
+    a, b = requested.strip(), recorded.strip()
+    if a == b:
+        return True
+    if a.lower() in CLAUDE_ALIASES or b.lower() in CLAUDE_ALIASES:
+        fa, fb = model_family(a), model_family(b)
+        return fa is not None and fa == fb
+    return False
+
+
 def decide(payload, engine=None, now=None):
     """The one decision. -> a deny document, or None meaning "no opinion, proceed".
 
@@ -196,10 +249,11 @@ def decide(payload, engine=None, now=None):
         return deny(f"This dispatch sets no {named}, so no task tier was chosen for it - it "
                     f"inherits the lead's pair, which is the ceiling. {ADVICE}")
 
-    # THE TIER BINDING, where there is a tier to bind to. A repo with optimization off has no
-    # configured mapping and no `select` decision to compare against, so there is nothing here
-    # to be exact about; the floor already refuses the measured defect. Off has never meant
-    # "spend the ceiling by default", and the floor is what makes that true.
+    # THE TIER BINDING, only where an operator opted in AND there is a tier to bind to. A repo
+    # with optimization off has no `select` decision to compare against; a repo with it on but
+    # no opt-in asked to be ROUTED, not to have unreceipted dispatches refused. Either way the
+    # floor already refuses the measured defect. Off has never meant "spend the ceiling by
+    # default", and the floor is what makes that true.
     engine = _engine() if engine is None else engine
     if engine is None:
         return None
@@ -208,14 +262,15 @@ def decide(payload, engine=None, now=None):
         return None
     try:
         home = engine.home_path(root)
-        if not home.is_dir() or not engine.load_config(home)["enabled"]:
+        if not home.is_dir() or not binding_requested(engine.load_config(home)):
             return None
     except Exception:
         return None
 
     value, reason = read_receipt(root)
     if value is None:
-        return deny(f"Optimization is enabled here and {reason}, so nothing establishes that "
+        return deny(f"The tier binding is switched on here (`{BINDING_KEY}: true`) and {reason}, "
+                    f"so nothing establishes that "
                     f"this pair is the tier this work needs - a typed pair proves a route was "
                     f"written down, not that it was derived. Run `select`, record its "
                     f"dispatch-ready decision with `dispatch_guard.py record`, then dispatch.")
@@ -225,7 +280,7 @@ def decide(payload, engine=None, now=None):
                     f"dispatch and record the decision again; a receipt that outlived its "
                     f"dispatch would authorize every later one, including a mis-tiered one.")
     pair = (tool_input.get("model").strip(), tool_input.get("effort").strip())
-    if pair != (value["model"], value["effort"]):
+    if not same_model(pair[0], value["model"]) or pair[1] != value["effort"]:
         return deny(f"This dispatch requests {pair[0]}/{pair[1]}, but the recorded route for "
                     f"tier `{value['tier']}` is {value['model']}/{value['effort']}. Dispatch "
                     f"the pair `select` authorized, or re-derive the tier and re-run `select`.")

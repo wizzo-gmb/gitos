@@ -18,6 +18,52 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v38 — 2026-10-29
+breaking: no
+
+**The first real v37 upgrade found the gaps, and this release closes them.** v37 was tested on one
+real downstream repo and two of its mechanisms failed in ways the suite could not see. Every fixture
+installed the gate *with* a receipt or *without* optimization, and every usage log held tool calls
+rather than typed commands. Six work-orders land together.
+
+**A correctly routed dispatch is no longer refused** (WO-061). In v37, `enabled: true` also switched
+on the receipt binding, and nothing created receipts. Any repo with optimization on would therefore
+refuse every dispatch once its hook loaded. `enabled` now means only *route by tier*. The receipt
+binding is a separate opt-in, `"dispatch_binding": true` in `model-optimization.json`. Nothing sets it,
+and absent means off. The installed hook loads the live engine, so **existing v37 installs are fixed by
+the engine update alone, with no edit to any repo.** The floor is unchanged: a dispatch that names
+neither or only one of model and effort is still refused. *Not claimed:* nothing creates receipts yet,
+so turning the opt-in on today brings back refusals.
+
+**The binding accepts the Agent tool's model aliases** (WO-064). A receipt can record
+`claude-opus-5-5`, but the Agent tool can only send `opus`. An exact comparison refused every
+Claude dispatch. An alias now matches a full id of its own family. Two full ids must still match
+exactly, and a different family still refuses.
+
+**The audit counts what the operator types** (WO-062). A skill invoked as `/name` is logged without a
+tool call, so v37 counted it zero and proposed switching off the skill the repo used most. The audit now
+counts slash commands, counts each action once when a typed command is followed by the model loading
+the same skill, and reports the evidence by kind and span. **`gitos` is never proposed.** No skill with
+observed use is proposed. A zero is acted on only when the audit can vouch for it: logs present,
+parseable and dated. Otherwise it says *usage not established* and proposes nothing. Candidates rank by
+listing cost, and `audit --json` carries them as data.
+
+**Every upgrade measures the harness budget** (WO-060), adopted repo or not, read-only. A failure
+prints *not measured* and never fails the upgrade.
+
+**The operator confirms every skill removal** (WO-063). Audit candidates are shown in a popup in
+Claude Code: at most 16 per popup, ranked by budget reclaimed, the remainder stated, a plugin as one
+choice, nothing pre-ticked, nothing applied on silence. Only what was ticked is applied, through
+`harness.py sync --confirm NAME`. `gitos` is refused by any route. **Cloud skills synced from
+claude.ai are hidden per repo with `skillOverrides: off`, with sync left on**, so the skills a repo does use keep
+updating, and the ones it does not stop reaching it. Turning sync off entirely is its own question
+and **opt-in** (`--accept-sync-skills`). A switch nobody asked about is never written. *Not claimed:* the popup is
+Claude-only (other harnesses get a numbered list). Hiding a synced skill is not yet verified against a
+real one: whether it matches by short name or as `anthropic-skills:<name>` is open. Whether a repo-local
+sync-off trashes synced skills for every repo is also open.
+
+---
+
 ## v37 — 2026-10-29
 breaking: no
 

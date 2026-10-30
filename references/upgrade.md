@@ -258,13 +258,33 @@ Direct the running orchestrator to:
   and nothing else — changing `consultable` or `accept_proposals` is a deliberate act via
   `/gitos federation`. A prompt people learn to skip has stopped being a checkpoint.
 
-**4h. Harness (only when `<home>/harness.json` exists and is not `adopted: false`).**
-One update command: run `harness.py update --home <home>` (the home's copy, else the skill's own
-`scripts/harness.py`; the `auto` / `review` pass), show the operator each `review`
+**4h. Harness.**
+**Measure on every upgrade, adopted or not.** Run `harness.py offer --measure --home <home>` (the
+home's copy, else the skill's own `scripts/harness.py`) and put its few lines in the report. It is
+read-only, never gates the upgrade and cannot fail it: an unreadable Claude home, absent session
+logs or a parse failure prints `not measured (reason)` and the upgrade continues. This is not the
+drift check. The canary asks whether actual matches declared; this asks whether the load is too
+much, and a zero-drift repo can still sit multiples over the skill-listing budget. Carry its
+qualification into what you tell the operator: the figure assumes a 200,000-token window and the
+tool-definition count is a lower bound, so an "OVER BUDGET" line is an estimate to look into, not a
+verdict to act on. It runs here, after step 2, because that is the first point at which the
+skill's own `scripts/harness.py` is guaranteed to exist. A repo with no `harness.json` then sees
+the offer line after the summary.
+
+**Only when `<home>/harness.json` exists and is not `adopted: false`**, also run the maintenance
+pass. One update command: run `harness.py update --home <home>` (the `auto` / `review` pass), show
+the operator each `review`
 diff and let them approve (`update --approve NAME`), then `harness.py sync --home <home>` as a dry
 run, show the plan, and apply with `--apply` only on their word. Never move a user skill without
-approval; user-scope baseline changes are proposals only. A repo with no `harness.json` skips this
-step and sees one offer line (`harness.py offer`). Policy: `references/harness.md`.
+approval; user-scope baseline changes are proposals only. Policy: `references/harness.md`.
+
+**Confirm removals in a popup (after the budget summary, only when there are vouched candidates).**
+When `harness.py audit --json` shows `removal.vouched` and a non-empty `removal.candidates`, run
+`harness.py popup --home <home>` and present its `questions` with `AskUserQuestion` (rules:
+`references/roles/orchestrator.md`, policy: `references/harness.md`). Nothing is pre-selected, silence
+applies nothing, and only the ticked candidates are passed to `sync --confirm NAME`, shown as a dry
+run first, then `--apply` on the operator's word. The popup is Claude-only: on another harness
+present the same options as a numbered text list.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
