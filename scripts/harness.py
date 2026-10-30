@@ -411,17 +411,84 @@ def skill_mode(m: dict, sk: dict) -> str:
 
 
 # --------------------------------------------------------------------------- session logs
+_CWD = re.compile(r'"cwd"\s*:\s*("(?:[^"\\]|\\.)*")')
+_ADDED = re.compile(r"additionalDirectories|added director|/add-dir", re.I)
+
+
+def _norm_path(p: str) -> str:
+    return p.replace("\\", "/").rstrip("/").lower()
+
+
+def _cwd_in_repo(line: str, rootn: str) -> bool:
+    m = _CWD.search(line)
+    if not m:
+        return False
+    try:
+        c = _norm_path(json.loads(m.group(1)))
+    except ValueError:
+        return False
+    return c == rootn or c.startswith(rootn + "/")
+
+
+def _session_state(f: Path, root: Path) -> "tuple[bool, bool]":
+    """-> (cwd_entered_repo, names_repo_as_added_dir). Real records carry `cwd`; a session started in
+    a parent folder and moved with /cd shows the repo path in `cwd` on its later records."""
+    rootn, entered, added = _norm_path(str(root)), False, False
+    needle = rootn.split("/")[-1]
+    try:
+        with f.open(encoding="utf-8", errors="replace") as fh:
+            for ln in fh:
+                if not entered and '"cwd"' in ln and _cwd_in_repo(ln, rootn):
+                    entered = True
+                if not added and _ADDED.search(ln) and needle in ln.lower() and rootn in _norm_path(ln.replace("\\\\", "\\")):
+                    added = True
+                if entered and added:
+                    break
+    except OSError:
+        pass
+    return entered, added
+
+
+def usage_dirs(root: Path, ch: Path) -> "tuple[Path, list]":
+    """The repo's own log dir plus ancestor-start and descendant-start dirs, matched case-insensitively
+    (the drive letter's case varies: D-- vs d--). Sessions started elsewhere and /cd'd in are NOT
+    reachable without reading every project dir: that gap is stated, not hidden."""
+    pr = ch / "projects"
+    own = pr / _slug(root)
+    if not pr.is_dir():
+        return own, []
+    want = {_slug(root).lower()} | {_slug(a).lower() for a in root.parents if str(a) != a.anchor}
+    pre = _slug(root).lower() + "-"
+    out = [d for d in sorted(pr.iterdir()) if d.is_dir() and (d.name.lower() in want
+                                                              or d.name.lower().startswith(pre))]
+    return own, out
+
+
 def read_usage(root: Path, ch: Path) -> dict:
-    """Per-REPO usage from this repo's own session logs - never machine-wide. Best effort over a
-    format that is not a contract: unreadable lines are counted, not guessed."""
-    d = ch / "projects" / _slug(root)
+    """Per-REPO usage from this repo's session logs - never machine-wide. Besides the repo's own log
+    dir, sessions started in a parent folder (or below) count when a record's `cwd` is the repo root or
+    under it. A session that merely names the repo as an added directory cannot be attributed from the
+    log shape: it is counted in `unattributed` and withholds the vouch. Best effort over a format that
+    is not a contract: unreadable lines are counted, not guessed."""
+    d, dirs = usage_dirs(root, ch)
     use = {"dir": str(d), "sessions": 0, "skills": {}, "agents": {}, "mcp_tools": set(),
-           "hooks": {}, "bad_lines": 0, "found": d.is_dir(), "unreadable": 0,
+           "hooks": {}, "bad_lines": 0, "found": bool(dirs), "unreadable": 0,
            "skills_tool": {}, "skills_slash": {}, "slash_deduped": 0,
-           "first_day": "", "last_day": "", "_pending": {}}
-    if not d.is_dir():
-        return use
-    for f in sorted(d.glob("*.jsonl")):
+           "first_day": "", "last_day": "", "_pending": {},
+           "scanned_dirs": [str(x) for x in dirs], "from_other_dirs": 0, "unattributed": 0}
+    files = []
+    for x in dirs:
+        for f in sorted(x.glob("*.jsonl")):
+            if x.name.lower() == d.name.lower():
+                files.append(f)
+                continue
+            entered, added = _session_state(f, root)
+            if entered:
+                files.append(f)
+                use["from_other_dirs"] += 1
+            elif added:
+                use["unattributed"] += 1
+    for f in files:
         use["sessions"] += 1
         use["_pending"] = {}
         try:
@@ -509,7 +576,8 @@ def _walk_usage(o: object, use: dict) -> None:
 
 
 # --------------------------------------------------------------------------- audit
-def listing_budget(m: dict, usage: dict, window: int, only: "set | None" = None) -> dict:
+def listing_budget(m: dict, usage: dict, window: int, only: "set | None" = None,
+                   listing_chars: "int | None" = None) -> dict:
     """Skill-listing headroom. Skills in `on` mode cost name + capped description; `name-only`
     costs the name. When over budget, descriptions drop least-invoked-first (ties: longest first,
     then name) - the documented eviction order. `only` restricts to a subset (projection)."""
@@ -529,6 +597,8 @@ def listing_budget(m: dict, usage: dict, window: int, only: "set | None" = None)
         rows.append({"name": sk["name"], "scope": sk["scope"], "chars": cost, "uses": uses,
                      "name_only": mode == "name-only"})
     used = sum(r["chars"] for r in rows)
+    if listing_chars is not None and only is None:
+        used = int(listing_chars)               # the client's own figure (/context or /doctor)
     dropped = []
     if used > budget:
         left = used
@@ -539,9 +609,17 @@ def listing_budget(m: dict, usage: dict, window: int, only: "set | None" = None)
                 continue
             left -= max(0, r["chars"] - len(r["name"]) - 3)       # description gone, name stays
             dropped.append(r["name"])
+    in_use = {r["name"] for r in rows if r["uses"] > 0}
+    guarded = [n for n in dropped if n in in_use or n.split(":")[-1] in PROTECTED_SKILLS]
     return {"budget_chars": budget, "used_chars": used, "headroom": budget - used,
-            "listed": len(rows), "over_budget": used > budget, "at_risk": dropped,
-            "context_window": window, "fraction": m["listing_fraction"], "rows": rows}
+            "listed": len(rows), "over_budget": used > budget,
+            "at_risk": [n for n in dropped if n not in guarded], "client_would_drop_in_use": guarded,
+            "context_window": window, "fraction": m["listing_fraction"], "rows": rows,
+            "used_source": ("client-reported" if listing_chars is not None and only is None
+                            else "estimated"),
+            "assumptions": (f"estimated budget = {m['listing_fraction']:.0%} x an assumed "
+                            f"{window}-token context window (a guess, and it may mix tokens with "
+                            "chars); the client's own limit is not read")}
 
 
 PROTECTED_SKILLS = frozenset({"gitos"})   # the audit runs inside gitos: never a removal candidate
@@ -560,8 +638,14 @@ def vouch_usage(usage: dict) -> dict:
         why.append(f"{usage['unreadable']} log file(s) unreadable")
     if usage["bad_lines"]:
         why.append(f"{usage['bad_lines']} log line(s) unparseable")
+    if usage.get("unattributed"):
+        why.append(f"{usage['unattributed']} session(s) name this repo as an added directory but their "
+                   "cwd never entered it, so their skill use cannot be attributed")
     span = (f"{usage['sessions']} session(s), {usage['first_day']}..{usage['last_day']}"
             if usage["first_day"] else f"{usage['sessions']} session(s), span unknown")
+    nd = len(usage.get("scanned_dirs") or [])
+    span += (f"; scanned {nd} log dir(s): " + ", ".join(Path(x).name for x in usage["scanned_dirs"])
+             + f" ({usage.get('from_other_dirs', 0)} session(s) from parent/child-started dirs, kept by cwd)")
     if not why and not usage["first_day"]:
         why.append("logs carry no timestamps, so their span cannot be stated")
     return {"ok": not why, "why": why, "span": span}
@@ -642,12 +726,13 @@ def tool_search_state(m: dict) -> dict:
     return {"mode": mode, "value": v or "(unset)", "text": text + " (model gating not checkable here)"}
 
 
-def audit(root: Path, home: Path, ch: Path, cj_path: Path, window: int = DEFAULT_CONTEXT_WINDOW) -> dict:
+def audit(root: Path, home: Path, ch: Path, cj_path: Path, window: int = DEFAULT_CONTEXT_WINDOW,
+          listing_chars: "int | None" = None) -> dict:
     decl, derr = load_declaration(home)
     m = scan_machine(root, ch, cj_path)
     usage = read_usage(root, ch)
     d = declared(decl) if decl else None
-    lb = listing_budget(m, usage, window)
+    lb = listing_budget(m, usage, window, listing_chars=listing_chars)
     proj = None
     if d:
         keep = d["skills"] | d["base_skills"]
@@ -697,17 +782,19 @@ def audit(root: Path, home: Path, ch: Path, cj_path: Path, window: int = DEFAULT
                              f"uses ({vouch['span']}): candidate for skillOverrides off")
     if plan["candidates"] and plan["sufficient"] is False:
         proposals.append(f"removing EVERY candidate above reclaims {plan['reclaim_chars']} chars and the "
-                         f"listing is still over budget by {plan['still_over_by']}: skill-by-skill pruning "
+                         f"listing is still over the estimated budget by {plan['still_over_by']}: skill-by-skill pruning "
                          "will not get there; the lever is plugin-level (disable whole plugins - "
                          "skillOverrides cannot split them)")
     elif lb["over_budget"] and not plan["candidates"] and vouch["ok"]:
-        proposals.append("listing is over budget and no loose skill is a vouched candidate: the lever is "
+        proposals.append("listing is over the estimated budget and no loose skill is a vouched candidate: the lever is "
                          "plugin-level (disable whole plugins - skillOverrides cannot split them)")
     rep = {
         "repo": str(root), "declaration": ("none" if decl is None else
                                            "adopted" if is_adopted(decl) else "present-not-adopted"),
         "declaration_error": derr,
         "usage": {"sessions": usage["sessions"], "log_dir": usage["dir"], "found": usage["found"],
+                  "scanned_dirs": usage["scanned_dirs"], "from_other_dirs": usage["from_other_dirs"],
+                  "unattributed": usage["unattributed"],
                   "skills": usage["skills"], "agents": usage["agents"], "hooks": usage["hooks"],
                   "bad_lines": usage["bad_lines"], "unreadable": usage["unreadable"],
                   "skills_by_tool": usage["skills_tool"], "skills_by_slash": usage["skills_slash"],
@@ -746,7 +833,8 @@ def render_audit(r: dict) -> str:
     if r["declaration_error"]:
         L.append(f"  !! {r['declaration_error']}")
     u = r["usage"]
-    L.append(f"usage (THIS repo only): {u['sessions']} session log(s) in {u['log_dir']}"
+    L.append(f"usage (THIS repo only): {u['sessions']} session log(s); scanned: "
+             + (", ".join(u["scanned_dirs"]) or u["log_dir"])
              + ("" if u["found"] else "  [no log dir: usage counts are zero, not measured]"))
     ts_, ss_ = sum(u["skills_by_tool"].values()), sum(u["skills_by_slash"].values())
     L.append(f"  skill uses counted: {ts_} by Skill tool call, {ss_} by operator slash command, "
@@ -755,16 +843,23 @@ def render_audit(r: dict) -> str:
     L.append("  zero-use evidence: " + ("vouched" if u["vouched"] else
              "NOT ESTABLISHED (" + "; ".join(u["not_vouched_because"]) + ") - no removal proposed"))
     b = r["listing_budget"]
-    L.append(f"skill listing: {b['used_chars']} / {b['budget_chars']} chars "
-             f"({b['fraction']:.0%} of an assumed {b['context_window']} window); "
-             f"{b['listed']} of {r['skills']['visible']} visible skills listed; headroom "
-             f"{b['headroom']}" + ("  ** OVER BUDGET **" if b["over_budget"] else ""))
+    L.append(f"skill listing: {b['used_chars']} chars "
+             f"({'client-reported' if b['used_source'] == 'client-reported' else 'estimated'}) vs an "
+             f"ESTIMATED budget of {b['budget_chars']} chars; {b['listed']} of {r['skills']['visible']} "
+             f"visible skills listed; estimated headroom {b['headroom']}"
+             + ("  (estimated: over)" if b["over_budget"] else ""))
+    L.append(f"  assumptions: {b['assumptions']}")
     if b["at_risk"]:
-        L.append("  descriptions dropped first (least-invoked-first): " + ", ".join(b["at_risk"]))
+        L.append("  the client may drop these descriptions first (its least-invoked-first order, "
+                 "estimated; not advice and not a removal candidate): " + ", ".join(b["at_risk"]))
+    if b["client_would_drop_in_use"]:
+        L.append("  the client's order would also reach in-use/protected skill(s) "
+                 + ", ".join(b["client_would_drop_in_use"]) + ": that is the client's behaviour, "
+                 "not a candidate")
     p = r["listing_budget_if_declared_only"]
     if p:
-        L.append(f"  if only declared+baseline skills were visible: {p['used_chars']} chars, "
-                 f"headroom {p['headroom']}, at risk: {', '.join(p['at_risk']) or 'none'}")
+        L.append(f"  if only declared+baseline skills were visible (estimated): {p['used_chars']} chars, "
+                 f"headroom {p['headroom']}, client may drop: {', '.join(p['at_risk']) or 'none'}")
     t = r["tool_definitions"]
     band = "OVER the 30-50 band" if t["over_band"] else ("inside the band" if t["in_band"]
                                                          else "below the 30-50 band")
@@ -942,7 +1037,7 @@ def offer(home: Path) -> "str | None":
 
 
 def measure_summary(root: Path, home: Path, ch: Path, cj_path: Path,
-                    window: int = DEFAULT_CONTEXT_WINDOW) -> str:
+                    window: int = DEFAULT_CONTEXT_WINDOW, listing_chars: "int | None" = None) -> str:
     """The upgrade's few-line budget finding. Read-only, and it can never fail the caller.
 
     Asks whether the DECLARED-OR-UNDECLARED load is too much, which drift cannot: a repo with no
@@ -952,17 +1047,21 @@ def measure_summary(root: Path, home: Path, ch: Path, cj_path: Path,
     try:
         if not ch.is_dir():
             return f"harness budget: not measured (no Claude home at {ch})"
-        r = audit(root, home, ch, cj_path, window)
+        r = audit(root, home, ch, cj_path, window, listing_chars)
         b, t, u = r["listing_budget"], r["tool_definitions"], r["usage"]
-        lines = [f"harness budget: skill listing {b['used_chars']} / {b['budget_chars']} chars, "
-                 f"headroom {b['headroom']}" + ("  ** OVER BUDGET **" if b["over_budget"] else "")
+        lines = [f"harness budget: skill listing {b['used_chars']} chars "
+                 f"({'client-reported' if b['used_source'] == 'client-reported' else 'estimated'}) vs "
+                 f"an ESTIMATED budget of {b['budget_chars']} chars, estimated headroom {b['headroom']}"
+                 + ("  (estimated: over)" if b["over_budget"] else "")
                  + f"; tool definitions >= {t['lower_bound']} (lower bound)"]
         if b["at_risk"]:
-            lines.append("  descriptions dropped first: " + ", ".join(b["at_risk"][:5])
-                         + (", ..." if len(b["at_risk"]) > 5 else ""))
-        lines.append(f"  assumes a {b['context_window']}-token window and an estimated per-line "
-                     "overhead; the tool count misses what no log shows, so read it as an "
-                     "estimate, not a verdict"
+            lines.append("  the client may drop these descriptions first (estimated, not advice): "
+                         + ", ".join(b["at_risk"][:5]) + (", ..." if len(b["at_risk"]) > 5 else ""))
+        if b["client_would_drop_in_use"]:
+            lines.append("  the client's order would also reach in-use/protected skill(s) "
+                         + ", ".join(b["client_would_drop_in_use"][:5]) + ": client behaviour, not a candidate")
+        lines.append(f"  estimated: {b['assumptions']}; pass --listing-chars N from /context or /doctor to "
+                     "replace the estimate. The tool count misses what no log shows"
                      + ("" if u["found"] else "; no session logs found, so the drop order is "
                         "not usage-ranked"))
         if r["declaration_error"]:
@@ -1054,8 +1153,26 @@ def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path, confirmed: "dict 
     decl, derr = load_declaration(home)
     plan = {"error": derr, "refused": None, "copies": [], "local": {}, "disable_mcp": [],
             "enable_mcp": [], "proposals": [], "pins": []}
-    if derr or decl is None:
-        plan["refused"] = derr or "no harness.json"
+    if derr:
+        plan["refused"] = derr
+        return plan
+    if decl is None:
+        # No harness.json (the default state): ONLY operator-confirmed removals, nothing declared.
+        if not confirmed or not (confirmed.get("skills") or confirmed.get("plugins")):
+            plan["refused"] = "no harness.json"
+            return plan
+        m = scan_machine(root, ch, cj_path)
+        if m["errors"]:
+            plan["refused"] = "unreadable settings input: " + "; ".join(m["errors"])
+            return plan
+        lo = m["settings"]["local"]
+        ov, ep = _dict(lo.get("skillOverrides")), _dict(lo.get("enabledPlugins"))
+        so = {n: "off" for n in confirmed.get("skills", [])
+              if ov.get(n) != "off" and m["overrides"].get(n) != "off"}
+        pe = {n: False for n in confirmed.get("plugins", [])
+              if n in m["plugins"] and m["plugins"][n]["enabled"] and ep.get(n) is not False}
+        plan["local"] = {"skillOverrides_set": so, "skillOverrides_drop": [], "enabledPlugins_set": pe,
+                         "permissions_allow_add": [], "scalars": {}}
         return plan
     if not is_adopted(decl):
         plan["refused"] = "harness.json is not adopted (adopted: false); nothing will be written"
@@ -1150,6 +1267,17 @@ POPUP_MAX_Q, POPUP_MAX_OPT = 4, 4     # AskUserQuestion: 1-4 questions, 2-4 opti
 KEEP_ALL = "Keep everything (no change)"
 
 
+def _opt(label: str, description: str, name: "str | None" = None) -> dict:
+    """A popup option holding ONLY schema keys; names map back through `label_to_name`."""
+    return {"label": label, "description": description}
+
+
+def _cand_label(c: dict) -> str:
+    if c["mechanism"] == "enabledPlugins":
+        return f"{c['name']} (plugin, {c.get('skill_count', '?')} skills, {c['desc_chars']} chars)"
+    return f"{c['name']} ({c['desc_chars']} chars)"
+
+
 def popup_questions(removal: dict, sync_question: bool = False) -> dict:
     """AskUserQuestion payload from `audit --json`'s `removal` block (WO-063). A plugin is ONE option
     carrying its skill count and reclaimed chars; options are filled in budget order; what does not
@@ -1167,27 +1295,26 @@ def popup_questions(removal: dict, sync_question: bool = False) -> dict:
             size = base + (1 if q < extra else 0)
             opts = []
             for c in shown[i:i + size]:
-                if c["mechanism"] == "enabledPlugins":
-                    label = f"{c['name']} (plugin, {c.get('skill_count', '?')} skills, {c['desc_chars']} chars)"
-                else:
-                    label = f"{c['name']} ({c['desc_chars']} chars)"
-                opts.append({"label": label, "description": c["reason"], "name": c["name"]})
+                label = _cand_label(c)
+                opts.append(_opt(label, c["reason"], c["name"]))
             i += size
             if len(opts) < 2:
-                opts.append({"label": KEEP_ALL, "description": "Select nothing here.", "name": None})
-            qs.append({"question": "Switch these off in THIS repo? Ticked = confirmed; unticked = kept.",
+                opts.append(_opt(KEEP_ALL, "Select nothing here.", None))
+            qs.append({"question": f"Batch {q + 1} of {nq}: switch these off in THIS repo? "
+                                   "Ticked = confirmed; unticked = kept.",
                        "header": f"Remove {q + 1}/{nq}", "multiSelect": True, "options": opts})
     if sync_question:
         qs.append({"question": "Also turn off claude.ai skill sync? All-or-none: synced skills stop "
                                "updating, and whether it affects other repos is unverified.",
                    "header": "Sync", "multiSelect": False, "options": [
-                       {"label": "Leave sync on", "description": "Writes nothing.", "name": None},
-                       {"label": "Turn sync off", "description": "Writes syncClaudeAiSkills false here.",
-                        "name": "syncClaudeAiSkills"}]})
+                       _opt("Leave sync on", "Writes nothing.", None),
+                       _opt("Turn sync off", "Writes syncClaudeAiSkills false here.",
+                            "syncClaudeAiSkills")]})
     remainder = {"count": len(rest), "chars": sum(c["desc_chars"] for c in rest)}
     remainder["text"] = (f"{remainder['count']} more candidate(s) holding {remainder['chars']} chars are "
                          "not shown; a second popup can be offered." if rest else "")
     return {"questions": qs, "remainder": remainder, "claude_only": True,
+            "label_to_name": {_cand_label(c): c["name"] for c in shown},
             "note": "AskUserQuestion is a Claude Code tool; elsewhere present these options as a "
                     "numbered text list and take the answer in text."}
 
@@ -1197,10 +1324,12 @@ def resolve_confirmation(removal: dict, confirmed_names, headroom: "int | None" 
     unknown name (an 'Other' entry) is held for an evidence check, and `gitos` never passes by any
     route. Empty answer -> nothing. Silence is never consent."""
     by = {c["name"]: c for c in removal.get("candidates") or []}
+    by_label = {_cand_label(c): c["name"] for c in removal.get("candidates") or []}
     out = {"skills": [], "plugins": [], "refused": []}
     reclaimed = 0
     for raw in confirmed_names or []:
         n = str(raw).strip()
+        n = by_label.get(n, n)             # the popup answers with labels; map them back to names
         if not n or n == KEEP_ALL:
             continue
         short = n.split("@")[0].split(":")[-1].lower()
@@ -1217,11 +1346,12 @@ def resolve_confirmation(removal: dict, confirmed_names, headroom: "int | None" 
             reclaimed += by[n]["desc_chars"]
     out["reclaimed"] = reclaimed
     if headroom is None or headroom >= 0:
-        out["verdict"] = "listing is within budget" if headroom is not None else "budget unknown"
+        out["verdict"] = ("listing is within the estimated budget" if headroom is not None
+                          else "budget unknown")
     elif reclaimed >= -headroom:
-        out["verdict"] = f"confirmed set reclaims {reclaimed} chars: listing gets within budget"
+        out["verdict"] = f"confirmed set reclaims {reclaimed} chars: listing gets within the estimated budget"
     else:
-        out["verdict"] = (f"confirmed set reclaims {reclaimed} chars: still over budget by "
+        out["verdict"] = (f"confirmed set reclaims {reclaimed} chars: still over the estimated budget by "
                           f"{-headroom - reclaimed}; the lever is a whole plugin")
     return out
 
@@ -1353,6 +1483,9 @@ def main(argv: "list | None" = None) -> int:
     ap.add_argument("--claude-home", default=None)
     ap.add_argument("--claude-json", default=None)
     ap.add_argument("--context-window", type=int, default=DEFAULT_CONTEXT_WINDOW)
+    ap.add_argument("--listing-chars", type=int, default=None,
+                    help="the client's own skill-listing size in chars (/context Skills row or /doctor); "
+                         "replaces gitos's estimate of used chars")
     ap.add_argument("--apply", action="store_true", help="sync/update: actually write")
     ap.add_argument("--approve", action="append", default=None, help="update: move this review pin")
     ap.add_argument("--json", action="store_true")
@@ -1378,7 +1511,7 @@ def main(argv: "list | None" = None) -> int:
 
     if a.cmd == "offer":
         if a.measure:
-            print(measure_summary(root, home, ch, cj, a.context_window))
+            print(measure_summary(root, home, ch, cj, a.context_window, a.listing_chars))
         try:
             line = offer(home)
         except Exception as e:  # --measure runs inside an upgrade: never fail it
@@ -1389,7 +1522,7 @@ def main(argv: "list | None" = None) -> int:
             print(line)
         return 0
     if a.cmd == "audit":
-        r = audit(root, home, ch, cj, a.context_window)
+        r = audit(root, home, ch, cj, a.context_window, a.listing_chars)
         emit(r, render_audit(r))
         return 2 if r["declaration_error"] else 0
     if a.cmd == "drift":
@@ -1410,7 +1543,7 @@ def main(argv: "list | None" = None) -> int:
                           + [f"  {k}: {len(v)} diff line(s)" for k, v in r["diffs"].items()]))
         return 0
     if a.cmd == "popup":
-        r = audit(root, home, ch, cj, a.context_window)
+        r = audit(root, home, ch, cj, a.context_window, a.listing_chars)
         decl, _e = load_declaration(home)
         sq = bool(decl) and not r["claude_ai"]["sync_skills_off"] \
             and _dict(decl.get("claude_ai")).get("sync_skills") is False
@@ -1418,7 +1551,7 @@ def main(argv: "list | None" = None) -> int:
         return 0
     confirmed = None
     if a.confirm:
-        r = audit(root, home, ch, cj, a.context_window)
+        r = audit(root, home, ch, cj, a.context_window, a.listing_chars)
         confirmed = resolve_confirmation(r["removal"], a.confirm, r["listing_budget"]["headroom"])
         for n, why in confirmed["refused"]:
             print(f"harness sync: NOT applied - {n}: {why}", file=sys.stderr)

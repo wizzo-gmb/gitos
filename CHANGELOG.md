@@ -18,6 +18,30 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v39 — 2026-10-29
+breaking: no
+
+**The removal popup works on a real repo** (WO-065). Its first real run, this engine's own upgrade,
+broke in four places. All four are fixed.
+
+- **Skill use is counted from sessions started in a parent or child folder** when their recorded
+  working directory entered the repo. The audit names the log dirs it scanned. Before this, a repo
+  worked on from its parent folder read as zero use, and the audit called that zero vouched.
+- **Popup questions are unique and options carry only schema keys,** so `AskUserQuestion` accepts the
+  payload as built.
+- **`sync --confirm` works without `harness.json`,** writing only the confirmed `skillOverrides` and
+  `enabledPlugins`. Before this, the default repo had no path to apply a confirmation.
+- **The listing budget is Claude Code's, and gitos only estimates it.** Every budget line says
+  *estimated* and names its assumptions: 1% of an assumed 200,000-token window, possibly mixing tokens
+  and chars. `--listing-chars N` takes the client's own figure from `/context` or `/doctor`. gitos sets
+  no limit. Being over budget never makes a skill a candidate; only vouched disuse does. Used and
+  protected skills are never listed as dropped first.
+
+*Not claimed:* usage is not machine-wide. A session that only added the repo as a directory withholds
+the vouch rather than being counted, and a session started in an unrelated folder is not scanned.
+
+---
+
 ## v38 — 2026-10-29
 breaking: no
 
