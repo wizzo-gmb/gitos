@@ -298,11 +298,16 @@ def detect_home(root: Path, requested: str) -> tuple[Path, str]:
     return root / ".gitos", ".gitos"
 
 
+WRITTEN: list[str] = []   # files laid this run via report(); feeds the refresh summary
+
+
 def report(written: bool, path: Path, base: Path) -> None:
     try:
         rel = path.relative_to(base)
     except ValueError:
         rel = path
+    if written:
+        WRITTEN.append(str(rel).replace("\\", "/"))
     print(f"{'OK   wrote' if written else 'SKIP exists'} {rel}")
 
 
@@ -436,6 +441,7 @@ def main() -> int:
     tokens = dict(PROJECT_NAME=project_name, ROOT=posix_root, DATE=today, HOME=home_label,
                   DOMAIN=args.domain or "(generic)")
 
+    home_existed = home.is_dir()
     home.mkdir(parents=True, exist_ok=True)
     print(f"OK   home = {home_label}{'  (LEGACY adopt-in-place)' if legacy else ''}")
 
@@ -780,6 +786,12 @@ def main() -> int:
         report(write_if_missing(home / "RESUME.md",
                                 render(read_template("RESUME.md.tmpl"), **tokens)),
                home / "RESUME.md", root)
+
+    if home_existed:
+        # Upgrade re-run on an already set-up repo: the inception steps below are wrong here.
+        laid = ", ".join(WRITTEN) if WRITTEN else "no managed files were missing"
+        print(f"\nrefreshed: {laid}")
+        return 0
 
     print("\nScaffolding complete. Next steps (see references/roles/inception.md):")
     print(f"  1. Fill {home_label}/HANDOFF.md from the interview.")

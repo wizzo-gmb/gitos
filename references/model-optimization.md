@@ -111,6 +111,25 @@ display (for example after `/effort`). Saved settings and agent frontmatter alon
 do not prove the lead's current effort. Neither path infers effort from behavior
 or scans private session histories. If the agent cannot observe a field, retain
 unknown or request an operator report; do not claim automatic change detection.
+
+**Read effort yourself before asking anyone.** In Claude the client exports the
+session's effort as `$CLAUDE_EFFORT` (documented, hooks reference: *"`$CLAUDE_EFFORT`
+holds the same level"* as the hook payload's `effort.level`). Run
+`python <skill>/scripts/model_optimization.py observe` or `echo $CLAUDE_EFFORT` in a
+shell tool. `observe` is read-only and prints the effort and its source (`harness-env`),
+or `unknown`. Only `low`, `medium`, `high`, `xhigh` and `max` count; any other value, or
+none, is absent and never a guess. `session-init` and `reaffirm` use it when no
+`--lead-effort` is given and record the source `harness-env`, distinct from an operator
+report and from a hook payload; so does the hook when it re-verifies a stale effort from a payload with no `effort` key
+(a malformed `effort` stays ambiguous and is not overruled).
+The variable is re-read at each check, so an `/effort` change is picked up at the next
+check, not instantly. There is no `$CLAUDE_MODEL`: take the model from the system
+prompt's exact model ID as a self-report, or from a `PostModelSwitch` the hook recorded.
+
+**Fallback.** When effort is unavailable (a model without effort, or another harness),
+ask with the interactive question UI (`AskUserQuestion` in Claude Code), offering the
+levels as options. Never ask in prose, where the question goes unnoticed; on a harness
+without that UI, use a numbered list.
 [Codex app-server](https://learn.chatgpt.com/docs/app-server),
 [Claude model and effort settings](https://code.claude.com/docs/en/model-config).
 
@@ -155,8 +174,16 @@ Three properties of this are worth stating, because each one bounds a claim:
   is not the banned shortcut — the ban is on treating a saved setting as evidence
   of the active pair, and an invalidation claims nothing about any value. The
   comparison is over digests, which can answer "did this move?" and cannot answer
-  "to what?". The first announcement about a given file in a session has no
-  earlier digest to compare against, so it invalidates by design.
+  "to what?". When a baseline is established (`session-init`) or re-established
+  (`reaffirm`), the digests of every file that can carry a route are recorded:
+  user `settings.json` (under `CLAUDE_CONFIG_DIR` when set), project
+  `.claude/settings.json` and `.claude/settings.local.json`. So the **first** edit
+  to each is judged on what moved, like every later one: an edit that touches only
+  permissions, hooks or skill toggles costs nothing. A file absent at the baseline
+  is recorded as having no routing keys, so creating it without any is not a
+  change and creating it with one is. A file unreadable at the baseline is not
+  recorded, and any file with no recorded digest still invalidates on its first
+  announcement, as does a file unreadable when announced.
 - **Effort can close the loop; model cannot.** A dispatch announcement carries the
   **session's own effort** at the top level, distinct from the effort the caller
   requested for that dispatch, so an invalidated effort is re-verified on the next
@@ -257,6 +284,16 @@ omit the effort parameter. Use a named effort whenever supported. A default rout
 requires native evidence of its fixed/default behavior (`override.effort: default`),
 not merely an absent parameter; it makes no claim about economy.
 
+**A model with no effort levels is the exception.** The Claude model configuration
+page lists the models that take an effort level and states that *"Models not
+listed here do not support effort."* For such a model there is no effort to choose,
+control or evidence, so a catalog records it as `"efforts": ["default"]` and
+nothing else, and its route is `default`. `select` returns that route
+`dispatch-ready` without effort evidence, and the dispatch passes the model only.
+A catalog that lists `default` beside named levels is not this case; there the rule
+above applies. Catalogs go stale: an alias can move to a newer model that does take
+effort, so refresh discovery when the alias target changes.
+
 Establish the **actual lead pair** from the harness/operator, then configure it as
 the ceiling. Workers can match it. Unknown or changed lead → revalidate before
 routing. Fable or any other supported lead is permitted, never required. If more
@@ -290,7 +327,11 @@ unverifiable assertions spawned a read-only sweep with neither component set.
   the client's tool-call event, matched to the dispatch tool, in the repo's
   **committed** `.claude/settings.json`. It travels in git, so a fresh clone arrives
   with the gate on and there is no per-system step. A dispatch that sets no `model`,
-  or no `effort`, or neither, is **denied with a reason**.
+  or no `effort`, or neither, is **denied with a reason**. One exception: a dispatch
+  that names a model with **no effort levels** and no effort passes, but only where
+  the repo's Claude mapping routes that model with effort `default` and its catalog
+  lists no other effort (see *Mapping + ceiling*). Any other missing effort is still
+  refused, and an unrouted dispatch always is.
 
 **Precedence is honoured, not fought.** A per-invocation `model`/`effort` argument
 beats a definition's frontmatter, and `CLAUDE_CODE_EFFORT_LEVEL` beats it too. That
@@ -336,6 +377,9 @@ python <skill>/scripts/model_optimization.py select <repo> --harness claude --ti
 python <skill>/scripts/dispatch_guard.py record <repo> --select decision.json
 python <skill>/scripts/dispatch_guard.py show <repo>
 ```
+
+The repo may come before or after the options (`record --select decision.json <repo>`
+works too).
 
 Only a `dispatch-ready` decision writes a receipt; `blocked` and
 `recommendation-only` are refusals and authorize nothing. A receipt is **single-use

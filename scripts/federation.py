@@ -2219,6 +2219,42 @@ def proposal_path(directory: Path, proposal_id: str) -> Path:
     return directory / f"{proposal_id}.md"
 
 
+INTAKE_PREFIX_RE = re.compile(r"[0-9a-f]{8,32}")
+
+
+def resolve_proposal_id(home: Path, token: object) -> str:
+    """A full proposal id, from a unique prefix of at least 8 hex characters - or a refusal.
+
+    THE LISTING SHOWS THE FIRST EIGHT, so an operator who copies what they were shown must be able
+    to act on it. The prefix is matched against the NAMES of the files directly in `<home>/intake/`
+    and nowhere else - not `accepted/`, not `declined/`, not another repo. The token is checked as
+    a bare hex string BEFORE the directory is touched, so `/`, `..` and a drive letter never reach
+    the filesystem. What comes back is the stem of one existing file, and only that id is used
+    afterwards.
+    """
+    if not isinstance(token, str) or not INTAKE_PREFIX_RE.fullmatch(token):
+        raise FederationError(Message.template(
+            "intake id {token} is not a hex prefix -> an id is 8 to 32 lowercase hex characters "
+            "(the listing shows the first 8)", token=Foreign(str(token))))
+    directory = intake_dir(home)
+    names: "list[str]" = []
+    if directory.is_dir():
+        for path in directory.glob("*.md"):
+            if path.is_file() and valid_proposal_id(path.stem) and path.stem.startswith(token):
+                names.append(path.stem)
+    if not names:
+        raise FederationError(Message.template(
+            "intake id {token} is UNKNOWN: it matches no pending proposal in {dir} -> "
+            "`federation intake` lists what is pending",
+            token=Foreign(token), dir=Engine(str(directory))))
+    if len(names) > 1:
+        raise FederationError(Message.template(
+            "intake id {token} is AMBIGUOUS: it matches {n} pending proposals in {dir} -> give "
+            "more characters of the id",
+            token=Foreign(token), n=Engine(str(len(names))), dir=Engine(str(directory))))
+    return names[0]
+
+
 def outbox_dir(home: Path) -> Path:
     """The SENDER's own record of what it sent: `<home>/outbox` (this repo's own home)."""
     return home / OUTBOX_DIRNAME
@@ -4035,6 +4071,7 @@ def cmd_intake(root: Path, home: Path, args: argparse.Namespace) -> "tuple[int, 
             _print_intake(emit_human(view))
         return 0, view
     action, pid = chosen[0]
+    pid = resolve_proposal_id(home, pid)
 
     if action == "show":
         # THE EXPLICIT ASK. A human wanted to read it, so it is printed - framed as what it is.

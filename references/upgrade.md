@@ -278,13 +278,21 @@ diff and let them approve (`update --approve NAME`), then `harness.py sync --hom
 run, show the plan, and apply with `--apply` only on their word. Never move a user skill without
 approval; user-scope baseline changes are proposals only. Policy: `references/harness.md`.
 
-**Confirm removals in a popup (after the budget summary, only when there are vouched candidates).**
-When `harness.py audit --json` shows `removal.vouched` and a non-empty `removal.candidates`, run
-`harness.py popup --home <home>` and present its `questions` with `AskUserQuestion` (rules:
-`references/roles/orchestrator.md`, policy: `references/harness.md`). Nothing is pre-selected, silence
-applies nothing, and only the ticked candidates are passed to `sync --confirm NAME`, shown as a dry
-run first, then `--apply` on the operator's word. The popup is Claude-only: on another harness
-present the same options as a numbered text list.
+**Run the popup on every upgrade (after the budget summary).** Run `harness.py popup --home <home>`
+and present its `questions` with `AskUserQuestion` (rules: `references/roles/orchestrator.md`,
+policy: `references/harness.md`). It always carries the two claude.ai sync questions (`Skill sync`,
+`Plugin sync`: current state, **Keep as is** / **Turn off** / **Turn back on**). It adds removal
+batches only when `audit --json` shows `removal.vouched` and a non-empty `removal.candidates`. Nothing
+is pre-selected and silence applies nothing. Only the ticked candidates go to `sync --confirm NAME`,
+and only a sync answer of Turn off or Turn back on goes to `sync` as the flag that `sync_flags` maps
+it to. Show the dry run first, then `--apply` on the operator's word. The popup is Claude-only: on
+another harness present the same options as a numbered text list.
+
+**Plugin update channels.** Report the `update` and `sync` lines about channels as they are: an
+`auto` plugin's `autoUpdate: true` for its marketplace is a user-scope **proposal**, never applied by
+the engine. A `pinned-but-auto-updates` finding is the operator's call, and turning the marketplace's
+`autoUpdate` off freezes every plugin from it. Also carry `audit`'s machine-wide auto-update line
+when an env var turns updates off. Never edit `known_marketplaces.json`.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:

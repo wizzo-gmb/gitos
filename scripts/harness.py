@@ -59,8 +59,17 @@ LIMITS = (
     "claude.ai-synced skills are on disk in <claude-home>/skills/synced/ (Claude Code v2.1.273+) "
     "and are enumerated as scope `synced`; they are hidden per repo by skillOverrides off with sync "
     "left on. UNVERIFIED: whether skillOverrides matches a synced skill by its short name or only "
-    "as `anthropic-skills:<name>`, and whether a repo-local syncClaudeAiSkills false trashes the "
-    "synced skills machine-wide; the second is why that switch is all-or-none and asked separately.",
+    "as `anthropic-skills:<name>`.",
+    "claude.ai-synced plugins are read from <claude-home>/plugins/synced/<dir>/ (name from "
+    ".claude-plugin/plugin.json, else the dir name: the layout below synced/ is not documented) and "
+    "load as `<name>@synced`; one is hidden here by enabledPlugins `<name>@synced: false`.",
+    "The sync switches are all-or-none. A false in settings.local.json stops synced items loading in "
+    "this checkout; per the settings reference only a user- or managed-scope false also moves the "
+    "copies to .trash. Only false counts (true = unset), so turning sync back on removes the false.",
+    "Plugin auto-update is per MARKETPLACE, never per plugin, and no per-plugin version pin is "
+    "documented: `update: pinned` writes nothing and a pinned plugin on an auto-updating marketplace "
+    "is reported as a conflict. known_marketplaces.json is the client's record: read, never written. "
+    "The plugins root is assumed to be <claude-home>/plugins (CLAUDE_CODE_PLUGIN_CACHE_DIR not followed).",
     "Managed (enterprise) settings are not read; a managed value can override anything reported.",
     "The tool-definition count is a LOWER BOUND (MCP tools observed in this repo's session logs "
     "plus counts you declare). Built-in and not-yet-invoked MCP tool counts are not on disk.",
@@ -297,7 +306,8 @@ def scan_machine(root: Path, ch: Path, cj_path: Path) -> dict:
     enabled = merged("enabledPlugins")
     overrides = merged("skillOverrides")
     env = {**merged("env"), **{k: v for k, v in os.environ.items()
-                               if k in ("ENABLE_TOOL_SEARCH", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS")}}
+                               if k in ("ENABLE_TOOL_SEARCH", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS")
+                               + AUTO_UPDATE_ENV_OFF + ("FORCE_AUTOUPDATE_PLUGINS",)}}
 
     def scoped_false(key: str, scopes=("user", "local")) -> bool:
         return any(settings[s].get(key) is False for s in scopes)
@@ -322,6 +332,24 @@ def scan_machine(root: Path, ch: Path, cj_path: Path) -> dict:
         ent = _dict(ent)
         plugins[pname] = {"name": pname, "version": ent.get("version"),
                           "install": ent.get("installPath"), "enabled": enabled.get(pname) is True}
+    # claude.ai-synced plugins: on unless `<name>@synced: false`, manifest defaultEnabled false, or sync off
+    syn = ch / "plugins" / "synced"
+    for p in (sorted(syn.iterdir()) if syn.is_dir() else []):
+        if not p.is_dir() or p.name.startswith("."):
+            continue
+        man = _dict(_load_json(p / ".claude-plugin" / "plugin.json")[0])
+        pid = f"{man.get('name') or p.name}@synced"
+        on = enabled.get(pid)
+        plugins[pid] = {"name": pid, "version": man.get("version"), "install": str(p), "synced": True,
+                        "enabled": not flags["sync_plugins_off"] and (
+                            on is True or (on is None and man.get("defaultEnabled", True) is not False))}
+    known = {}
+    for fn in ("known_marketplaces.json", "known_marketplaces_claudeai.json"):
+        obj, err = _load_json(ch / "plugins" / fn)          # the client's own record: read only
+        if err:
+            gaps.append(f"{fn} unreadable ({err}): marketplace auto-update falls back to settings/default")
+        for k, v in _dict(obj).items():
+            known[k] = {**_dict(v), "_claudeai": fn != "known_marketplaces.json"}
     for pname, on in enabled.items():
         if pname not in plugins:
             plugins[pname] = {"name": pname, "version": None, "install": None,
@@ -384,7 +412,7 @@ def scan_machine(root: Path, ch: Path, cj_path: Path) -> dict:
             connectors = [c for c in ever if c not in disabled]
     return {"settings": settings, "enabled_plugins": enabled, "overrides": overrides,
             "env": env, "flags": flags, "deny": deny, "allow": allow, "plugins": plugins,
-            "skills": skills, "agents": agents, "hooks": hooks, "mcp": mcp,
+            "skills": skills, "agents": agents, "hooks": hooks, "mcp": mcp, "known_marketplaces": known,
             "connectors": connectors, "disabled_mcp": sorted(d for d in disabled if d),
             "claude_json": cj, "claude_json_path": cj_path, "project_key": pkey,
             "gaps": gaps, "errors": errors,
@@ -408,6 +436,64 @@ def skill_mode(m: dict, sk: dict) -> str:
     if sk["dmi"]:
         return "user-invocable-only"
     return mode if mode in ("name-only", "user-invocable-only") else "on"
+
+
+# --------------------------------------------------------------------------- plugin update channels
+# Documented (plugins/loading, plugins/install, plugins/security): auto-update is per marketplace; the
+# first that is set wins: extraKnownMarketplaces[mk].autoUpdate in a settings file, then
+# known_marketplaces.json, then the default (on for the official names except the two below and for
+# marketplaces added from claude.ai, off for every other). The env vars below turn the whole pass off
+# unless FORCE_AUTOUPDATE_PLUGINS is set.
+OFFICIAL_MARKETPLACES = frozenset({
+    "claude-plugins-official", "claude-code-marketplace", "claude-code-plugins", "anthropic-marketplace",
+    "anthropic-plugins", "agent-skills", "anthropic-agent-skills", "life-sciences", "knowledge-work-plugins",
+    "claude-for-legal", "claude-for-financial-services", "financial-services-plugins", "first-party-plugins",
+    "claude-tag-plugins"})
+OFFICIAL_DEFAULT_OFF = frozenset({"knowledge-work-plugins", "first-party-plugins"})
+AUTO_UPDATE_ENV_OFF = ("DISABLE_UPDATES", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
+
+
+def _env_set(v: object) -> bool:
+    return str(v if v is not None else "").strip().lower() not in ("", "0", "false")
+
+
+def auto_update_env(m: dict) -> dict:
+    """Machine-wide plugin auto-update override from the environment (process env or settings env)."""
+    by = [k for k in AUTO_UPDATE_ENV_OFF if _env_set(m["env"].get(k))]
+    forced = _env_set(m["env"].get("FORCE_AUTOUPDATE_PLUGINS"))
+    off = bool(by) and not forced
+    if off:
+        text = (f"plugin auto-update is OFF machine-wide ({', '.join(by)} set, FORCE_AUTOUPDATE_PLUGINS "
+                "not set): no marketplace auto-updates, whatever its autoUpdate says")
+    elif by:
+        text = f"{', '.join(by)} set, but FORCE_AUTOUPDATE_PLUGINS keeps plugin auto-update running"
+    else:
+        text = "no environment override: plugin auto-update follows each marketplace's setting"
+    return {"off": off, "by": by, "forced": forced, "text": text}
+
+
+def marketplace_auto_update(m: dict, mk: str) -> dict:
+    """-> {on, source}: whether marketplace `mk` auto-updates, and which documented source decided."""
+    for s in ("local", "project", "user"):
+        e = _dict(_dict(m["settings"][s].get("extraKnownMarketplaces")).get(mk))
+        if isinstance(e.get("autoUpdate"), bool):
+            return {"on": e["autoUpdate"], "source": f"extraKnownMarketplaces in {s} settings"
+                    + ("" if s == "user" else " (honoured only once the workspace is trusted)")}
+    k = _dict(m.get("known_marketplaces", {}).get(mk))
+    if isinstance(k.get("autoUpdate"), bool):
+        return {"on": k["autoUpdate"], "source": "known_marketplaces.json"}
+    if mk in OFFICIAL_DEFAULT_OFF:
+        return {"on": False, "source": "default (off for this official marketplace)"}
+    if mk in OFFICIAL_MARKETPLACES:
+        return {"on": True, "source": "default (on for Anthropic's official marketplaces)"}
+    if k.get("_claudeai") or mk.startswith("claudeai-"):
+        return {"on": True, "source": "default (on for marketplaces added from claude.ai)"}
+    return {"on": False, "source": "default (off for third-party marketplaces)"}
+
+
+def _marketplace(pname: str) -> "str | None":
+    mk = pname.split("@", 1)[1] if "@" in pname else None
+    return None if mk in (None, "synced", "inline", "skills-dir") else mk
 
 
 # --------------------------------------------------------------------------- session logs
@@ -694,7 +780,10 @@ def removal_plan(m: dict, usage: dict, lb: dict, vouch: dict) -> dict:
                       "desc_chars": chars, "skill_count": len(members), "uses": dict(uses0),
                       "span": vouch["span"], "vouched": True,
                       "reason": f"None of its {len(members)} skill(s) was invoked ({vouch['span']}); "
-                                f"disabling the whole plugin reclaims {chars} listing chars."})
+                                f"disabling the whole plugin reclaims {chars} listing chars."
+                                + (" A claude.ai-synced plugin: hidden here by `"
+                                   + scope[len("plugin:"):] + "`: false, sync left on."
+                                   if scope.endswith("@synced") else "")})
     cands.sort(key=lambda c: (-c["desc_chars"], c["name"]))
     plan["candidates"] = cands
     plan["reclaim_chars"] = sum(c["desc_chars"] for c in cands)
@@ -815,6 +904,8 @@ def audit(root: Path, home: Path, ch: Path, cj_path: Path, window: int = DEFAULT
         "tool_search": ts,
         "plugins_enabled": sorted(n for n, p in m["plugins"].items() if p["enabled"]),
         "claude_ai": m["flags"],
+        "claude_ai_sync": sync_state(m),
+        "plugin_auto_update": auto_update_env(m),
         "hooks": {"by_scope": hooks_by_scope,
                   "broadcast_to_every_repo": [f"{h['scope']}:{h['event']}:{h['command'][:60]}"
                                               for h in broadcast],
@@ -870,6 +961,7 @@ def render_audit(r: dict) -> str:
              f"plugins {'OFF' if r['claude_ai']['sync_plugins_off'] else 'on/unset'}, connectors "
              f"{'OFF' if r['claude_ai']['connectors_off'] else 'on/unset'}")
     L.append(f"plugins enabled: {len(r['plugins_enabled'])} {r['plugins_enabled']}")
+    L.append(r["plugin_auto_update"]["text"])
     h = r["hooks"]
     L.append(f"hooks by scope: {h['by_scope'] or 'none'}; reaching EVERY repo (user/plugin scope): "
              f"{len(h['broadcast_to_every_repo'])}")
@@ -940,7 +1032,7 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
                                       f"(update channel: {e.get('update', 'review')})")
     # plugins
     for pname, pl in sorted(m["plugins"].items()):
-        if not pl["enabled"] or pname in d["plugins"] or pname in d["base_plugins"]:
+        if not pl["enabled"] or pl.get("synced") or pname in d["plugins"] or pname in d["base_plugins"]:
             continue
         user_on = m["settings"]["user"].get("enabledPlugins", {}).get(pname) is True \
             if isinstance(m["settings"]["user"].get("enabledPlugins"), dict) else False
@@ -970,6 +1062,21 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
                 add("pin-moved", msg + " but the entry is pinned", "restore the pinned version or change the declaration")
             else:
                 add("pin-moved", msg + " (update: review)", "review it, then `harness update --approve`")
+    au_env = auto_update_env(m)
+    for e in decl.get("plugins") or []:
+        if not isinstance(e, dict) or e.get("update") != "pinned" or not _marketplace(str(e.get("name"))):
+            continue
+        mk = _marketplace(e["name"])
+        au = marketplace_auto_update(m, mk)
+        if au["on"] and au_env["off"]:
+            out["notices"].append(f"pinned plugin '{e['name']}': marketplace '{mk}' would auto-update "
+                                  f"({au['source']}), held only by the machine-wide override; "
+                                  "if that is unset the pin conflicts")
+        elif au["on"]:
+            add("pinned-but-auto-updates",
+                f"plugin '{e['name']}' is pinned but its marketplace '{mk}' auto-updates ({au['source']})",
+                f"the operator decides: turning '{mk}' autoUpdate off freezes EVERY plugin from it; or set "
+                "this entry's update to review/auto. No per-plugin pin is documented, so nothing is written")
     # MCP + connectors
     for n, s in sorted(m["mcp"].items()):
         if not s["disabled"] and n not in d["mcp"]:
@@ -984,7 +1091,8 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
                              ("sync_plugins_off", "sync_plugins", "syncClaudeAiPlugins")):
         if ca.get(key) is False and not m["flags"][flag]:
             add("sync-not-off", f"{label} is on/unset for this repo but the declaration says off",
-                f"run `harness sync` (writes {label}: false to settings.local.json)")
+                "answer the sync question in `harness popup`; on 'turn off', `harness sync "
+                f"--accept-sync-{key.split('_')[1]}` writes {label}: false to settings.local.json")
     if ca.get("connectors") == [] and not m["flags"]["connectors_off"]:
         add("connectors-not-off", "claude.ai connectors are on but the declaration allows none",
             "run `harness sync` (writes disableClaudeAiConnectors: true to settings.local.json)")
@@ -1139,8 +1247,36 @@ def _write_json(p: Path, obj: object) -> None:
     os.replace(tmp, p)
 
 
+SYNC_KEYS = ("syncClaudeAiSkills", "syncClaudeAiPlugins")
+
+
+def _sync_answers(m: dict, decl: "dict | None", accept, restore, plan: dict) -> "tuple[dict, list]":
+    """The popup's sync answers -> (scalars to set, keys to drop) in settings.local.json. 'Turn off'
+    writes exactly `false`; 'turn back on' removes a local `false` and never writes `true` (only
+    false is honoured). The answer is its own consent, as a confirmed removal is: it does not need
+    the declaration to agree. No answer writes nothing."""
+    lo, user = m["settings"]["local"], m["settings"]["user"]
+    ca = _dict((decl or {}).get("claude_ai"))
+    put, drop = {}, []
+    for key in SYNC_KEYS:
+        if key in accept and lo.get(key) is not False:
+            put[key] = False
+        if key in restore:
+            if lo.get(key) is False:
+                drop.append(key)
+            if user.get(key) is False:
+                plan["proposals"].append(f"USER SCOPE (proposal only): {key} is false in the user "
+                                         "settings.json, so sync stays off in every repo; remove it there "
+                                         "with the operator's approval")
+            dkey = "sync_skills" if key == "syncClaudeAiSkills" else "sync_plugins"
+            if ca.get(dkey) is False:
+                plan["proposals"].append(f"harness.json declares claude_ai.{dkey} false: drift reports "
+                                         "sync-not-off until the declaration is changed")
+    return put, drop
+
+
 def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path, confirmed: "dict | None" = None,
-              accept: "frozenset | set" = frozenset()) -> dict:
+              accept: "frozenset | set" = frozenset(), restore: "frozenset | set" = frozenset()) -> dict:
     """The exact write surface, computed without writing. Owns ONLY:
       - <root>/.claude/skills/<declared library skill>/            (copy, pin-gated)
       - <root>/.claude/settings.local.json: enabledPlugins, skillOverrides, permissions.allow,
@@ -1149,18 +1285,27 @@ def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path, confirmed: "dict 
     Any other key is never read-modified-written differently from how it was found.
     `confirmed` (from resolve_confirmation) adds ONLY the operator-confirmed removals. `accept`
     names the claude.ai sync switches the operator ACCEPTED in the popup (e.g. "syncClaudeAiSkills").
-    A switch not accepted is never written, even when the declaration says off: unasked is declined."""
+    A switch not accepted is never written, even when the declaration says off: unasked is declined.
+    `restore` names the switches the operator chose to turn back on: their local `false` is removed."""
     decl, derr = load_declaration(home)
     plan = {"error": derr, "refused": None, "copies": [], "local": {}, "disable_mcp": [],
             "enable_mcp": [], "proposals": [], "pins": []}
     if derr:
         plan["refused"] = derr
         return plan
-    if decl is None:
-        # No harness.json (the default state): ONLY operator-confirmed removals, nothing declared.
-        if not confirmed or not (confirmed.get("skills") or confirmed.get("plugins")):
-            plan["refused"] = "no harness.json"
+    both = sorted(set(accept) & set(restore))
+    if both:
+        plan["refused"] = f"conflicting sync answers (turn off AND turn back on): {', '.join(both)}"
+        return plan
+    if decl is None or not is_adopted(decl):
+        # No harness.json, or the unadopted starter: ONLY operator answers - confirmed removals and
+        # sync answers (each is its own consent); nothing declared is written (WO-065, WO-067, WO-072).
+        if not (confirmed and (confirmed.get("skills") or confirmed.get("plugins"))) \
+                and not set(accept) and not set(restore):
+            plan["refused"] = ("no harness.json" if decl is None else
+                               "harness.json is not adopted (adopted: false); nothing will be written")
             return plan
+        confirmed = confirmed or {}
         m = scan_machine(root, ch, cj_path)
         if m["errors"]:
             plan["refused"] = "unreadable settings input: " + "; ".join(m["errors"])
@@ -1171,11 +1316,9 @@ def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path, confirmed: "dict 
               if ov.get(n) != "off" and m["overrides"].get(n) != "off"}
         pe = {n: False for n in confirmed.get("plugins", [])
               if n in m["plugins"] and m["plugins"][n]["enabled"] and ep.get(n) is not False}
+        put, drop = _sync_answers(m, decl, accept, restore, plan)
         plan["local"] = {"skillOverrides_set": so, "skillOverrides_drop": [], "enabledPlugins_set": pe,
-                         "permissions_allow_add": [], "scalars": {}}
-        return plan
-    if not is_adopted(decl):
-        plan["refused"] = "harness.json is not adopted (adopted: false); nothing will be written"
+                         "permissions_allow_add": [], "scalars": put, "scalars_drop": drop}
         return plan
     m = scan_machine(root, ch, cj_path)
     if m["errors"]:
@@ -1216,7 +1359,8 @@ def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path, confirmed: "dict 
     # enabledPlugins
     ep = dict(_dict(local_obj.get("enabledPlugins")))
     for pname, pl in m["plugins"].items():
-        if pl["enabled"] and pname not in d["plugins"] and pname not in d["base_plugins"]:
+        if pl["enabled"] and not pl.get("synced") and pname not in d["plugins"] \
+                and pname not in d["base_plugins"]:
             want_plugins[pname] = False
     for pname in d["plugins"]:
         pl = m["plugins"].get(pname)
@@ -1229,13 +1373,7 @@ def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path, confirmed: "dict 
     add_allow = [a for a in _dict(decl.get("permissions")).get("allow") or []
                  if a not in m["allow"]]
     ca = _dict(decl.get("claude_ai"))
-    scalar = {}
-    if ca.get("sync_skills") is False and local_obj.get("syncClaudeAiSkills") is not False \
-            and "syncClaudeAiSkills" in accept:
-        scalar["syncClaudeAiSkills"] = False
-    if ca.get("sync_plugins") is False and local_obj.get("syncClaudeAiPlugins") is not False \
-            and "syncClaudeAiPlugins" in accept:
-        scalar["syncClaudeAiPlugins"] = False
+    scalar, scalar_drop = _sync_answers(m, decl, accept, restore, plan)
     if ca.get("connectors") == [] and local_obj.get("disableClaudeAiConnectors") is not True:
         scalar["disableClaudeAiConnectors"] = True
     if ca.get("connectors"):
@@ -1251,8 +1389,24 @@ def plan_sync(root: Path, home: Path, ch: Path, cj_path: Path, confirmed: "dict 
     plan["local"] = {"skillOverrides_set": want_over, "skillOverrides_drop": drop_over,
                      "enabledPlugins_set": {k: v for k, v in want_plugins.items() if ep.get(k) != v
                                             and not (v is False and m["enabled_plugins"].get(k) is False)},
-                     "permissions_allow_add": add_allow, "scalars": scalar}
+                     "permissions_allow_add": add_allow, "scalars": scalar, "scalars_drop": scalar_drop}
     # user-scope proposals (NEVER applied)
+    au_env = auto_update_env(m)
+    for e in decl.get("plugins") or []:
+        if not isinstance(e, dict) or e.get("update") != "auto" or not _marketplace(str(e.get("name"))):
+            continue
+        mk = _marketplace(e["name"])
+        au = marketplace_auto_update(m, mk)
+        tail = (f"; but {au_env['text']}" if au_env["off"] else "")
+        if au["on"]:
+            plan["proposals"].append(f"plugin '{e['name']}' (update: auto): marketplace '{mk}' already "
+                                     f"auto-updates ({au['source']}); nothing to change" + tail)
+        else:
+            plan["proposals"].append(f"USER SCOPE (proposal only): plugin '{e['name']}' (update: auto) - "
+                                     f"set autoUpdate: true for marketplace '{mk}' (now off: {au['source']}) "
+                                     "on its extraKnownMarketplaces entry in the user settings.json, or "
+                                     "/plugin > Marketplaces > Enable auto-update; it applies to EVERY "
+                                     f"plugin from '{mk}'. known_marketplaces.json is never written" + tail)
     user_ep = _dict(m["settings"]["user"].get("enabledPlugins"))
     for pname, pl in m["plugins"].items():
         if pl["enabled"] and user_ep.get(pname) is True and pname not in d["plugins"] \
@@ -1278,13 +1432,78 @@ def _cand_label(c: dict) -> str:
     return f"{c['name']} ({c['desc_chars']} chars)"
 
 
-def popup_questions(removal: dict, sync_question: bool = False) -> dict:
+SYNC_KEEP, SYNC_OFF, SYNC_ON = "Keep as is", "Turn off", "Turn back on"
+_SYNC_META = {"syncClaudeAiSkills": ("skills", "Skill sync", "skills/.trash",
+                                     "hide single synced skills with skillOverrides off"),
+              "syncClaudeAiPlugins": ("plugins", "Plugin sync", "plugins/.trash",
+                                      "hide single synced plugins with enabledPlugins <name>@synced: false")}
+
+
+def sync_state(m: dict) -> dict:
+    """Current state of each claude.ai sync switch, as the popup shows it."""
+    out = {}
+    for key, (kind, header, _t, _l) in _SYNC_META.items():
+        u = m["settings"]["user"].get(key) is False
+        lo = m["settings"]["local"].get(key) is False
+        n = (sum(1 for s in m["skills"] if s["scope"] == "synced") if kind == "skills"
+             else sum(1 for p in m["plugins"].values() if p.get("synced")))
+        state = ("off at user scope (every repo)" + (" and in this checkout" if lo else "") if u
+                 else "off in this checkout (settings.local.json)" if lo else "on (unset)")
+        out[key] = {"kind": kind, "header": header, "on": not (u or lo), "user_false": u,
+                    "local_false": lo, "synced_on_disk": n, "state": state}
+    return out
+
+
+def sync_questions(state: dict) -> "tuple[list, dict]":
+    """One single-select question per claude.ai sync switch (WO-072): the current state, three
+    answers (keep / turn off / turn back on), nothing pre-selected, and the documented consequences.
+    -> (questions, flags): flags maps header -> answer label -> the `sync` flag that carries it.
+    'Keep as is' and no answer map to no flag, so they write nothing."""
+    qs, flags = [], {}
+    for key, (kind, header, trash, lever) in _SYNC_META.items():
+        s = state[key]
+        q = (f"claude.ai {kind} sync is {s['state']}; {s['synced_on_disk']} synced {kind} on disk. "
+             f"Keep as is, turn off, or turn back on? Last resort only: first {lever} (the removal "
+             f"questions). Off is all-or-none, written to settings.local.json (this checkout only): every "
+             f"synced {kind[:-1]} stops loading and stops updating here; a user- or managed-scope false "
+             f"also moves the copies to ~/.claude/{trash}/ at the next launch.")
+        off = (f"Already off in this checkout: writes nothing." if s["local_false"] else
+               f"Writes {key}: false to settings.local.json (this checkout only).")
+        on = (f"Removes {key}: false from settings.local.json; never writes true (true counts as unset)."
+              if s["local_false"] else "Nothing local to remove: writes nothing.")
+        if s["user_false"]:
+            on += " The user-scope false stays: user settings are only ever proposed."
+        qs.append({"question": q, "header": header, "multiSelect": False, "options": [
+            _opt(SYNC_KEEP, f"Writes nothing. Current: {s['state']}."),
+            _opt(SYNC_OFF, off), _opt(SYNC_ON, on)]})
+        flags[header] = {SYNC_OFF: f"--accept-sync-{kind}", SYNC_ON: f"--restore-sync-{kind}"}
+    return qs, flags
+
+
+def resolve_sync_answers(answers: "dict | None") -> "tuple[set, set]":
+    """{header or key: answer label} -> (accept, restore) key sets. Anything else, including no
+    answer, 'Keep as is' or an unknown label, is neither: it writes nothing."""
+    accept, restore = set(), set()
+    for key, (_k, header, _t, _l) in _SYNC_META.items():
+        a = (answers or {}).get(header, (answers or {}).get(key))
+        if a == SYNC_OFF:
+            accept.add(key)
+        elif a == SYNC_ON:
+            restore.add(key)
+    return accept, restore
+
+
+def popup_questions(removal: dict, sync_question: bool = False, sync: "dict | None" = None) -> dict:
     """AskUserQuestion payload from `audit --json`'s `removal` block (WO-063). A plugin is ONE option
     carrying its skill count and reclaimed chars; options are filled in budget order; what does not
-    fit is STATED (count + chars), never dropped. Nothing is pre-selected. The claude.ai sync switch,
-    when asked, is its own single-select question."""
+    fit is STATED (count + chars), never dropped. Nothing is pre-selected. `sync` (audit's
+    `claude_ai_sync`) adds one keep / turn off / turn back on question per sync switch (WO-072); the
+    `popup` command always passes it. `sync_question` is the older single turn-off question."""
     cands = list(removal.get("candidates") or [])
-    room = POPUP_MAX_Q - (1 if sync_question else 0)
+    sq, sync_flags = sync_questions(sync) if sync is not None else ([], {})
+    if sq:
+        sync_question = False
+    room = POPUP_MAX_Q - len(sq) - (1 if sync_question else 0)
     shown, rest = cands[:room * POPUP_MAX_OPT], cands[room * POPUP_MAX_OPT:]
     qs = []
     if shown:
@@ -1310,11 +1529,13 @@ def popup_questions(removal: dict, sync_question: bool = False) -> dict:
                        _opt("Leave sync on", "Writes nothing.", None),
                        _opt("Turn sync off", "Writes syncClaudeAiSkills false here.",
                             "syncClaudeAiSkills")]})
+    qs += sq
     remainder = {"count": len(rest), "chars": sum(c["desc_chars"] for c in rest)}
     remainder["text"] = (f"{remainder['count']} more candidate(s) holding {remainder['chars']} chars are "
                          "not shown; a second popup can be offered." if rest else "")
     return {"questions": qs, "remainder": remainder, "claude_only": True,
             "label_to_name": {_cand_label(c): c["name"] for c in shown},
+            "sync_flags": sync_flags,
             "note": "AskUserQuestion is a Claude Code tool; elsewhere present these options as a "
                     "numbered text list and take the answer in text."}
 
@@ -1401,6 +1622,8 @@ def apply_sync(root: Path, home: Path, ch: Path, cj_path: Path, plan: dict) -> d
             perms["allow"] = list(perms.get("allow") or []) + loc["permissions_allow_add"]
             obj["permissions"] = perms
         obj.update(loc["scalars"])
+        for k in loc.get("scalars_drop") or []:
+            obj.pop(k, None)
         _write_json(lp, obj)
         res["wrote"].append(str(lp))
     # 3. ~/.claude.json  projects[<root>].disabledMcpServers  (optimistic concurrency)
@@ -1495,6 +1718,10 @@ def main(argv: "list | None" = None) -> int:
                     help="sync: the operator ACCEPTED turning claude.ai skill sync off; without it nothing is written")
     ap.add_argument("--accept-sync-plugins", action="store_true",
                     help="sync: the operator ACCEPTED turning claude.ai plugin sync off; without it nothing is written")
+    ap.add_argument("--restore-sync-skills", action="store_true",
+                    help="sync: the operator chose to turn claude.ai skill sync back on (removes the local false)")
+    ap.add_argument("--restore-sync-plugins", action="store_true",
+                    help="sync: the operator chose to turn claude.ai plugin sync back on (removes the local false)")
     ap.add_argument("--measure", action="store_true",
                     help="offer: first print the read-only budget summary (the upgrade uses this)")
     a = ap.parse_args(argv)
@@ -1544,10 +1771,8 @@ def main(argv: "list | None" = None) -> int:
         return 0
     if a.cmd == "popup":
         r = audit(root, home, ch, cj, a.context_window, a.listing_chars)
-        decl, _e = load_declaration(home)
-        sq = bool(decl) and not r["claude_ai"]["sync_skills_off"] \
-            and _dict(decl.get("claude_ai")).get("sync_skills") is False
-        print(json.dumps(popup_questions(r["removal"], sq), indent=2, ensure_ascii=False))
+        print(json.dumps(popup_questions(r["removal"], sync=r["claude_ai_sync"]), indent=2,
+                         ensure_ascii=False))
         return 0
     confirmed = None
     if a.confirm:
@@ -1558,7 +1783,9 @@ def main(argv: "list | None" = None) -> int:
         print(f"harness sync: {confirmed['verdict']}")
     plan = plan_sync(root, home, ch, cj, confirmed,
                      ({"syncClaudeAiSkills"} if a.accept_sync_skills else set())
-                     | ({"syncClaudeAiPlugins"} if a.accept_sync_plugins else set()))
+                     | ({"syncClaudeAiPlugins"} if a.accept_sync_plugins else set()),
+                     ({"syncClaudeAiSkills"} if a.restore_sync_skills else set())
+                     | ({"syncClaudeAiPlugins"} if a.restore_sync_plugins else set()))
     if plan["refused"] and plan["error"]:
         emit(plan, render_plan(plan))
         return 2

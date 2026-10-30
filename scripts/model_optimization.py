@@ -253,13 +253,35 @@ def report_gitignore(root, status, pattern):
           f"(the baseline is per session, so the record stays out of commits)", file=sys.stderr)
 
 
+# The levels the client documents for `effort.level` and `$CLAUDE_EFFORT`. Anything else is absent.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+# `harness-env` is evidence the ENGINE read from `$CLAUDE_EFFORT` itself: distinct from the
+# operator's report and from a hook payload, and valid for effort only (there is no CLAUDE_MODEL).
+ENV_SOURCE = "harness-env"
+
+
+def harness_env_effort(environ=None):
+    """The session effort the client exports as `$CLAUDE_EFFORT`, or None.
+
+    Documented levels only. An unset, empty, unknown or garbled value is ABSENT, never a guess,
+    and the variable is re-read on every call, so an `/effort` change shows at the next check
+    rather than instantly.
+    """
+    value = (os.environ if environ is None else environ).get("CLAUDE_EFFORT")
+    if not isinstance(value, str):
+        return None
+    value = value.strip().lower()
+    return value if value in EFFORT_LEVELS else None
+
+
 def observation(model=None, effort=None, model_source=None, effort_source=None):
     result = {}
     for key, value, source in (("model", model, model_source), ("effort", effort, effort_source)):
         require(value is None or isinstance(value, str) and bool(value.strip()), f"Invalid observed {key}")
         require(value is None or value.strip().lower() != "unknown", f"Omit unknown {key}; do not supply a sentinel")
+        allowed = ("harness", "operator") + ((ENV_SOURCE,) if key == "effort" else ())
         require((value is None and source is None) or
-                (value is not None and source in ("harness", "operator")),
+                (value is not None and source in allowed),
                 f"Known {key} requires harness/operator source; unknown requires no source")
         result[key] = {"value": value, "source": source}
     return result
@@ -395,6 +417,11 @@ def routing_fingerprints(path):
         settings = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, TypeError):
         return None
+    return routing_digests(settings)
+
+
+def routing_digests(settings):
+    """Per-component digests of a settings document already parsed; None if not an object."""
     if not isinstance(settings, dict):
         return None
     digests = {}
@@ -410,6 +437,71 @@ def settings_may_carry_routing(file_path):
     if not isinstance(file_path, str) or not file_path.strip():
         return False
     return Path(file_path).name.lower() in ROUTING_SETTINGS_FILENAMES
+
+
+def fingerprint_key(path):
+    """One spelling per settings file, so an announced path and a seeded path meet. Absolute
+    and case-normalized, never symlink-resolved: the client names the file it watched."""
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def user_settings_dir():
+    """The operator's own settings directory: the client's config-dir override, else home."""
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    if configured and configured.strip():
+        return Path(configured)
+    return Path.home() / ".claude"
+
+
+def baseline_settings_paths(root):
+    """Every settings file that can carry a route for a session in `root`: user, project, local."""
+    root = Path(root)
+    return (user_settings_dir() / "settings.json",
+            root / ".claude" / "settings.json",
+            root / ".claude" / "settings.local.json")
+
+
+def seed_fingerprints(session, root):
+    """Record the routing digests of every route-carrying settings file at baseline time.
+
+    WHY. Without a digest taken when the baseline was established, the first announced edit to
+    each file has nothing to be compared against and has to invalidate whatever moved - so an
+    edit that only touched permissions, hooks or skill toggles cost the operator a re-report.
+    With one, the first edit is judged like every later one: on what actually moved.
+
+    Three cases, each chosen so a miss is impossible rather than merely unlikely:
+      * ABSENT now - recorded as a document with no routing keys. A file created later with
+        none is then not a change; one created WITH routing keys is.
+      * UNREADABLE now - recorded as nothing, so the first announcement about it still
+        invalidates. A baseline cannot vouch for a file it could not read.
+      * READABLE - its digests, overwriting any earlier ones: the baseline is being
+        (re-)established now, so now is the reference.
+    Digests only, as everywhere in this section: nothing here can say what a value is.
+    """
+    updated = copy.deepcopy(session)
+    prints = dict(updated.get("config_fingerprints") or {})
+    for path in baseline_settings_paths(root):
+        key = fingerprint_key(path)
+        digests = routing_digests({}) if not path.exists() else routing_fingerprints(path)
+        if digests is None:
+            prints.pop(key, None)
+        else:
+            prints[key] = digests
+    updated["config_fingerprints"] = prints
+    return validate_session(updated)
+
+
+def has_no_effort_levels(spec):
+    """Whether a catalog entry records a model with no effort levels at all.
+
+    `default` alone is how a catalog says it: discovery fills `["default"]` for a model that
+    lists no efforts. Per the client's model configuration page, models outside its effort
+    table "do not support effort", so for such a model there is no effort to choose, control
+    or evidence - and a route that names none is complete, not half-routed. A catalog that
+    lists `default` BESIDE named levels is a different case: there an effort exists and
+    leaving it at default still needs native evidence.
+    """
+    return isinstance(spec, dict) and spec.get("efforts") == ["default"]
 
 
 def announced_session_effort(payload):
@@ -489,14 +581,18 @@ def apply_event(home, payload):
         # The CLOSING half: a client that hands over the session's own effort re-verifies that
         # component with no operator question at all. It only ever CLEARS staleness, so it is
         # not a second source of truth competing with the operator's report.
-        level = announced_session_effort(payload)
+        level, source = announced_session_effort(payload), "harness"
+        if level is None and "effort" not in payload:
+            # No effort key at all: the hook process's own `$CLAUDE_EFFORT` is the same level.
+            # A key that IS present but malformed stays ambiguous, so it is never overruled here.
+            level, source = harness_env_effort(), ENV_SOURCE
         if level is None:
             return "ignored", "no session effort in the one accepted shape; the component stands"
         if not (session.get("stale") or {}).get("effort"):
             return "ignored", f"effort is not stale; the client reports {level}"
         save_json(home, SESSION_FILENAME,
-                  reestablish(session, effort=level, effort_source="harness"))
-        return "re-verified", f"effort={level}, from harness evidence the client supplied"
+                  reestablish(session, effort=level, effort_source=source))
+        return "re-verified", f"effort={level}, from {source} evidence the client supplied"
 
     if event == "PostModelSwitch":
         # Switching model can also change the effort the lead runs at, because an effort pin is
@@ -512,21 +608,26 @@ def apply_event(home, payload):
         if not settings_may_carry_routing(file_path):
             return "ignored", f"{file_path!r} cannot carry a routing pin"
         digests = routing_fingerprints(file_path)
-        previous = (session.get("config_fingerprints") or {}).get(str(file_path))
+        key = fingerprint_key(file_path)
+        known = session.get("config_fingerprints") or {}
+        # A record written before keys were normalized holds the announced spelling.
+        previous = known.get(key, known.get(str(file_path)))
         if digests is None:
             # Unreadable: a change was announced and cannot be ruled out. Refuse to guess.
             moved = ("model", "effort")
         elif not isinstance(previous, dict):
-            # First announcement for this file this session: no earlier digest to compare
-            # against, so nothing rules the change out. Costs ONE invalidation per settings
-            # file per session; every later edit to it is then judged on what actually moved.
+            # No digest for this file: it was not one the baseline seeds (user, project and
+            # local settings are seeded when the baseline is established - see
+            # `seed_fingerprints`), or it was unreadable then. Nothing rules the change out,
+            # so this costs one invalidation; every later edit is judged on what moved.
             moved = ("model", "effort")
         else:
             moved = tuple(c for c in ("model", "effort") if previous.get(c) != digests.get(c))
         updated = copy.deepcopy(session)
         if digests is not None:
             prints = dict(updated.get("config_fingerprints") or {})
-            prints[str(file_path)] = digests
+            prints.pop(str(file_path), None)
+            prints[key] = digests
             updated["config_fingerprints"] = prints
         name = Path(str(file_path)).name
         if not moved:
@@ -690,12 +791,14 @@ def hook_command(stream):
     return 0
 
 
-def initialize_session(home, config, harness, session_id, initial, new_session=False):
+def initialize_session(home, config, harness, session_id, initial, new_session=False, root=None):
     validate_config(config)
     if not config["enabled"]:
         return {"status": "disabled", "reason": "Optimization is off; no session state accessed"}
     proposed = validate_session({"schema_version": 1, "session_id": session_id, "harness": harness,
                                  "initial": initial, "current": copy.deepcopy(initial)})
+    if root is not None:
+        proposed = seed_fingerprints(proposed, root)
     previous = load_session(home)  # Even explicit replacement must not hide corrupt state.
     if previous is not None:
         same = (previous["session_id"], previous["harness"]) == (session_id, harness)
@@ -790,22 +893,31 @@ def select(config, harness, tier="standard", lead=None, lead_effort=None, runtim
         return stop("Full-context fork inherits the lead; use a fresh worker for this route")
     if runtime.get("overrides_checked") is not True or context is None:
         return stop("Native precedence/context not established; recommendation only", "recommendation-only")
+    # A model with no effort levels has no effort to control or evidence: the route is the
+    # model alone, and demanding effort evidence for it would bump every such light route up a
+    # tier. Only a catalog that lists `default` and nothing else qualifies.
+    effortless = has_no_effort_levels(mapping["catalog"]["models"][choice["model"]])
     if context != "fork":
         model_fixed = override and override.get("model") == choice["model"]
         effort_fixed = override and override.get("effort") == choice["effort"]
         if not (runtime.get("model_control") is True or model_fixed):
             return stop("Model control unavailable or unverified; recommendation only", "recommendation-only")
-        if choice["effort"] == "default" and not effort_fixed:
-            return stop("Default effort is not established by native evidence; recommendation only", "recommendation-only")
-        if not (runtime.get("effort_control") is True or effort_fixed):
-            return stop("Effort control unavailable or unverified; recommendation only", "recommendation-only")
+        if not effortless:
+            if choice["effort"] == "default" and not effort_fixed:
+                return stop("Default effort is not established by native evidence; recommendation only", "recommendation-only")
+            if not (runtime.get("effort_control") is True or effort_fixed):
+                return stop("Effort control unavailable or unverified; recommendation only", "recommendation-only")
+    if effortless:
+        return stop("Use the native dispatcher with the model only; this model has no effort "
+                    "levels, so pass no effort. Confirm actual execution separately", "dispatch-ready")
     return stop("Use the native dispatcher; confirm actual execution separately", "dispatch-ready")
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("status", "enable", "disable", "skip", "configure",
-                                            "session-init", "reaffirm", "select", "catalog", "hook"))
+                                            "session-init", "reaffirm", "select", "catalog", "hook",
+                                            "observe"))
     parser.add_argument("root", nargs="?", default=".")
     parser.add_argument("--home", choices=("auto",) + HOMES, default="auto")
     parser.add_argument("--harness", choices=HARNESSES)
@@ -824,6 +936,11 @@ def main(argv=None):
     # command string serves every repo and every checkout.
     if args.command == "hook":
         return hook_command(sys.stdin)
+    # Read-only and needs no repo, config or baseline: what the client itself says right now.
+    if args.command == "observe":
+        level = harness_env_effort()
+        print(json.dumps({"effort": level or "unknown", "source": ENV_SOURCE if level else None}))
+        return 0
     try:
         if args.command == "catalog":
             require(args.file, "catalog requires --file with complete Codex model/list response page(s)")
@@ -854,13 +971,21 @@ def main(argv=None):
                 save_config(home, config)
                 output = config
             elif args.command == "session-init":
-                initial = (observation(args.lead, args.lead_effort, args.model_source, args.effort_source)
+                lead_effort, effort_source = args.lead_effort, args.effort_source
+                if lead_effort is None and harness_env_effort():
+                    lead_effort, effort_source = harness_env_effort(), ENV_SOURCE
+                initial = (observation(args.lead, lead_effort, args.model_source, effort_source)
                            if config["enabled"] else None)
-                output = initialize_session(home, config, args.harness, args.session, initial, args.new_session)
+                output = initialize_session(home, config, args.harness, args.session, initial,
+                                            args.new_session, root=root)
             elif args.command == "reaffirm":
                 require(args.harness, "reaffirm requires --harness")
-                require(args.lead is not None or args.lead_effort is not None,
-                        "reaffirm requires --lead and/or --lead-effort with its source")
+                lead_effort, effort_source = args.lead_effort, args.effort_source
+                if lead_effort is None and harness_env_effort():
+                    lead_effort, effort_source = harness_env_effort(), ENV_SOURCE
+                require(args.lead is not None or lead_effort is not None,
+                        "reaffirm requires --lead and/or --lead-effort with its source "
+                        "(or a CLAUDE_EFFORT the client exports)")
                 session = load_session(home) if config["enabled"] else None
                 if not config["enabled"]:
                     output = {"status": "disabled",
@@ -874,8 +999,9 @@ def main(argv=None):
                               "reason": "Session identity/harness mismatch; resume its identity "
                                         "or explicitly initialize a new session"}
                 else:
-                    session = reestablish(session, args.lead, args.lead_effort,
-                                          args.model_source, args.effort_source)
+                    session = seed_fingerprints(
+                        reestablish(session, args.lead, lead_effort,
+                                    args.model_source, effort_source), root)
                     save_json(home, SESSION_FILENAME, session)
                     output = {"status": "session-ready", "session": session}
             elif args.command == "select":

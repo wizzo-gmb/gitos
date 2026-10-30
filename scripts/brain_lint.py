@@ -48,6 +48,15 @@ RECORD_DATED_PTYPES = ("decisions",)
 FM_TRUE = {"true", "yes", "1"}
 WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 WORKORDER = re.compile(r"\b(?:WO-\d+|bug_\d{2,})\b", re.IGNORECASE)
+# Upgrade ADR (references/upgrade.md step 6): `decisions/engine-upgrade-vN.md`. It cites the
+# ENGINE's work orders, which are not this repo's ids, so the id count is skipped for it alone.
+# The page name is the narrowest marker the procedure already mandates; a plain decision page
+# restating this repo's ids is still flagged.
+UPGRADE_ADR = re.compile(r"^engine-upgrade-v\d+$")
+
+
+def is_upgrade_adr(p) -> bool:
+    return p.ptype == "decisions" and UPGRADE_ADR.match(p.slug) is not None
 FENCE = re.compile(r"^\s*```")
 STOPWORDS = {"the", "a", "an", "of", "and", "or", "to", "for", "in", "on", "is",
              "page", "the-", "with", "this", "that", "by"}
@@ -176,7 +185,8 @@ def lint(brain_dir: Path, stale_days: int, today: date) -> dict:
                 stale.append({"page": str(p.path), "updated": p.updated.isoformat(),
                               "age_days": (today - p.updated).days})
         # cross-layer: restates a work-order (in body, not the legit frontmatter field)
-        wo_hits = len(WORKORDER.findall(p.body))
+        engine_adr = p.ptype == "decisions" and UPGRADE_ADR.match(p.slug) is not None
+        wo_hits = 0 if engine_adr else len(WORKORDER.findall(p.body))
         if wo_hits >= 2 and not p.fm_work_order:
             cross_layer.append({"page": str(p.path), "reason": f"restates work-order(s) x{wo_hits}"})
         elif wo_hits >= 3:
@@ -199,6 +209,10 @@ def lint(brain_dir: Path, stale_days: int, today: date) -> dict:
         for j in range(i + 1, len(pages)):
             a, b = pages[i], pages[j]
             if a.slug == b.slug:
+                continue
+            # Two upgrade records are a SERIES, not a redundancy: each names the version it starts
+            # from, which is the one its predecessor ended at, so their titles share by design.
+            if is_upgrade_adr(a) and is_upgrade_adr(b):
                 continue
             tj = jaccard(title_tokens(a.title), title_tokens(b.title))
             shared = len(a.wikilinks & b.wikilinks)

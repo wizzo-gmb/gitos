@@ -18,6 +18,43 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v40 — 2026-10-30
+breaking: no
+
+**What the federated engines found, fixed.** Seven work-orders, two of them filed by a sibling gitos
+through federation. The rest came from downstream reports, each checked against the code and, where
+it touched Claude Code behaviour, against the Claude Code docs.
+
+- **The orchestrator knows its own effort** (WO-071). Claude Code documents `$CLAUDE_EFFORT`, and the
+  engine now reads it as harness evidence: `model_optimization.py observe`, `session-init`,
+  `reaffirm` and the stale-effort path all use it. The operator is asked only when it cannot be read,
+  and then through the interactive question UI, never in prose. *Not claimed:* that the model is
+  observed (there is no `$CLAUDE_MODEL`), or that an `/effort` change is seen before the next check.
+- **Unrelated settings edits no longer reset effort** (WO-066). The baseline now records each
+  settings file's routing digest, so a first edit that only touches permissions, hooks or
+  `skillOverrides` is judged by what actually moved.
+- **The light tier can dispatch** (WO-066). A model whose catalog lists no effort levels routes with
+  no effort, and the floor accepts that for that model only. `dispatch_guard.py record` takes the
+  repo before or after `--select`.
+- **Confirmed removals apply in a repo whose `harness.json` is `adopted: false`** (WO-067, also
+  filed by a sibling through federation). That is the starter scaffold lays, so an upgrade could
+  create the file in one step and be refused by it in the next.
+- **Cloud sync is a popup in both directions** (WO-072). Every upgrade asks about claude.ai skill
+  sync and plugin sync, showing the current state, with keep / turn off / turn back on. Nothing is
+  pre-selected, and no answer writes nothing. One synced plugin can be hidden per repo with
+  `<name>@synced: false` while sync stays on.
+- **Plugin update channels act on documented levers only** (WO-072). `auto` proposes a marketplace's
+  `autoUpdate` and never writes it. `pinned` on a marketplace that auto-updates is a drift conflict
+  that names its consequence: turning that marketplace off freezes every plugin from it. The audit
+  reports when an environment variable turns plugin auto-update off machine-wide. *Not claimed:*
+  per-plugin version pinning. The docs type `enabledPlugins` as Boolean only.
+- **brain_lint stops misreading upgrade records** (WO-068, WO-070). An `engine-upgrade-vN` decision
+  may cite engine work orders, and a series of them is not a set of near-duplicates. A scaffold
+  re-run on an existing repo reports what it refreshed instead of printing inception steps.
+- **`federation intake` accepts the 8-character id its own listing shows** (WO-069).
+
+---
+
 ## v39 — 2026-10-29
 breaking: no
 

@@ -28,6 +28,8 @@ TYPED, not that it matches the tier the work-order derives. So:
 
   * THE FLOOR, always on, no configuration required: both components must be set. This is the
     measured defect - a dispatch with a model and no effort key at all, and one with neither.
+    One exception, read from the repo's mapping: a model its catalog records as having no
+    effort levels, routed with effort `default`, is complete with the model alone.
   * THE TIER BINDING, on only where an operator DELIBERATELY ASKED for it (see BINDING_KEY) AND
     the repo has a tier to bind to (optimization enabled): the pair must match a routing
     RECEIPT that `select` authorized. A receipt is single-use and short-lived, because a stale
@@ -217,6 +219,34 @@ def same_model(requested, recorded):
     return False
 
 
+def effort_not_applicable(model, root, engine):
+    """Whether a dispatch of `model` with no effort is a complete route in this repo.
+
+    True only when the repo's Claude mapping routes a choice to this model with effort
+    `default` AND its catalog records the model as having no effort levels at all. The
+    client's model configuration page lists the models that support effort and says models
+    not listed "do not support effort"; for such a model there is no effort to pass, so the
+    floor's "both components" cannot be met by a correct route. Everything else - no engine,
+    no home, no mapping, another model, a model that has levels - keeps the floor's refusal.
+    """
+    if engine is None or not isinstance(root, str) or not Path(root).is_dir():
+        return False
+    try:
+        home = engine.home_path(root)
+        if not home.is_dir():
+            return False
+        mapping = engine.load_config(home)["harnesses"].get("claude")
+        if not isinstance(mapping, dict):
+            return False
+        models = mapping["catalog"]["models"]
+        return any(choice["effort"] == "default" and
+                   engine.has_no_effort_levels(models.get(choice["model"])) and
+                   same_model(model, choice["model"])
+                   for choice in mapping["choices"].values())
+    except Exception:
+        return False
+
+
 def decide(payload, engine=None, now=None):
     """The one decision. -> a deny document, or None meaning "no opinion, proceed".
 
@@ -244,6 +274,14 @@ def decide(payload, engine=None, now=None):
     # requested effort appears in the tool input only when one was set, so a half-routed
     # dispatch is distinguishable from a routed one rather than being guessed at from a value.
     missing = [key for key in ("model", "effort") if not routed(key)]
+    # The one exception: a model with no effort levels, routed so by this repo's mapping. The
+    # engine is loaded only for this case, so the floor stays configuration-free otherwise.
+    effortless = False
+    if missing == ["effort"]:
+        engine = _engine() if engine is None else engine
+        effortless = effort_not_applicable(tool_input["model"].strip(), payload.get("cwd"), engine)
+        if effortless:
+            missing = []
     if missing:
         named = " and ".join(f"`{key}`" for key in missing)
         return deny(f"This dispatch sets no {named}, so no task tier was chosen for it - it "
@@ -279,7 +317,8 @@ def decide(payload, engine=None, now=None):
         return deny(f"This dispatch is not authorized: {stale}. Re-run `select` for THIS "
                     f"dispatch and record the decision again; a receipt that outlived its "
                     f"dispatch would authorize every later one, including a mis-tiered one.")
-    pair = (tool_input.get("model").strip(), tool_input.get("effort").strip())
+    pair = (tool_input.get("model").strip(),
+            "default" if effortless else tool_input.get("effort").strip())
     if not same_model(pair[0], value["model"]) or pair[1] != value["effort"]:
         return deny(f"This dispatch requests {pair[0]}/{pair[1]}, but the recorded route for "
                     f"tier `{value['tier']}` is {value['model']}/{value['effort']}. Dispatch "
@@ -395,7 +434,9 @@ def main(argv=None):
     parser.add_argument("--uses", type=int, default=1,
                         help="dispatches this receipt authorizes (default 1; receipts are "
                              "single-use by design)")
-    args = parser.parse_args(argv)
+    # Intermixed, so the repo may come before or after `--select`: plain parsing binds the
+    # optional positional at the first gap and rejects a root that follows an option.
+    args = parser.parse_intermixed_args(argv)
 
     if args.command == "hook":
         # The repo comes from the announcement, not from argv, so one committed command string

@@ -82,7 +82,8 @@ If a memory pointer named the default role as you, this is where you resume.
 `<home>/model-optimization.json` only if present. Absent/disabled → no optimization
 helper, discovery, reporting, or learning. Enabled → initialize/resume its explicit
 session identity and observed model/effort baseline per
-`references/model-optimization.md`, then use that policy for dispatch and normal closeout. Malformed state
+`references/model-optimization.md` (read your own effort first: `observe` or
+`echo $CLAUDE_EFFORT`; ask the operator only as a fallback), then use that policy for dispatch and normal closeout. Malformed state
 does not enable routing; surface the configuration error without replacing it.
 
 ## The work loop
@@ -198,12 +199,13 @@ INDEX honest about where each item sits.
 
 ## Confirming skill removals (the harness popup, WO-063)
 
-The audit proposes; the operator disposes. When `audit --json` has vouched `removal.candidates`
-(upgrade step 4h), run `harness.py popup` and pass its `questions` to `AskUserQuestion` as-is: a
-plugin is one option with its skill count, options are ranked by budget reclaimed, a 1-4 question /
-2-4 option limit means at most 16 are shown (12 when the claude.ai sync question is asked), and
-`remainder.text` is read out so the operator knows what was not shown. A second popup is offered,
-never forced. Rules:
+The audit proposes; the operator disposes. On every upgrade (step 4h), run `harness.py popup` and
+pass its `questions` to `AskUserQuestion` as-is. It always ends with the two claude.ai sync
+questions. Removal batches come first, and only when `audit --json` has vouched
+`removal.candidates`: a plugin is one option with its skill count, and options are ranked by budget
+reclaimed. The 1-4 question / 2-4 option limit, less the two sync questions, means at most 8 are
+shown. Read out `remainder.text` so the operator knows what was not shown. A second popup is
+offered, never forced. Rules:
 
 - The answer is authoritative both ways: unticked is kept. Nothing is pre-selected and no answer
   (or a timeout) is not consent. Never apply on silence.
@@ -214,7 +216,20 @@ never forced. Rules:
   accepted that sync question; without it nothing is written, so no answer means declined. Say whether the confirmed set gets the
   listing within budget (`sync` prints the verdict) and, if not, name the lever, usually a whole
   plugin.
-- Synced claude.ai skills are ordinary candidates (`skillOverrides: off`, sync stays on).
+- Synced claude.ai skills are ordinary candidates (`skillOverrides: off`, sync stays on). Synced
+  plugins are candidates as `<name>@synced` (`enabledPlugins` `false`, sync stays on).
+- **Sync questions (WO-072).** Each sync question shows the current state and offers Keep as is /
+  Turn off / Turn back on, with nothing pre-selected. Map the answer through `sync_flags`: Turn off
+  is `--accept-sync-skills`/`--accept-sync-plugins` (writes exactly `false` to
+  `settings.local.json`), and Turn back on is `--restore-sync-skills`/`--restore-sync-plugins`
+  (removes that `false` and never writes `true`). Keep as is, Other, or no answer passes no flag and
+  writes nothing. The switch is the last resort: say so, and point to hiding single synced items
+  first.
+- **Plugin update channels.** `update: auto` gives a user-scope proposal (`autoUpdate: true` on the
+  marketplace) that you relay and never apply. `update: pinned` on an auto-updating marketplace is a
+  drift conflict: put both sides to the operator (turning the marketplace's auto-update off
+  freezes every plugin from it, or change the entry's channel) and never pick one. Never write
+  `known_marketplaces.json`.
 - **Claude-only.** `AskUserQuestion` exists in Claude Code, not on every harness (for example
   `codex`). There, list the same candidates as a numbered text list and take the answer in text,
   under the same rules. Do not describe the popup as universal.
@@ -255,7 +270,11 @@ When you delegate implementation to agents:
 
 - **When model optimization is enabled**, consult the repo's applicable routing
   guidance, refresh the actual lead's current model/effort evidence (unknown stays
-  unknown), compare it with the session baseline, and validate the worker pair within the configured
+  unknown; **read effort yourself first** with `model_optimization.py observe` or
+  `echo $CLAUDE_EFFORT`, take the model from the system prompt's exact ID or a recorded
+  `PostModelSwitch`, and only if effort is unavailable ask with the interactive question UI,
+  `AskUserQuestion` offering the levels, never in prose; a numbered list where there is no
+  such UI; an `/effort` change shows at the next check, not instantly), compare it with the session baseline, and validate the worker pair within the configured
   ceiling, then use the native dispatcher. Include the compact requested/effective
   model entry in the WO; unknown execution settings stay unknown. The policy's SSOT
   is `references/model-optimization.md`; it leaves the scope and acceptance gates intact.
