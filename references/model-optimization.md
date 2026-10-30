@@ -114,6 +114,72 @@ unknown or request an operator report; do not claim automatic change detection.
 [Codex app-server](https://learn.chatgpt.com/docs/app-server),
 [Claude model and effort settings](https://code.claude.com/docs/en/model-config).
 
+**A value the client announces is harness evidence; an unannounced change leaves
+the baseline unknown.** The limits above are about what an agent may *read*. They
+do not forbid the client from *telling* the engine something, and the two cases
+divide cleanly:
+
+- **The announcement carries the value.** Record it with provenance `harness` — it
+  came from the client, not from an agent's reading of a file.
+- **The announcement carries only the fact of a change.** **Invalidate** the
+  affected component to explicit unknown. `select` then refuses, so the next
+  dispatch asks the operator for one value instead of proceeding on a stale one.
+
+The second branch is the common one, and it is why the baseline needs no
+inference. Keeping up means knowing when you no longer know: a mechanism that
+cannot produce the new value is still correct, while one that keeps serving the
+old value is not. A refresh that writes a *wrong* pair is worse than the
+staleness it replaces, so wherever the evidence is thin, invalidate.
+
+**Currency, in Claude.** The engine registers a hook on the client's
+configuration-change, model-switch and dispatch events in the repo's committed
+`.claude/settings.json`; `scaffold` lays it and `enable` back-fills it for a repo
+that predates the seam. It is inert while optimization is off. On an announced
+change the affected component drops to explicit unknown and `select` refuses with
+a reason naming it. Re-establish from evidence, never from memory:
+
+```text
+python <skill>/scripts/model_optimization.py reaffirm <repo> --harness claude --session session-a --lead lead-model --model-source operator
+python <skill>/scripts/model_optimization.py reaffirm <repo> --harness claude --session session-a --lead-effort high --effort-source operator
+```
+
+`reaffirm` touches only the components it is given and never the original
+baseline, so re-establishing one component does not bless the other. An
+invalidated component cannot hold a value: the record is rejected if it does.
+
+Three properties of this are worth stating, because each one bounds a claim:
+
+- **Precision.** A configuration announcement names the file that moved. Only a
+  file that could carry a routing pin is considered, and only the part of it that
+  could move each component. Reading that file to decide *whether* to invalidate
+  is not the banned shortcut — the ban is on treating a saved setting as evidence
+  of the active pair, and an invalidation claims nothing about any value. The
+  comparison is over digests, which can answer "did this move?" and cannot answer
+  "to what?". The first announcement about a given file in a session has no
+  earlier digest to compare against, so it invalidates by design.
+- **Effort can close the loop; model cannot.** A dispatch announcement carries the
+  **session's own effort** at the top level, distinct from the effort the caller
+  requested for that dispatch, so an invalidated effort is re-verified on the next
+  dispatch as `harness` evidence with no operator question. **No announcement
+  carries the session's model.** That component is invalidate-only and comes back
+  solely from an operator report. Do not describe the pair as symmetric.
+- **Granularity, and what is still unproven.** The dispatch alias set is coarser
+  than a versioned operator control surface, where two versions of one alias can
+  carry different effort pins; a switch between them can leave the mapped alias
+  unchanged while changing the effort the lead runs at. Invalidation covers that
+  because it compares nothing against the mapping. Model-change detection through
+  a dedicated switch event is **registered but unproven** — a model change need
+  not write a settings file, so until that event is observed, treat an
+  unannounced model change as undetected rather than covered, and say so rather
+  than claiming either way.
+
+**The announcement is evidence of a change, never of a value.** Nothing in this
+path infers a pair from behaviour, reads a session transcript, or promotes a saved
+setting to evidence of the active pair. A hook that does not run leaves the
+baseline exactly as stale as it was before the hook existed; `select` refuses on
+what the hook *wrote*, not on whether it ran, so a silent hook is a missed
+invalidation rather than a false green.
+
 ## Mapping + ceiling
 
 Start workers at **standard**. Choose **light** for bounded judgment with reliable
@@ -197,6 +263,127 @@ routing. Fable or any other supported lead is permitted, never required. If more
 capability is needed, propose a lead change to the operator; never switch the main
 model automatically. No advisor, gateway, billing/fast/service-tier changes, or
 deliberately weak-model experiments are part of this feature.
+
+## The dispatch requirement
+
+The mapping above chooses a tier. For four days it was **advice addressed to a
+reader**: nothing ran at the moment a dispatch was composed, so dispatches went out
+at the ceiling by default and nothing could disagree afterwards. A sound rule with
+no mechanism at the boundary where it must hold is a wish. This section is the
+mechanism, and it binds the **dispatch tool** rather than any role — so it reaches
+the orchestrator, a dispatched worker, and an agent three levels down, identically.
+A requirement keyed to "the orchestrator dispatches" misses every sub-dispatch by
+construction, which is not a hypothetical: a worker executing a work-order about
+unverifiable assertions spawned a read-only sweep with neither component set.
+
+**Two halves, because neither covers the other's ground.**
+
+- **Declarative — the tier rides on the agent type.** A subagent definition in
+  `.claude/agents/` carries `model` and `effort` of its own, so a type whose tier is
+  derivable needs no cooperation from whatever spawns it. `scaffold` lays `Explore`
+  at **light** (a read-only sweep is exactly what the mapping sends there) and `Plan`
+  at **standard** (the opening default; no rule matches a design pass cleanly). It
+  lays **no** `general-purpose` definition — that type's tier depends on the task it
+  is handed, so a pair written there would be invented rather than derived. Existing
+  files are never overwritten.
+- **Refusing — the gate at the tool call.** `scripts/dispatch_guard.py` registers on
+  the client's tool-call event, matched to the dispatch tool, in the repo's
+  **committed** `.claude/settings.json`. It travels in git, so a fresh clone arrives
+  with the gate on and there is no per-system step. A dispatch that sets no `model`,
+  or no `effort`, or neither, is **denied with a reason**.
+
+**Precedence is honoured, not fought.** A per-invocation `model`/`effort` argument
+beats a definition's frontmatter, and `CLAUDE_CODE_EFFORT_LEVEL` beats it too. That
+is the right shape: the definition is the **floor** for a type, and an explicit route
+on one dispatch is the **override**.
+
+**The silent-typo hazard, and why presence is not the test.** Claude Code ignores an
+unrecognized frontmatter field without reporting an error, and the field names are
+case-sensitive. So a misspelled `effort` leaves the agent at the session's tier,
+which is **indistinguishable from no routing at all**. A check that the field is
+*present* therefore cannot go red on the failure that actually happens. Two things
+close the gap, and neither is "look at the file":
+
+- The selftest asserts the scaffolded definitions' frontmatter keys fall inside the
+  documented field vocabulary and their values inside the documented enums, compared
+  against a list written independently of the writer. That catches the typo.
+- Effect itself is read from the client, not from the file: run with `--debug` and
+  search `~/.claude/debug/<session-id>.txt` for `does not recognize or apply`
+  (requires a recent client). **Frontmatter alone never proves an effective pair** —
+  the same observation limit this policy already states for the lead.
+
+**Binding the tier, not merely a typed pair.** A `model`/`effort` pair proves a route
+was *written down*, not that it matches the tier the work-order derives. So where the
+repo **has** a tier to bind to — optimization enabled, with a configured mapping —
+the gate additionally requires a **routing receipt** that `select` authorized, and
+compares the dispatched pair against it:
+
+```text
+python <skill>/scripts/model_optimization.py select <repo> --harness claude --tier deep ... > decision.json
+python <skill>/scripts/dispatch_guard.py record <repo> --select decision.json
+python <skill>/scripts/dispatch_guard.py show <repo>
+```
+
+Only a `dispatch-ready` decision writes a receipt; `blocked` and
+`recommendation-only` are refusals and authorize nothing. A receipt is **single-use
+and short-lived**, and both properties are load-bearing rather than hygiene: a
+receipt that outlived its dispatch would sit on disk approving every later one,
+including the mis-tiered dispatch the gate exists to refuse — an assertion that
+cannot go red. It is spent on the dispatch it authorized and expires on a clock, and
+a receipt dated in the future is treated as a moved clock rather than as fresher
+evidence. It lives outside the repo, in the per-user temp area, because a
+single-use token for one dispatch is not repo content and must never travel in a
+commit. With optimization **off** the receipt layer does not apply at all; the floor
+still refuses an unrouted dispatch, because off has never meant *spend the ceiling by
+default*.
+
+**The gate never blocks by accident.** On this event a nonzero exit is itself a
+refused tool call, so the gate speaks **only** through its decision on stdout and
+always exits 0. A crash, an absent engine, an unreadable configuration, an
+unparseable announcement, or a call to any other tool all print nothing and the
+dispatch proceeds. It is registered **without** `async` and **without**
+`onFailure: "block"`: an async hook's decision fields are documented as having no
+effect, so an async gate silently stops being a gate, while `onFailure: "block"`
+would turn the gate's own breakage into a refusal. It also never answers `allow` —
+that would bypass the rest of the permission system, and "no opinion" is the honest
+answer to every question this gate was not built to answer. A **full-context fork**
+is exempt: it inherits the lead's pair and `select` refuses to route one, so
+demanding a route for a fork would redden on correct behaviour.
+
+**Layer 2 — machine-wide, documented and optional.** The repo-scoped layer above is
+the enforced default. An operator who wants every session covered installs the same
+gate into their own `~/.claude/settings.json`, once, by hand:
+
+```text
+python <skill>/scripts/dispatch_guard.py install-user
+```
+
+This runs only on that explicit name — it edits the operator's own settings, which is
+never a side effect of another command.
+
+**Three limits. Each one is stated because the mechanism would otherwise read as
+covering ground it does not.**
+
+- **LIMIT 1 — repo scope does not reach sessions outside this repo.** A committed
+  gate is invisible to any session in another checkout or another project. The
+  reported failures are sessions *in general*, so **layer 2 is the only layer that
+  covers that population** — not a nice-to-have on top of layer 1. Do not let the
+  repo-scoped default imply coverage it does not have.
+- **LIMIT 2 — the gate is Claude-only; the Codex half is UNENFORCED.** Both harnesses
+  are supported, and a tool-call hook is a Claude Code surface that a Codex session
+  never runs. So the requirement is **mechanical in Claude and prose in Codex**: in a
+  Codex session nothing refuses an unrouted dispatch, and the `## Codex path` below
+  carries the obligation as text only. Describing this as "the dispatch requirement"
+  without that sentence would make the Codex half look covered when it is not.
+- **LIMIT 3 — a hook is defeatable by configuration.** `disableAllHooks` in any
+  settings file switches hooks off, and `allowManagedHooksOnly` in a managed
+  organization blocks user, project, local and plugin hooks. An operator report names
+  `--bare` as a third; the published hooks page does not confirm that, so treat it as
+  reported rather than established. This is a strong guardrail, not a proof.
+
+A scaffolded repo that has lost the gate is a **canary finding**, the same shape as a
+repo-root `CLAUDE.md` that has lost its managed block — so the guardrail stops
+depending on anyone remembering it is there.
 
 ## Codex path
 

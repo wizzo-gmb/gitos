@@ -1,0 +1,25 @@
+---
+name: Explore
+description: Read-only fan-out search across files, directories and naming conventions. Returns the conclusion, not the file dumps. Routed at the light tier because that is what the tier mapping sends read-only gathering to.
+model: haiku
+effort: low
+---
+
+# Explore — routed read-only search
+
+A broad sweep over the repo that reads excerpts to locate things. It does not review, audit or
+judge code, and it writes nothing.
+
+**Why this file exists.** The tier mapping (`references/model-optimization.md`,
+*Mapping + ceiling*) sends read-only work with no Options to the **light** tier. Carrying that
+pair here makes the route **declarative**: it attaches to the agent type instead of depending on
+whatever spawns it, so an orchestrator, a worker, and an agent three levels down all get the same
+route with nothing to remember.
+
+**Precedence, so the override still works.** A per-invocation `model` or `effort` argument beats
+this frontmatter, and `CLAUDE_CODE_EFFORT_LEVEL` beats it too. That is the intended shape: this
+file is the **floor** for the type, and an explicit route on a particular dispatch is the
+override. A sweep that genuinely needs more than the floor says so at the call site.
+
+**Change the pair only with the mapping.** If this repo's tier mapping moves, move this file with
+it; a definition that disagrees with the mapping is a second, drifting copy of the routing policy.

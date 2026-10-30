@@ -189,6 +189,28 @@ Direct the running orchestrator to:
   lines through and reports them, only content outside the markers is untouched by
   construction.** On a Custom repo this is a **MERGE** (refresh the block, preserve the
   profile) — see `references/bridge.md`;
+- **lay the live resume, and migrate per-harness resume files onto it as POINTERS.** The
+  session's volatile state has **one** home: `<home>/RESUME.md` (`references/glossary.md` →
+  **Resume**; the loop that maintains it is `references/roles/orchestrator.md` → *Checkpoint +
+  rotation*). If it is absent, lay it — `python ~/.claude/skills/gitos/scripts/scaffold.py
+  <root> --git skip` seeds it from the engine template and never touches an existing one — then
+  refresh it from the repo's actual current state at this upgrade's own checkpoint.
+
+  Then look for **per-harness resume files**: a `CLAUDE-RESUME.md`, `CODEX-RESUME.md`,
+  `RESUME-<harness>.md` or similar at the repo root or under `<home>/`. Each becomes a **one-line
+  pointer** to `<home>/RESUME.md`, because N resume files are N things to go stale independently
+  and the observed failure is exactly that — per-harness files weeks behind the repo while the
+  ledger moved on. Per file: **report it and ask**, then on the operator's word fold anything it
+  still asserts into the right store first — volatile state into `RESUME.md`, anything that would
+  still be true in a fresh clone into the **brain** (knowledge) or the **ledger** (work), by the
+  one-question test — and only then replace the body with the pointer. **Never silently clobber
+  one:** these are hand-written operator files, so this is report-and-ask by design, the same
+  category line as `<home>/agents/` above and the opposite of the home tool copies. No such
+  files → this half is a no-op; say nothing.
+
+  *What never moves here:* a **standing rule** found in one of those files goes to the brain, not
+  into `RESUME.md`. `RESUME.md` is replaced wholesale at every checkpoint, so a rule parked there
+  is destroyed by the next rotation — `canary.py`'s `resume/standing-rule` reports it;
 - **refresh lens copies from the global library** — the global `<skill>/agents/` is the
   machine-wide lens distribution hub (SKILL.md → *Lenses*). For each lens in
   `<home>/agents/` whose name also exists globally, byte-compare; where they differ,
@@ -235,6 +257,14 @@ Direct the running orchestrator to:
   **Exposure flags are never re-litigated here.** `offer` asks a federated repo about new groups
   and nothing else — changing `consultable` or `accept_proposals` is a deliberate act via
   `/gitos federation`. A prompt people learn to skip has stopped being a checkpoint.
+
+**4h. Harness (only when `<home>/harness.json` exists and is not `adopted: false`).**
+One update command: run `harness.py update --home <home>` (the home's copy, else the skill's own
+`scripts/harness.py`; the `auto` / `review` pass), show the operator each `review`
+diff and let them approve (`update --approve NAME`), then `harness.py sync --home <home>` as a dry
+run, show the plan, and apply with `--apply` only on their word. Never move a user skill without
+approval; user-scope baseline changes are proposals only. A repo with no `harness.json` skips this
+step and sees one offer line (`harness.py offer`). Policy: `references/harness.md`.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:

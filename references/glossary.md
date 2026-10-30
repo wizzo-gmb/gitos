@@ -24,6 +24,9 @@ The orchestrator's long-term memory for a project. Stored at `.gitos/brain/` as 
 **Handoff**
 The birth record of a project — filled once at inception and never edited afterward. Records the project's identity, its acceptance criteria, its hold-out discipline, its outcome definition, its production target (if any), and any predecessor lessons. Anything that evolves over time moves into a brain page; the handoff is the immutable reference for what was decided at the start. Stored at `<home>/handoff.md`.
 
+**Resume**
+The live session pointer — what is true *right now*: what is serving or running, what is in flight and how to reattach it, who is waited on, the next three steps, and pointers to the standing rules. Stored at `<home>/RESUME.md` and **replaced wholesale** at every checkpoint, which is what makes it a fifth store rather than a second ledger. It must be **deletable without loss**: nothing exists only here, so it carries volatile state plus *references* into the durable stores — never a second copy of their contents. One question decides where a line belongs: *would this still be true in a fresh clone with no session running?* Yes → the brain (knowledge), the ledger (work), or the handoff (birth record). No → the resume. So a standing operator rule goes to the brain and is pointed at from here; written into the resume it would be destroyed by the next rotation. Per-harness resume files are pointers to this one. The checkpoint and rotation loop that maintains it: `references/roles/orchestrator.md`.
+
 **Acceptance criteria**
 The precommitted, measurable gates a deliverable must pass before it advances to the next lifecycle stage. Decided before evaluation runs. Evaluated on a locked hold-out set. Compared against a null/baseline. Gate arithmetic is unit-tested with known-answer cases. See `references/acceptance-criteria.md` for the full treatment.
 

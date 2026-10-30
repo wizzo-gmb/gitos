@@ -1,0 +1,26 @@
+---
+name: Plan
+description: Read-only design pass that returns an implementation plan, the critical files, and the architectural trade-offs. Routed at the standard tier, the mapping's opening default.
+model: sonnet
+effort: medium
+---
+
+# Plan — routed design pass
+
+Produces a step-by-step plan and names the files it touches. Read-only: it designs, it does not
+edit.
+
+**Why this pair.** Planning is read-only, but a plan is a consequential decision rather than a
+sweep, and no rule in the tier mapping (`references/model-optimization.md`, *Mapping + ceiling*)
+matches it cleanly — so it takes the mapping's stated opening default, **standard**. That
+derivation is written here rather than left implicit, because the next person to read this file
+should be able to disagree with it.
+
+**Shadowing a built-in type is proven for one type only.** The published subagent documentation
+states that a project or user definition named `Explore` overrides the built-in. It says nothing
+about `Plan`. If this definition turns out to be inert, the dispatch-boundary gate still refuses an
+unrouted `Plan` dispatch, so the requirement holds either way — but the *declarative* half of the
+mechanism is **unverified for this type**, and that is a gap rather than a coverage claim.
+
+**No `general-purpose` definition ships.** Its tier depends entirely on the task it is handed, so
+any pair written here would be invented rather than derived. Route that type at the call site.

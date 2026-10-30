@@ -17,6 +17,9 @@ cover:
                              recovery seed; missing/stale block is a finding, no CLAUDE.md a skip)
   - engine tool copies      (<home>/tools/<t>.py byte-compared against the skill's scripts/<t>.py;
                              a home copy that DIFFERS is reported — never refreshed here)
+  - live session resume     (<home>/RESUME.md: sitting behind the durable state it points at, and
+                             — the one worth more than freshness — holding a STANDING RULE
+                             instead of a pointer to one, which the next checkpoint would destroy)
   - federation (optional)   (a FEDERATED repo's OWN presence record: missing, corrupt, or not
                              refreshed recently = the bootstrap heartbeat is not running; plus
                              its OWN intake hygiene — a malformed proposal, one from a sender
@@ -55,7 +58,8 @@ from pathlib import Path
 from urllib.parse import unquote
 
 PAGE_TYPES = ("sources", "entities", "concepts", "decisions")   # brain_lint's constant
-CATEGORIES = ("ledger", "counts", "stamp", "lenses", "links", "brain", "anchor", "tool")
+CATEGORIES = ("ledger", "counts", "stamp", "lenses", "links", "brain", "anchor", "tool",
+              "resume")
 # The engine's home tool copies (WO-034). <home>/tools/ holds byte-copies of the engine's own
 # scripts — engine artifacts, a cache of the installed skill that the briefs invoke by home
 # path. `upgrade` refreshes them (references/upgrade.md step 4); this category is what NOTICES
@@ -109,7 +113,7 @@ TOOL_HOME_DIR = "tools"       # where a home keeps its copies (NEVER `agents/` �
 # board red over repos doing nothing wrong, and the only remedy would be descoping the category
 # — which kills the feature. Fleet-wide freshness lives in `federation status`, which reports
 # and never gates.
-OPTIONAL_CATEGORIES = ("federation",)
+OPTIONAL_CATEGORIES = ("federation", "dispatch")
 FEDERATION_FILENAME = "federation.json"       # the opt-in file: its EXISTENCE is the switch
 FEDERATION_TOOL = "federation.py"             # the parser this check delegates to
 # "Was my own record refreshed THIS SESSION?" is the question the observer wants to ask, and a
@@ -1358,7 +1362,230 @@ def check_federation(home: Path, skill_dir: Path | None,
     return items, None, True
 
 
+# ------------------------------------------------------- the resume category (WO-053)
+# `<home>/RESUME.md` answers "what is true RIGHT NOW" and is replaced wholesale at every
+# checkpoint. Two things can go wrong with it, and only one of them is freshness.
+RESUME_FILENAME = "RESUME.md"
+# The durable stores a resume POINTS AT. If one of these moved on and the resume did not, the
+# resume is behind. (`brain/` is deliberately absent: brain_lint already owns the brain's own
+# staleness, and folding it in here would make two checks disagree about one page.)
+RESUME_STATE_FILES = ("INDEX.md", "footprints.md")
+# mtime, not commit time — THE HONEST LIMIT, stated rather than papered over. The canary takes
+# no git dependency (read-only, stdlib-only, runs in repos with no git at all), so "older than
+# the newest state commit" is approximated by "older than the newest ledger file on disk". The
+# slack window is what keeps that approximation from lying: a clone or a checkout rewrites the
+# whole tree within seconds in arbitrary order, so a strict compare would call every fresh
+# clone stale. Real staleness is days (the shape this check exists for), never minutes.
+RESUME_STALE_SLACK = 300.0
+# A STANDING RULE, which belongs in the brain, versus a POINTER to one, which is all the resume
+# may carry. The prohibition/obligation register is what separates them: volatile state reads
+# "worker A is on branch B", never "never mention X to Y". A line carrying a pointer is exempt
+# by construction — pointing AT a rule is the correct shape, so the words may appear there.
+#
+# PRECISION, honestly bounded: this is a FINDING, not a proof. A rule-shaped line of volatile
+# state with no pointer will fire, and the fix is one pointer or one rephrase — cheap, and the
+# same direction the division wants anyway. What it cannot do is read a rule phrased without
+# any of these words; the check lowers the rate of the failure, it does not close the class.
+RESUME_RULE_RE = re.compile(
+    r"\b(?:never|always|must\s+not|must\s+never|shall\s+not|do\s+not|don't|"
+    r"under\s+no\s+circumstances|not\s+allowed|forbidden|prohibited|"
+    r"at\s+most|no\s+more\s+than|only\s+ever|only\s+use)\b", re.IGNORECASE)
+RESUME_POINTER_RE = re.compile(
+    r"\]\(|\[\[|brain/|wiki/|work-orders/|INDEX\.md|HANDOFF\.md|handoff\.md|"
+    r"footprints\.md|references/|SKILL\.md")
+RESUME_LINE_CAP = 160          # how much of a flagged line is quoted back
+
+
+def resume_rule_lines(text: str) -> list[tuple[int, str]]:
+    """Lines of a RESUME that STATE a standing rule rather than point at one.
+
+    Shared by the check and by the selftest's fixtures so the rule and the thing that measures
+    it cannot drift apart (`same_tool`'s precedent). Fenced code is skipped (a sample is not a
+    rule) and so are headings and table separators; HTML comments are NOT skipped — an exempt
+    comment would be a bypass straight through the middle of the check.
+    """
+    out: list[tuple[int, str]] = []
+    in_fence = False
+    for n, raw in enumerate(text.splitlines(), 1):
+        if FENCE.match(raw):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        line = raw.strip()
+        if not line or line.startswith("#") or set(line) <= set("|-: "):
+            continue
+        if RESUME_RULE_RE.search(line) and not RESUME_POINTER_RE.search(line):
+            out.append((n, line[:RESUME_LINE_CAP]))
+    return out
+
+
+def check_resume(home: Path) -> tuple[list[dict], str | None]:
+    """The live session pointer: `<home>/RESUME.md`.  -> (items, skip-reason | None).
+
+    A home with NO resume is a visible skip, not a finding — the same posture as the tool
+    copies: a repo that never had one cannot have a stale one, and delivering it is the
+    scaffold's job. INVARIANT the two checks defend together: the resume is deletable without
+    loss, so it holds volatile state plus pointers and never a second copy of anything durable.
+
+    SHIPPED SHORT, with the gap named: the design also asked for "names a branch or worker that
+    no longer exists". That needs a git query this tool does not make (and `.git/refs` alone
+    misses packed refs, so a filesystem guess would report live branches dead — a guard that
+    cries wolf gets disabled). Worker/branch liveness is therefore VERIFIED BY THE ORCHESTRATOR
+    at bootstrap, not here (`references/roles/orchestrator.md` → First action, step 9), and this
+    category covers the two halves it can actually evidence.
+    """
+    path = home / RESUME_FILENAME
+    if not path.is_file():
+        return [], f"no <home>/{RESUME_FILENAME}"
+    text = _read(path)
+    if text is None:
+        return [{"kind": "resume-unreadable",
+                 "finding": f"{RESUME_FILENAME} exists but could not be read -> a resume that "
+                            f"cannot be read is not a resume; restore or re-scaffold it"}], None
+
+    items: list[dict] = []
+
+    # 1. freshness — the resume sitting behind the durable state it points at
+    try:
+        resume_mtime = path.stat().st_mtime
+    except OSError:
+        resume_mtime = None
+    newest_name, newest_mtime = None, 0.0
+    candidates = [home / n for n in RESUME_STATE_FILES]
+    wo_dir = home / "work-orders"
+    if wo_dir.is_dir():
+        candidates.extend(sorted(wo_dir.rglob("*.md")))
+    for c in candidates:
+        try:
+            if not c.is_file():
+                continue
+            m = c.stat().st_mtime
+        except OSError:
+            continue
+        if m > newest_mtime:
+            newest_name, newest_mtime = c.relative_to(home).as_posix(), m
+    if resume_mtime is not None and newest_name and newest_mtime - resume_mtime > RESUME_STALE_SLACK:
+        items.append({"kind": "resume-stale", "newer": newest_name,
+                      "behind_seconds": int(newest_mtime - resume_mtime),
+                      "finding": f"{RESUME_FILENAME} is older than {newest_name} -> the work "
+                                 f"state moved on and the live resume did not; refresh it at "
+                                 f"the next checkpoint (replace it wholesale, never append)"})
+
+    # 2. the division — a STANDING RULE stated here rather than pointed at. Worth more than
+    #    freshness: a stale resume costs a reader some confusion, but a rule written here is
+    #    DESTROYED by the next checkpoint, which makes this file the cause of the goal drift
+    #    the whole arrangement exists to prevent.
+    for n, line in resume_rule_lines(text):
+        items.append({"kind": "resume-standing-rule", "line": n, "text": line,
+                      "finding": f"{RESUME_FILENAME}:{n} states a standing rule rather than "
+                                 f"pointing at one -> this file is replaced wholesale at every "
+                                 f"checkpoint, so the rule would be destroyed by the next "
+                                 f"rotation; move it to the brain and point at it from here"})
+    return items, None
+# ------------------------------------------------- the harness category (OPTIONAL, WO-052)
+# Same rule as `federation` above: NOT-APPLICABLE IS NOT SKIPPED. A repo with no
+# `<home>/harness.json` has no such category - no line, not in `checked`, not in `skipped`. A repo
+# whose file exists but is `adopted: false`, or whose parser cannot be loaded, takes the VISIBLE
+# skip. The drift logic lives in ONE place (scripts/harness.py); this only delegates, the way the
+# brain check delegates to brain_lint. It reads the machine's Claude config resolved from the
+# environment (HOME / CLAUDE_CONFIG_DIR), read-only.
+OPTIONAL_CATEGORIES = OPTIONAL_CATEGORIES + ("harness",)
+HARNESS_FILENAME = "harness.json"
+HARNESS_TOOL = "harness.py"
+
+
+def check_harness(home: Path, skill_dir: Path | None) -> tuple[list[dict], str | None, bool]:
+    """-> (items, skip-reason | None-if-checked, applicable)."""
+    if not (home / HARNESS_FILENAME).is_file():
+        return [], None, False
+    cands = [home / TOOL_HOME_DIR / HARNESS_TOOL, Path(__file__).resolve().parent / HARNESS_TOOL]
+    if skill_dir is not None:
+        cands.append(skill_dir / TOOL_SRC_DIR / HARNESS_TOOL)
+    mod_path = next((c for c in cands if c.is_file()), None)
+    if mod_path is None:
+        return [], "no harness.py to parse the declaration with", True
+    prev = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True        # read-only contract: no __pycache__ under <home>/tools/
+    try:
+        mod = _load_module("_canary_harness", mod_path)
+        return mod.canary_check(home)
+    except Exception as e:                # a delegation failure is a finding, never a skip
+        return [{"kind": "harness-error",
+                 "finding": f"harness.py raised {type(e).__name__}: {e} -> fix the tool copy"}], None, True
+    finally:
+        sys.dont_write_bytecode = prev
+
+
 # --------------------------------------------------------------------------- run + report
+def check_dispatch_gate(root: Path, skill_dir: Path | None) -> tuple[list[dict], str | None]:
+    """The dispatch tier gate in the repo's committed `.claude/settings.json`.
+    -> (items, skip-reason | None-if-compared).
+
+    SAME SHAPE AS THE ANCHOR CATEGORY, deliberately. The engine writes a managed block into
+    repo-root CLAUDE.md and this canary fails when it goes missing; a scaffolded repo that has
+    lost the dispatch gate is the same defect, so it gets the same treatment. The guardrail then
+    stops depending on anyone remembering it is there.
+
+    APPLICABILITY IS "IS THIS A SCAFFOLDED REPO?", answered by the anchor the scaffold writes.
+    An unscaffolded home never had the gate laid, so claiming it is missing would be reporting a
+    check that was never a check here - the category simply does not appear (see
+    OPTIONAL_CATEGORIES). The caller decides applicability; this function only compares.
+
+    IDENTITY IS THE `args` LIST, read from the installed gate rather than restated here. That is
+    the same identity rule the registration writer uses, so an operator who retitled the status
+    message or reordered the file still has it registered - and there is no second copy of the
+    bootstrap string in this repo to drift from the first.
+
+    REPORTS, NEVER FIXES. Re-laying it is `scaffold` / `upgrade` work, exactly like a stale tool
+    copy. And it checks the REPO layer only: the machine-wide install is the operator's own
+    settings, which this canary has no business reading.
+    """
+    items: list[dict] = []
+    if skill_dir is None:
+        return items, "no skill install found"
+    guard_path = skill_dir / "scripts" / "dispatch_guard.py"
+    if not guard_path.is_file():
+        return items, "the installed skill ships no dispatch_guard.py"
+    try:
+        expected = _load_module("_gitos_canary_dispatch_guard", guard_path).hook_entry()["args"]
+    except Exception as e:
+        return items, f"the installed dispatch_guard.py could not be read ({type(e).__name__})"
+    settings = root / ".claude" / "settings.json"
+    if not settings.is_file():
+        items.append({"kind": "gate-missing",
+                      "finding": "a scaffolded repo with no .claude/settings.json -> the "
+                                 "dispatch tier gate is absent, so a dispatch that names no "
+                                 "task tier is not refused; re-run scaffold.py or "
+                                 "`/gitos upgrade` to lay it"})
+        return items, None
+    try:
+        doc = json.loads(settings.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as e:
+        # Unreadable is a FINDING, not a skip: a compare that could not run must not read as a
+        # compare that passed.
+        items.append({"kind": "cannot-read",
+                      "finding": f".claude/settings.json could not be read as JSON "
+                                 f"({type(e).__name__}) -> the dispatch tier gate cannot be "
+                                 f"verified; fix the file, then re-run"})
+        return items, None
+    hooks = doc.get("hooks") if isinstance(doc, dict) else None
+    groups = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    found = any(isinstance(h, dict) and h.get("args") == expected
+                for g in (groups if isinstance(groups, list) else [])
+                if isinstance(g, dict) and isinstance(g.get("hooks"), list)
+                for h in g["hooks"])
+    if not found:
+        items.append({"kind": "gate-missing",
+                      "finding": ".claude/settings.json registers no gitos dispatch tier gate "
+                                 "on the dispatch tool -> an unrouted dispatch is not refused "
+                                 "in this repo; re-run scaffold.py or `/gitos upgrade`. Note "
+                                 "this checks the REPO layer only, and hooks are switchable "
+                                 "off by configuration (disableAllHooks, "
+                                 "allowManagedHooksOnly) - a guardrail, not a proof"})
+    return items, None
+
+
 def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         registry: "str | None" = None, now: "datetime | None" = None) -> dict:
     r: dict = {"home": str(home), "skill_dir": str(skill_dir) if skill_dir else None,
@@ -1463,6 +1690,34 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         else:
             skip("federation", f_reason)
 
+    # live session resume: behind the durable state it points at, and — the half worth more
+    # than freshness — holding a standing rule instead of a pointer to one. No resume = a
+    # visible skip, never a silent CLEAN.
+    rs_items, rs_reason = check_resume(home)
+    r["resume"].extend(rs_items)
+    if rs_reason is None:
+        checked.add("resume")
+    else:
+        skip("resume", rs_reason)
+    # harness: optional, same not-applicable-is-not-skipped rule (see OPTIONAL_CATEGORIES).
+    h_items, h_reason, h_applicable = check_harness(home, skill_dir)
+    if h_applicable:
+        r["harness"] = h_items
+        if h_reason is None:
+            checked.add("harness")
+        else:
+            skip("harness", h_reason)
+    # dispatch tier gate: the repo's committed `.claude/settings.json`. APPLICABLE only to a
+    # repo the engine actually scaffolded, which the CLAUDE.md anchor is the evidence for - an
+    # unscaffolded home never had the gate laid, so it gets no key and no line at all.
+    if claude.is_file() and CLAUDE_ANCHOR_START in (_read(claude) or ""):
+        d_items, d_reason = check_dispatch_gate(home.parent, skill_dir)
+        r["dispatch"] = d_items
+        if d_reason is None:
+            checked.add("dispatch")
+        else:
+            skip("dispatch", d_reason)
+
     active = CATEGORIES + tuple(k for k in OPTIONAL_CATEGORIES if k in r)
     for k in active:          # a category with findings is by definition checked
         if r[k]:
@@ -1489,12 +1744,19 @@ def print_report(r: dict) -> None:
         ("Brain (delegated brain_lint)", "brain"),
         ("Durable anchor (CLAUDE.md recovery seed)", "anchor"),
         ("Engine tool copies (<home>/tools/ vs skill)", "tool"),
+        ("Live session resume (fresh; pointers, not rules)", "resume"),
     ]
     # The optional category prints ONLY when this repo has it. An unfederated repo gets no line
     # at all — not even a "skipped (not applicable)" one, which would be reporting a check that
     # was never a check here (see OPTIONAL_CATEGORIES).
     if "federation" in r:
         sections.append(("Federation (this repo's OWN record, config + intake)", "federation"))
+    if "harness" in r:
+        sections.append(("Harness (declared skills/plugins/MCP/hooks/agents vs visible)", "harness"))
+    # Same rule, same reason: an unscaffolded repo never had the dispatch gate laid, so it gets
+    # no line rather than a "skipped (not applicable)" one.
+    if "dispatch" in r:
+        sections.append(("Dispatch tier gate (repo .claude/settings.json)", "dispatch"))
     skips: dict[str, list[dict]] = {}
     for s in r["skipped"]:
         skips.setdefault(s["check"].split(":")[0], []).append(s)

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -234,6 +235,54 @@ def ensure_claude_section(claude_path: Path, section: str) -> "tuple[str, list[s
     return "appended", []
 
 
+def model_optimization_module():
+    """The engine's optimization helper, loaded from this `scripts/` dir BY PATH.
+
+    By path rather than by `import` so it resolves the same however scaffold itself was
+    invoked. Returns None when the file is absent, because a missing optional helper must
+    degrade to "one seam not laid, and said so" rather than take scaffolding down.
+    """
+    path = Path(__file__).resolve().parent / "model_optimization.py"
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_gitos_scaffold_model_optimization", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+# --------------------------------------------------------------------------- dispatch gate
+# The tier policy's mechanism at the boundary where it has to hold. Loaded the same way and for
+# the same reasons as the helper above: by path, and a missing optional file degrades to "one
+# seam not laid, and said so" rather than taking scaffolding down.
+#
+# THE DEFINITIONS, and why they are the better half. A subagent definition carries `model` and
+# `effort` of its own, so the tier attaches to the agent TYPE and needs no cooperation from
+# whatever spawns it. A read-only sweep is what the tier mapping sends to `light`; a definition
+# carrying that pair routes it correctly by construction, with nothing to remember at call time.
+# Written with `write_if_missing`, so an operator's own definition of the same type is never
+# clobbered. `general-purpose` deliberately gets NO definition: its tier depends on the task it
+# is handed, so any pair here would be invented rather than derived.
+CLAUDE_AGENT_DEFINITIONS = ("Explore.md", "Plan.md")
+
+
+def dispatch_guard_module():
+    """The engine's dispatch-boundary gate, loaded from this `scripts/` dir BY PATH, or None."""
+    path = Path(__file__).resolve().parent / "dispatch_guard.py"
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_gitos_scaffold_dispatch_guard", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
 def detect_home(root: Path, requested: str) -> tuple[Path, str]:
     """Return (home_dir, label). label in {'.gitos','.pipeline','outputs/debug','docs/agents'}."""
     if requested != "auto":
@@ -344,6 +393,16 @@ def starter_gitignore(home_label: str, brain_on: bool) -> str:
         "",
         "# Federation opt-in is per checkout — this ONE file in the tracked home stays untracked.",
         f"{home_label}/federation.json",
+    ]
+    # The model-optimization session baseline is PER SESSION (references/model-optimization.md):
+    # the transient record holds this session's observed model/effort pair and its provenance,
+    # so a clone/worktree must arrive with NO baseline rather than inherit one it could dispatch
+    # against. One more path inside the tracked home; laid on the same reasoning as the line
+    # above, and a repo that enables optimization later should not need it back-filled.
+    lines += [
+        "",
+        "# The optimization baseline is per session — this ONE transient file stays untracked.",
+        f"{home_label}/model-optimization-session.json",
     ]
     return "\n".join(lines) + "\n"
 
@@ -472,6 +531,31 @@ def main() -> int:
             repo_canary.write_bytes((SKILL_DIR / "scripts" / "canary.py").read_bytes())
             print(f"OK   wrote {repo_canary.relative_to(root)}")
 
+    # ---- harness declaration seed (WO-052) -----------------------------------
+    # A minimal, NOT-yet-adopted `<home>/harness.json` plus the tool that reads it
+    # (references/harness.md). `adopted: false` means nothing is checked and nothing is written
+    # until the operator reviews `harness.py audit` and flips it; the canary shows a visible skip.
+    # write_if_missing / never-clobber: an existing declaration is the operator's.
+    if not diagnostic_only:
+        repo_harness = home / "tools" / "harness.py"
+        if repo_harness.exists():
+            print(f"SKIP exists {repo_harness.relative_to(root)}")
+        else:
+            repo_harness.parent.mkdir(parents=True, exist_ok=True)
+            repo_harness.write_bytes((SKILL_DIR / "scripts" / "harness.py").read_bytes())
+            print(f"OK   wrote {repo_harness.relative_to(root)}")
+        repo_decl = home / "harness.json"
+        if repo_decl.exists():
+            print(f"SKIP exists {repo_decl.relative_to(root)}")
+        else:
+            _hspec = importlib.util.spec_from_file_location(
+                "_gitos_scaffold_harness", SKILL_DIR / "scripts" / "harness.py")
+            _hmod = importlib.util.module_from_spec(_hspec)
+            _hspec.loader.exec_module(_hmod)
+            # bytes, not write_text: a text-mode write converts newlines to CRLF on Windows
+            repo_decl.write_bytes((json.dumps(_hmod.starter_declaration(), indent=2) + "\n").encode("utf-8"))
+            print(f"OK   wrote {repo_decl.relative_to(root)} (starter, adopted: false)")
+
     # ---- agents (operator-imported steering lenses) -----------------------
     # The four roles apply on-demand "lens" context (read-on-demand approach context, NOT
     # the brain's facts). <home>/agents/index.md is the registry, empty until the first
@@ -570,6 +654,83 @@ def main() -> int:
             print("     content you want to own permanently belongs OUTSIDE the markers "
                   "(see references/bridge.md).")
 
+    # ---- model/effort currency hook (.claude/settings.json) ---------------
+    # The per-session optimization baseline records an OBSERVED model/effort pair, and an
+    # operator who changes either mid-session has no reason to think the engine cares - so
+    # without an announcement the baseline keeps serving a pair that no longer exists. This
+    # registers the hook that invalidates the affected component when the client announces a
+    # change; the gate then refuses a route derived from a value it can no longer vouch for.
+    #
+    # Laid UNCONDITIONALLY, on the same reasoning as the per-session `.gitignore` line above:
+    # scaffolding creates no optimization setting, and the hook is inert while optimization is
+    # off (it reads the setting and returns without touching anything). A repo that enables
+    # optimization later should not need this back-filled - though `enable` back-fills it for
+    # a repo scaffolded before the seam existed.
+    #
+    # EXTEND, NEVER REPLACE: the writer appends its own entry per event and preserves every
+    # other key, event, matcher group and command it finds, so another hook can be added
+    # beside this one without rewriting it.
+    if not diagnostic_only:
+        optimization = model_optimization_module()
+        if optimization is None:
+            print("SKIP .claude/settings.json currency hook — model_optimization.py not found "
+                  "beside scaffold.py")
+        else:
+            status, detail = optimization.ensure_settings_hook(root)
+            print({
+                "created": "OK   wrote .claude/settings.json (model/effort currency hook)",
+                "appended": "OK   registered the model/effort currency hook in "
+                            ".claude/settings.json",
+                "present": "SKIP .claude/settings.json currency hook already registered",
+                "skipped": "SKIP .claude/settings.json left untouched",
+            }[status] + (f" — {detail}" if status == "skipped" else ""))
+            if status in ("created", "appended"):
+                print("     An announced model/effort change now INVALIDATES the optimization")
+                print("     baseline instead of leaving it stale (references/model-optimization.md).")
+
+    # ---- dispatch tier gate (.claude/settings.json + .claude/agents/) -----
+    # The tier policy chose a model/effort pair per task and had nothing at the boundary where
+    # that choice must hold, so dispatches went out at the ceiling by default. This lays both
+    # halves of the mechanism into the repo's COMMITTED `.claude/` directory, which is what
+    # makes it travel: a fresh clone arrives with the gate already on and there is no
+    # per-system step.
+    #
+    # BOTH HALVES, because each covers what the other cannot. The hook refuses a dispatch that
+    # names no tier, whatever spawns it - it binds the TOOL, so it reaches a sub-dispatch three
+    # levels down that no directive would. The definitions carry the tier declaratively on the
+    # agent type, so the common routes are correct with nothing to enforce at all.
+    #
+    # REGISTERED BESIDE, NEVER INSTEAD OF. The gate passes its own entry and event to the
+    # optimization helper's writer, which appends and preserves every other key, event, matcher
+    # group and command it finds - so the currency hook above and this gate both end up on the
+    # same event without either being lost.
+    #
+    # THREE LIMITS, laid out in references/model-optimization.md rather than implied here: this
+    # is a CLAUDE-ONLY mechanism (a Codex session never runs a hook, so there the requirement
+    # is prose); a repo-scoped gate is blind to every session outside this repo, which is what
+    # the machine-wide install covers; and hooks are switchable off by configuration.
+    if not diagnostic_only:
+        guard = dispatch_guard_module()
+        if guard is None:
+            print("SKIP .claude/settings.json dispatch gate — dispatch_guard.py not found "
+                  "beside scaffold.py")
+        else:
+            status, detail = guard.ensure_hook(root)
+            print({
+                "created": "OK   wrote .claude/settings.json (dispatch tier gate)",
+                "appended": "OK   registered the dispatch tier gate in .claude/settings.json",
+                "present": "SKIP .claude/settings.json dispatch gate already registered",
+                "skipped": "SKIP .claude/settings.json left untouched",
+            }[status] + (f" — {detail}" if status == "skipped" else ""))
+            if status in ("created", "appended"):
+                print("     A dispatch that names no task tier is now REFUSED, with a reason.")
+                print("     Claude Code only; see references/model-optimization.md for the")
+                print("     machine-wide install and the three limits this does not cover.")
+        for name in CLAUDE_AGENT_DEFINITIONS:
+            dest = root / ".claude" / "agents" / name
+            report(write_if_missing(dest, read_template(f"claude-agents/{name}.tmpl")),
+                   dest, root)
+
     # ---- ensure version control (WO-011) ----------------------------------
     # Reverses the old "offer, never run". `ensure` (default) auto-inits git when absent,
     # AFTER reporting intent (the false-negative backstop). `skip` opts out entirely;
@@ -600,6 +761,25 @@ def main() -> int:
                 report(write_if_missing(ga, STARTER_GITATTRIBUTES), ga, root)
                 print("     Starter .gitignore/.gitattributes laid. The baseline COMMIT is the")
                 print("     inception agent's next step (scaffold lays files; it never commits).")
+
+    # ---- live session resume (WO-053) -------------------------------------
+    # `<home>/RESUME.md` is the store for what is true RIGHT NOW: replaced wholesale at every
+    # checkpoint, volatile state plus POINTERS into the durable stores, and deletable without
+    # loss (references/glossary.md -> Resume; references/roles/orchestrator.md -> Checkpoint +
+    # rotation). Laid here so a fresh window always has somewhere to find its place.
+    #
+    # SEEDED, NEVER REFRESHED — write_if_missing: this file is the live one, and a re-run of the
+    # scaffold must not blow away a session's in-flight record. Migrating a repo's per-harness
+    # resume files onto this one is `upgrade`'s job (references/upgrade.md step 4), the same
+    # split the home tool copies already follow.
+    #
+    # Full-role scaffolds only: a diagnostic-only home runs no checkpoint loop, so a resume
+    # there would be a file nothing maintains. Not brain-gated — the resume points AT the brain
+    # and does not need one to exist.
+    if not diagnostic_only:
+        report(write_if_missing(home / "RESUME.md",
+                                render(read_template("RESUME.md.tmpl"), **tokens)),
+               home / "RESUME.md", root)
 
     print("\nScaffolding complete. Next steps (see references/roles/inception.md):")
     print(f"  1. Fill {home_label}/HANDOFF.md from the interview.")

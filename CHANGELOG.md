@@ -18,6 +18,96 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v37 — 2026-10-29
+breaking: no
+
+**The routing invariants gained mechanisms, and one store gained a boundary.** Five work-orders
+land together as one push. The thread running through them: this engine had several rules that
+existed only as prose, and prose is not a mechanism. Each of these now has something that can say
+no — or, where nothing can, says so out loud instead of implying coverage.
+
+**The optimization baseline can no longer silently serve an expired pair** (WO-057). Changing the
+lead model or effort used to leave the recorded baseline untouched, and `select` would return
+`dispatch-ready` from values the orchestrator typed from memory. An announced operator change now
+invalidates the affected component and the same call returns `blocked`, with the record still on
+disk — **stale, not missing**. Effort re-verifies automatically from a value the client supplies;
+**model is invalidate-only** and recovers from an operator report, because no source for it was
+found. Precision is per-component and per-file, so an unrelated settings edit does not nag.
+An unannounced model change is recorded as **undetected, not covered**.
+
+**The dispatch boundary has a gate** (WO-055), in two separable strengths. The *floor* is always
+on: a dispatch must name both components. The *tier binding* applies only when optimization is
+enabled, matching the pair against a single-use, expiring receipt from `select`'s own output.
+Shipped alongside is the declarative half — subagent definitions that carry their own tier, so a
+read-only sweep routes to `light` **by construction** rather than by anyone remembering. The gate
+**never blocks by accident**: it decides only through stdout and always exits 0, so a crash, a
+missing engine or an unreadable config produces no decision rather than a refusal. **It is not
+installed by this release.**
+
+**A repo can declare the harness it actually uses** (WO-052). `harness.json` declares skills,
+plugins, connectors, MCP servers, hooks and agent definitions; `audit` and `drift` read, `sync`
+materialises. The argument is **selection accuracy, not token cost**: `audit` reports
+listing-budget headroom, names which skills lose their descriptions first, and counts loaded tool
+definitions against the documented degradation band. Nine limits are printed by the tool itself
+rather than left to be discovered.
+
+**One orchestrator can span many windows** (WO-053). `RESUME.md` joins the stores as the volatile
+one: replaced wholesale at each checkpoint, **deletable without loss**, pointers rather than
+copies. Standing rules go to the brain, because RESUME is replaced by the very rotation meant to
+preserve continuity. Three rotation triggers ship; **two were measured and found unmeasurable in
+this client and are named as unavailable** rather than shipped as wishes.
+
+**Two gate assertions that could not fail, can now** (WO-058, WO-059). `git check-ignore` skips
+indexed paths by default and `git status --ignored` never reports a tracked file — so assertions
+about tracked paths passed for any pattern at all. One was corrected; the other's comment was
+corrected and the assertion deliberately left alone, because the only independent source available
+was the sibling check's own mechanism and spelling one measurement twice buys nothing.
+
+**Upgrade notes.** Nothing here changes existing behaviour by default: a repo with no
+`harness.json`, no `RESUME.md` and no installed dispatch gate behaves exactly as before, apart
+from bootstrap offer lines. Scaffolded repos gain the new files; existing repos pick them up
+through `upgrade`. The canary gains `resume`, `harness` and `dispatch` categories, each
+not-applicable rather than silently skipped where it does not apply.
+
+---
+
+## v36 — 2026-10-29
+breaking: no
+
+**The session baseline is untracked by mechanism.** `references/model-optimization.md` states it
+as a property of the file — one transient, untracked `<home>/model-optimization-session.json`,
+kept out of commits — because the record holds *this* session's observed model/effort pair and
+its provenance. Nothing in payload made it so, so a clone or a worktree could arrive carrying a
+previous session's baseline and dispatch against it, and only agent discipline stood between the
+record and a commit. Federation solved the identical shape for its per-checkout opt-in file; this
+version applies that precedent to the baseline rather than inventing anything.
+
+**Two write points, because a repo can reach optimization from either side.** `scaffold.py`
+`starter_gitignore()` now lays the session line beside the federation line, home-aware and
+unconditional — a repo that enables optimization later should not need the line back-filled.
+`model_optimization.py enable` ensures the same line for a repo scaffolded before this version:
+append-only and idempotent, never rewriting an existing line, exactly one path ignored, and when
+the pipeline home is not inside the repo root it reports the skip and names the pattern to lay by
+hand rather than passing in silence. The outcome is reported on stderr; stdout stays the
+machine-readable configuration record.
+
+**One gate holds both writers in step.** The new selftest gate *optimization session baseline
+untracked* measures a real scaffolded repo under real git — the ignored set inside the home is
+exactly the one record, while the ledger, the brain and the operator's optimization configuration
+stay tracked — then back-fills a tree that predates the line, and finally drives the enable-time
+writer and federation's over the same four fixtures, refusing any divergence in status
+vocabulary, append-only behaviour, idempotence or precision. Two implementations of one
+idempotence rule will drift, and the one that drifts is the one nothing gates. The gate carries
+five negative controls, each asserted to go red: a stripped line, an over-broad `.gitos/*`, a
+doubled pattern, and an append-always writer standing in for a drifted sibling.
+
+Additive. No configuration format, schema, session shape or helper contract changes, and absent
+configuration stays inert — declining optimization writes nothing. A repo adopting v36 gains the
+line at scaffold time, and gains it at enable time if it was scaffolded earlier. A repo that
+already added the line by hand sees `present` and no change.
+
+---
+
 ## v35 — 2026-10-25
 breaking: no
 
