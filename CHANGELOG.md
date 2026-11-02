@@ -18,6 +18,19 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v43 — 2026-11-02
+breaking: no
+
+**After a compaction or a clear, the agent re-reads its directives in full** (WO-078). Claude Code
+re-attaches only the first 5,000 tokens of an invoked skill after compaction, which cuts `SKILL.md` partway
+through *Federation*, and a role brief loaded with an ordinary file read survives only as the summary's
+account of it. The restore hook's first line now asks for a full re-read of the installed `SKILL.md` and the
+brief for the agent's role, by absolute path, before anything else. In a live test with a sentinel deep in
+the brief, the v43 hook's session re-read both and quoted it; the v42 hook's session did not.
+*Not claimed:* that the re-read is enforced. The hook asks; the model acts.
+
+---
+
 ## v42 — 2026-11-02
 breaking: no
 

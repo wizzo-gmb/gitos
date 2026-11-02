@@ -472,6 +472,10 @@ points at nothing (`resume-rules-section`).
    in a linked worktree. Nothing here triggers compaction: a hook or model cannot, and the hook
    reads no transcript.
 
+   After a compaction or a clear, re-read the router (`SKILL.md`) and your role brief in full
+   before the next action: the hook's first line asks for it, because a compaction keeps only
+   the start of the skill and a summary of the brief, and a clear keeps neither.
+
 **One trigger is NOT shipped, because you cannot measure it.** A *context-size estimate past a
 threshold* requires the session to observe its own context. The installed client exposes context-window
 usage to the status line, not to the conversation or to a hook, and the session transcript's

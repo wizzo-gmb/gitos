@@ -241,6 +241,7 @@ refreshes it (managed-block upsert — never touching your content), and `canary
 recursion terminates at the **harness** (which guarantees `CLAUDE.md`) — the most durable layer
 reachable. It raises the water line, not to omniscience: a bloated `CLAUDE.md` loses salience
 too, so the block stays short and the operator's glance remains the final backstop.
+After a compaction or a clear, re-read this file and your role brief in full: only the start of this file is carried over.
 
 A `SessionStart` hook matched on `compact|clear` (`scripts/compact_restore.py`, laid by scaffold and
 `upgrade`) restores state after every compaction and every `/clear`: the marker line, `RESUME.md` with

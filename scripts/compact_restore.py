@@ -287,10 +287,16 @@ def build_output(payload):
         return None
     home, root = found
 
-    marker = (f"The conversation was just {'cleared' if cleared else 'compacted'}. Keep your "
-              "first-line role marker "
-              "(`[gitos · <role> · <focus>]`) in every reply; re-read SKILL.md (Canary) in the "
-              "installed gitos skill and run canary.py to confirm state.")
+    skill = Path(__file__).resolve().parent.parent
+    why = ("this fresh window starts with neither the router nor the brief" if cleared else
+           "a compaction keeps only a summary of files read and the start of an invoked skill")
+    marker = (f"The conversation was just {'cleared' if cleared else 'compacted'}. Before anything "
+              f"else, re-read in full, with the Read tool, the gitos router {skill / 'SKILL.md'} "
+              "and then the brief for the role you are working in, with <role> one of orchestrator, "
+              "implementer, diagnostic or inception (the router tells you which): "
+              f"{skill / 'references' / 'roles'}{os.sep}<role>.md. The directives must be re-read: "
+              f"{why}. Keep your first-line role marker (`[gitos · <role> · <focus>]`) in every "
+              "reply and run canary.py to confirm state.")
     tail = []
     resume = home / RESUME_FILENAME
     resume_text = None
