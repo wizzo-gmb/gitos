@@ -246,8 +246,9 @@ Thariq Shihipar, claude.dev Engineering, 2026-09-25.
 
 Discover choices from the active dispatch-tool schema first, a supported local
 catalog second, or an explicitly supplied model-picker/mapping. Keep one preferred
-pair per tier. No universal ranking by model name, version, price, or effort label.
-Refresh on enable, mapping/lead/harness change, native override change, or an
+pair per tier. No universal ranking by model name, version, or price. Effort has
+one fixed order, for the five documented levels only, used by the worker rule
+below. Refresh on enable, mapping/lead/harness change, native override change, or an
 unavailable-model failure; no per-WO roster sweep or web research.
 
 This complete **illustrative** harness mapping is the shape accepted by `configure`.
@@ -259,24 +260,27 @@ configured ranks are policy, not measured provider facts:
   "catalog": {
     "source": "native dispatch metadata; reviewed for this harness version",
     "models": {
-      "worker-model": {"efforts": ["medium"], "capabilities": ["text", "tools"]},
+      "light-model": {"efforts": ["low", "medium"], "capabilities": ["text", "tools"]},
+      "mid-model": {"efforts": ["medium", "high"], "capabilities": ["text", "tools"]},
       "lead-model": {"efforts": ["medium", "high"], "capabilities": ["text", "tools", "image"]}
     }
   },
   "choices": {
-    "worker": {"model": "worker-model", "effort": "medium", "rank": 1},
-    "lead-medium": {"model": "lead-model", "effort": "medium", "rank": 2},
-    "lead-high": {"model": "lead-model", "effort": "high", "rank": 3}
+    "light": {"model": "light-model", "effort": "low", "rank": 1},
+    "standard": {"model": "mid-model", "effort": "medium", "rank": 2},
+    "deep": {"model": "mid-model", "effort": "high", "rank": 2},
+    "lead": {"model": "lead-model", "effort": "medium", "rank": 3}
   },
-  "ceiling": "lead-high",
-  "tiers": {"light": "worker", "standard": "lead-medium", "deep": "lead-high"}
+  "ceiling": "lead",
+  "tiers": {"light": "light", "standard": "standard", "deep": "deep"}
 }
 ```
 
 Ranks order **model/effort pairs**; equal ranks are permitted. The same pair cannot
 have contradictory ranks. Different efforts on the same model can share a rank or
-have explicitly configured ranks; effort words themselves establish no ordering.
-Tier ranks must be nondecreasing and no tier may exceed the ceiling. Capabilities
+have explicitly configured ranks; the worker rule below compares effort words only on
+one model, and never across models. Tier ranks must be nondecreasing and no tier may
+exceed the ceiling. Capabilities
 are evidence-backed labels for task requirements (inputs, tools, context capacity
 where known), not an invented provider taxonomy. Unknown required support blocks
 that route. `default` effort means no adjustable effort has been established;
@@ -295,11 +299,121 @@ above applies. Catalogs go stale: an alias can move to a newer model that does t
 effort, so refresh discovery when the alias target changes.
 
 Establish the **actual lead pair** from the harness/operator, then configure it as
-the ceiling. Workers can match it. Unknown or changed lead → revalidate before
-routing. Fable or any other supported lead is permitted, never required. If more
+the ceiling. A worker never matches the lead's pair, and `fork` inherits that pair
+(see *The worker rule*). The lead's **model** must equal the ceiling's model; its
+effort may change without a revalidation, because the rule is judged against the
+lead's actual effort at every `select`. Unknown lead, or a changed lead model →
+revalidate before routing. Fable or any other supported lead is permitted, never required. If more
 capability is needed, propose a lead change to the operator; never switch the main
 model automatically. No advisor, gateway, billing/fast/service-tier changes, or
 deliberately weak-model experiments are part of this feature.
+
+### The worker rule: the orchestrator outranks every worker
+
+This is **operator policy**, not a capability claim, and it holds for any repo:
+
+1. **The orchestrator is the highest model.** No worker's model ranks above it.
+2. **A worker on the orchestrator's own model runs at strictly lower effort.**
+   Nothing ever matches the orchestrator by effort, only by model selection.
+3. **A worker on a lower model may use any effort up to the cap,** whatever the
+   orchestrator's effort. With the orchestrator on its top model at `medium`, a task
+   that needs heavy lifting but does not warrant that model, even at `low`, may go
+   to the next model down at `high`.
+4. **Workers cap at `high`.** `xhigh` and `max` are never dispatched, even when the
+   orchestrator runs at one of them.
+
+So the two pairs are never equal, and effort is compared only when the model is the
+same. The docs say the scale is "calibrated per model, so the same level name does
+not represent the same underlying value across models", which is why a lower
+model's level is not compared with the lead's.
+
+| Orchestrator (top model) | Same-model worker | Lower-model worker |
+|---|---|---|
+| `low` | none | `low`, `medium`, `high` |
+| `medium` | `low` | `low`, `medium`, `high` |
+| `high` | `low`, `medium` | `low`, `medium`, `high` |
+| `xhigh` or `max` | `low`, `medium`, `high` | `low`, `medium`, `high` |
+
+**What enforces it.** The order is `low` < `medium` < `high` < `xhigh` < `max`, for
+those five documented levels only; any other word is unknown and refused, never
+guessed. `select` refuses, and so does `configure`, with a reason naming both pairs
+and the clause that failed; a same-model refusal also names the lead effort that
+would be needed. There is no silent fallback to another tier or effort. `configure`
+judges each tier against the ceiling as the recorded lead pair; `select` judges it
+against the lead's actual effort. Rank (clause 1) is the repo's own policy: a worker
+on any other model needs a rank strictly below the ceiling's, and no model name is
+built in. A model with no effort levels has no effort to compare and is judged on
+rank alone. `default` beside named levels is not a level, so a routed dispatch names
+one; omitting effort inherits the lead's own, which can never be lower. For the same
+reason a `fork`, which inherits the lead's pair, can never satisfy the rule: routed
+work may not use one, and `select` refuses a fork context.
+
+**The order is shared with Codex.** The first-party Codex config reference
+([`model_reasoning_effort`](https://learn.chatgpt.com/docs/config-file/config-reference))
+describes it as "Reasoning effort advertised by the selected model, such as `low`,
+`medium`, `high`, `xhigh`, `max`, or `ultra`", and says "Available levels depend on the
+model and client." So both harnesses use the same five words in the same order, and the
+rule applies to both. `ultra` is outside the order, and is not a depth level: it is
+reported to run parallel subagents. It, and any other word such as `minimal`, is never
+routable for a worker. A lead whose effort is outside the order refuses a same-model
+worker, naming why, and a lower-model worker is judged on rank and the cap as usual.
+Which levels a model offers depends on the model and client, so a catalog still lists
+only what that model advertises.
+
+**Two separate questions.** *Model:* how hard is the judgement? *Effort:* how much
+verification does this need? Choose the model for the first and the effort for the
+second, and do not pay for one to answer the other.
+
+**Picking effort.** The client docs
+([model configuration](https://code.claude.com/docs/en/model-config),
+[effort](https://platform.claude.com/docs/en/build-with-claude/effort)) read as follows:
+
+- `low`: "quick exchanges where you review each result, or a small change like a
+  rename". Read-only work, or work whose every result gets reviewed, goes here.
+- `medium`: day-to-day engineering with a clear scope, such as implementing a
+  feature. A clear-scope implementation goes here.
+- `high`: "Work where verification matters or edge cases are likely".
+- "In tests on Opus 5.5 and Fable 5.1, Claude at a higher level tested more edge
+  cases and verified more of its work before answering. It also made more choices on
+  its own."
+- Haiku 5.5: start at `medium`, including agentic coding; `low` for chat and short
+  tool tasks.
+
+**A prior: reach for a lower model at higher effort before the lead's model at lower
+effort,** when the need is verification and not harder judgement. Treat this as a
+prior pending local data, not a finding; the measured comparison below is how a repo
+replaces it.
+
+**Spec ambiguity caps effort** (the rule under *Mapping + ceiling*). Effort against an
+unsettled spec buys a more confident reading, not a better one, and the fix is to fix
+the spec.
+
+**A suggested starting mapping, a prior pending local data:** light is the smallest
+model at `low` (`medium` for agentic coding), standard is the middle model at
+`medium`, deep is the middle model at `high`. A same-model worker is an explicit
+choice for hard judgement, within the table above. The prices
+([pricing](https://platform.claude.com/docs/en/about-claude/pricing)) are per million
+tokens, input/output, up to 100K-token prompts: Opus 5.5 $4/$20, Sonnet 5.5 $2/$10,
+Haiku 5.5 $0.10/$0.50. Opus costs twice Sonnet per token. The docs do not document a
+token multiplier per effort level, or a comparison between models at given levels, and
+the pricing page does not mention effort, so a cheaper pair is not proven cheaper
+overall.
+
+**The measured comparison.** To test the prior on a repo's own work, take one
+resolved work order with a settled spec and run it under two permitted pairs, for
+example the middle model at `high` and the lead's model at one level below the lead:
+
+1. Create two throwaway worktrees at the commit just before the order landed, one per
+   pair. Nothing from either is merged or pushed; both are deleted afterwards.
+2. Dispatch the same order, with the same brief, to each worktree under its pair.
+3. Record per run what the client reports for tokens, whether the order's
+   `## Verification` passed on the first pass without a revision, and the count of
+   revisions needed. Anything the client does not expose is recorded as unknown.
+4. Compare tokens against first-pass verification. One order is an anecdote; repeat
+   across several before changing the starting mapping, and keep the numbers as local
+   data in the work orders' model entries.
+
+This is documented here and is not run by the engine.
 
 ## The dispatch requirement
 
@@ -405,7 +519,12 @@ would turn the gate's own breakage into a refusal. It also never answers `allow`
 that would bypass the rest of the permission system, and "no opinion" is the honest
 answer to every question this gate was not built to answer. A **full-context fork**
 is exempt: it inherits the lead's pair and `select` refuses to route one, so
-demanding a route for a fork would redden on correct behaviour.
+demanding a route for a fork would redden on correct behaviour. That is an exemption
+from this gate, not a way to route: a fork's pair is the lead's, so it can never
+satisfy the worker rule and routed work may not use it. The gate also does not
+repeat the worker rule at the boundary: `select` refuses a violating route, so with
+the binding on no receipt can authorize one, and the dispatch announcement carries no
+lead model for the gate to compare against.
 
 **Layer 2 — machine-wide, documented and optional.** The repo-scoped layer above is
 the enforced default. An operator who wants every session covered installs the same
@@ -441,6 +560,18 @@ covering ground it does not.**
 A scaffolded repo that has lost the gate is a **canary finding**, the same shape as a
 repo-root `CLAUDE.md` that has lost its managed block — so the guardrail stops
 depending on anyone remembering it is there.
+
+**The allowed-dispatch log.** Beside the receipt, the hook appends one JSON line per
+*allowed* Agent call (timestamp, session id, model, effort, subagent type; `inherit` for
+a component no pair named) to `gitos-dispatch-log-<root digest>.jsonl` in the per-user
+temp directory, keeping the last 200. `canary.py` prints an informational line mapping
+each recorded pair to a tier through the repo's `model-optimization.json`, with
+`inherit` and `unmapped` buckets and the record count; it never changes the canary
+total or exit code, and no records or no config means no line. Limits: temp files can
+vanish, so it is a sample and not history; only repos where the hook is installed are
+counted; refused dispatches are not logged; and the reason for a tier lives in the
+orchestrator's marker and is not logged. Logging failures never alter the hook's output
+or the dispatch.
 
 ## Codex path
 

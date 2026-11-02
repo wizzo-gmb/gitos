@@ -123,6 +123,12 @@ def validate_mapping(mapping):
     require(isinstance(tiers, dict) and set(tiers) == set(TIERS), "tiers must contain light, standard, deep")
     for tier, name in tiers.items():
         require(isinstance(name, str) and name in choices, f"{tier}: unknown choice")
+        # The rule, judged against the ceiling as the recorded lead pair. `select` judges the same
+        # rule again against the lead's ACTUAL effort, which may differ from the recorded one.
+        refusal = worker_refusal(choices[name], choices[ceiling]["model"], choices[ceiling]["effort"],
+                                 choices[ceiling],
+                                 has_no_effort_levels(mapping["catalog"]["models"][choices[name]["model"]]))
+        require(refusal is None, f"{tier}: {refusal}")
         require(choices[name]["rank"] <= choices[ceiling]["rank"], f"{tier}: choice exceeds ceiling")
     ranks = [choices[tiers[t]]["rank"] for t in TIERS]
     require(ranks == sorted(ranks), "Tier ranks must be nondecreasing; equal ranks are allowed")
@@ -504,6 +510,56 @@ def has_no_effort_levels(spec):
     return isinstance(spec, dict) and spec.get("efforts") == ["default"]
 
 
+# OPERATOR POLICY, not a capability claim: no worker is dispatched above this level, whatever
+# the orchestrator runs at. The order is policy for the five documented levels only; any other
+# word has no place in it and is refused as unknown, never guessed.
+WORKER_EFFORT_CAP = "high"
+
+
+def outside_order(word):
+    """Why `word` has no place in the documented effort order. `ultra` is named: it is a level some
+    clients advertise, but it runs parallel subagents and is not a depth level."""
+    why = f"{word!r} is outside the documented order ({', '.join(EFFORT_LEVELS)})"
+    return why + ("; `ultra` is not a depth level" if word == "ultra" else "")
+
+
+def worker_refusal(choice, lead_model, lead_effort, ceiling, effortless):
+    """The orchestrator outranks every worker. -> None when `choice` may be dispatched, else the
+    refusal, which names both pairs and the clause that failed.
+
+    1. No worker's model ranks at or above the orchestrator's (ranks are the repo's policy; no
+       model name is built in). 2. A worker on the lead's own model runs at strictly lower
+       effort than the lead's. 3. A worker on any other model may use any effort up to the cap,
+       whatever the lead's effort. 4. Workers cap at `high`. Effort is compared only on the
+       same model, because the scale is calibrated per model. A model with no effort levels has
+       no effort to compare and is judged on rank alone.
+    """
+    worker = f"{choice['model']}/{choice['effort']}"
+    both = f"worker {worker} against lead {lead_model}/{lead_effort}"
+    if not effortless:
+        effort = choice["effort"]
+        if effort not in EFFORT_LEVELS:
+            return (f"Unknown worker effort ({both}): {outside_order(effort)}, so it is never "
+                    f"routable for a worker and is refused, not guessed. A routed dispatch names a level")
+        if EFFORT_LEVELS.index(effort) > EFFORT_LEVELS.index(WORKER_EFFORT_CAP):
+            return f"Clause 4 (workers cap at {WORKER_EFFORT_CAP}) refuses {both}"
+        if choice["model"] == lead_model:
+            if lead_effort not in EFFORT_LEVELS:
+                return (f"Unknown lead effort ({both}): {outside_order(lead_effort)}, so a "
+                        f"same-model worker cannot be compared with it. A worker on a lower model "
+                        f"is judged on rank and the cap")
+            at = EFFORT_LEVELS.index(effort)
+            if at >= EFFORT_LEVELS.index(lead_effort):
+                return (f"Clause 2 (a worker on the lead's model runs at strictly lower effort) "
+                        f"refuses {both}. This worker needs the lead at {EFFORT_LEVELS[at + 1]} or "
+                        f"above, or a worker below {lead_effort}")
+            return None
+    if choice["rank"] >= ceiling["rank"]:
+        return (f"Clause 1 (no worker's model ranks at or above the orchestrator's) refuses {both}: "
+                f"rank {choice['rank']} is not below the ceiling's {ceiling['rank']}")
+    return None
+
+
 def announced_session_effort(payload):
     """The SESSION's own effort as the client hands it to a hook, or None.
 
@@ -861,10 +917,19 @@ def select(config, harness, tier="standard", lead=None, lead_effort=None, runtim
     ceiling = mapping["choices"][mapping["ceiling"]]
     if lead is None or lead_effort is None:
         return stop("Actual lead model/effort unknown; establish the ceiling before routing")
-    if (lead, lead_effort) != (ceiling["model"], ceiling["effort"]):
+    # The lead's MODEL must be the ceiling's; its effort may move without a revalidation, because
+    # the rule below is judged against the lead's actual effort every time.
+    if lead != ceiling["model"]:
         return stop("Lead changed; revalidate the mapping and ceiling")
     choice = mapping["choices"][mapping["tiers"][tier]]
     result["requested"] = {"model": choice["model"], "effort": choice["effort"]}
+    # A model with no effort levels has no effort to control or evidence: the route is the
+    # model alone, and demanding effort evidence for it would bump every such light route up a
+    # tier. Only a catalog that lists `default` and nothing else qualifies.
+    effortless = has_no_effort_levels(mapping["catalog"]["models"][choice["model"]])
+    refusal = worker_refusal(choice, lead, lead_effort, ceiling, effortless)
+    if refusal is not None:
+        return stop(refusal)
     capabilities = mapping["catalog"]["models"][choice["model"]]["capabilities"]
     if not set(required).issubset(capabilities):
         return stop("Required capabilities are absent or unverified; refresh discovery or choose another route")
@@ -889,14 +954,11 @@ def select(config, harness, tier="standard", lead=None, lead_effort=None, runtim
             return stop("Native override/operator pin conflicts with route; honor pin and revalidate")
     context = runtime.get("context")
     require(context in (None, "fresh", "fork"), "context must be fresh or fork")
-    if context == "fork" and (choice["model"], choice["effort"]) != (lead, lead_effort):
-        return stop("Full-context fork inherits the lead; use a fresh worker for this route")
+    if context == "fork":
+        return stop("Full-context fork inherits the lead's pair, which can never satisfy the rule "
+                    "that a worker ranks below the lead; use a fresh worker for this route")
     if runtime.get("overrides_checked") is not True or context is None:
         return stop("Native precedence/context not established; recommendation only", "recommendation-only")
-    # A model with no effort levels has no effort to control or evidence: the route is the
-    # model alone, and demanding effort evidence for it would bump every such light route up a
-    # tier. Only a catalog that lists `default` and nothing else qualifies.
-    effortless = has_no_effort_levels(mapping["catalog"]["models"][choice["model"]])
     if context != "fork":
         model_fixed = override and override.get("model") == choice["model"]
         effort_fixed = override and override.get("effort") == choice["effort"]

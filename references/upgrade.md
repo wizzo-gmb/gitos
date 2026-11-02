@@ -294,6 +294,14 @@ the engine. A `pinned-but-auto-updates` finding is the operator's call, and turn
 `autoUpdate` off freezes every plugin from it. Also carry `audit`'s machine-wide auto-update line
 when an env var turns updates off. Never edit `known_marketplaces.json`.
 
+**4i. Post-compaction restore hook.**
+Run `python <SKILL_DIR>/scripts/compact_restore.py install <repo-root>` (scaffold lays the same
+entry). It registers a `SessionStart` hook matched on `compact|clear` and a `Stop` hook in the repo's
+`.claude/settings.json`, beside whatever is already there, and is idempotent. A repo holding the older
+`compact`-only entry has that entry's matcher widened in place (one entry, firing once per event) and
+the `Stop` entry added. The canary's `restore` category reports it missing in a scaffolded repo; this
+step is the fix. Claude Code only, and `disableAllHooks` switches it off.
+
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
 `<home>/brain/.brainmeta.json` (`engine_version` field) for a repo with a brain, else

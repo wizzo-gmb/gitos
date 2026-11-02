@@ -197,10 +197,14 @@ Lowercase `gitos`, spaced middle dots (`·`), square brackets — one greppable 
 
 | Role | `<focus>` |
 |---|---|
-| orchestrator | current WO + work-loop step |
+| orchestrator | current WO + work-loop step; on a dispatch turn also the tier and a short reason, e.g. `[gitos · orchestrator · WO-073 dispatch · standard: scoped edits]` |
 | implementer | current WO + lifecycle step |
 | diagnostic | current phase (vocabulary / scan / work-orders) |
 | inception | current interview stage (then phase, as inception proceeds) |
+
+The tier in a dispatch-turn focus makes the choice visible; it does not make it correct. The
+operator is the detector (`canary.py` also prints an informational distribution of recorded
+dispatches, never counted as a finding).
 
 Compliance is trivial while the directive layer is intact — so a missing, wrong-role, or
 stale marker is live evidence of context degradation (compaction loss, attention dilution,
@@ -231,6 +235,14 @@ refreshes it (managed-block upsert — never touching your content), and `canary
 recursion terminates at the **harness** (which guarantees `CLAUDE.md`) — the most durable layer
 reachable. It raises the water line, not to omniscience: a bloated `CLAUDE.md` loses salience
 too, so the block stays short and the operator's glance remains the final backstop.
+
+A `SessionStart` hook matched on `compact|clear` (`scripts/compact_restore.py`, laid by scaffold and
+`upgrade`) restores state after every compaction and every `/clear`: the marker line, `RESUME.md` with
+its freshness, live facts (branch, worktrees, open orders), the standing-rules pointer, a per-session
+compaction count (compaction only) and this repo's federation heartbeat. A `Stop` entry of the same hook
+asks once when a work order has landed unresolved or `RESUME.md` is behind the ledger, and only after an
+orchestrator-marked reply. Claude Code only, and hooks can be switched off (`disableAllHooks`), so it is
+a guardrail, not a proof.
 
 The operator may opt out of the marker per repo — record the opt-out; it reduces canary
 coverage to state-only.

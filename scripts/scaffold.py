@@ -283,6 +283,20 @@ def dispatch_guard_module():
         return None
 
 
+def compact_restore_module():
+    """The engine's post-compaction restore hook, loaded from this `scripts/` dir BY PATH, or None."""
+    path = Path(__file__).resolve().parent / "compact_restore.py"
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_gitos_scaffold_compact_restore", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
 def detect_home(root: Path, requested: str) -> tuple[Path, str]:
     """Return (home_dir, label). label in {'.gitos','.pipeline','outputs/debug','docs/agents'}."""
     if requested != "auto":
@@ -732,6 +746,21 @@ def main() -> int:
                 print("     A dispatch that names no task tier is now REFUSED, with a reason.")
                 print("     Claude Code only; see references/model-optimization.md for the")
                 print("     machine-wide install and the three limits this does not cover.")
+        # The post-compaction restore hook, registered beside the gate on a different event
+        # (`SessionStart`, matcher `compact`): compaction loses the live resume, the standing
+        # rules and the role marker, and this puts them back. Claude Code only.
+        restore = compact_restore_module()
+        if restore is None:
+            print("SKIP .claude/settings.json compaction restore hook — compact_restore.py not "
+                  "found beside scaffold.py")
+        else:
+            status, detail = restore.ensure_hook(root)
+            print({
+                "created": "OK   wrote .claude/settings.json (compaction restore hook)",
+                "appended": "OK   registered the compaction restore hook in .claude/settings.json",
+                "present": "SKIP .claude/settings.json compaction restore hook already registered",
+                "skipped": "SKIP .claude/settings.json left untouched",
+            }[status] + (f" — {detail}" if status == "skipped" else ""))
         for name in CLAUDE_AGENT_DEFINITIONS:
             dest = root / ".claude" / "agents" / name
             report(write_if_missing(dest, read_template(f"claude-agents/{name}.tmpl")),

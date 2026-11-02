@@ -78,6 +78,9 @@ RECEIPT_TTL_SECONDS = 900
 # is. Small tolerance for an unsynchronized clock; beyond it the receipt is not evidence.
 RECEIPT_SKEW_SECONDS = 60
 RECEIPT_PREFIX = "gitos-dispatch-receipt-"
+# The allowed-dispatch record: one JSON line per Agent call the gate let through, newest last.
+LOG_PREFIX = "gitos-dispatch-log-"
+LOG_KEEP = 200
 # THE BINDING OPT-IN: a top-level key of the repo's optimization setting, honoured only when it
 # is exactly JSON `true`. Absent, `false`, a string, a number - all OFF. Nothing writes it; an
 # operator who wants the receipt round trip enforced sets it by hand.
@@ -123,6 +126,51 @@ def receipt_path(root):
     """
     digest = hashlib.sha256(str(Path(root).resolve()).encode("utf-8")).hexdigest()
     return Path(tempfile.gettempdir()) / f"{RECEIPT_PREFIX}{digest[:16]}.json"
+
+
+def log_path(root):
+    """Where this repo's allowed-dispatch record lives: beside `receipt_path`, for its reason.
+
+    Outside the repo and keyed by the same root digest, so it never travels in a commit and two
+    checkouts never share a record. A temp file can vanish; the record is a sample, not history.
+    """
+    digest = hashlib.sha256(str(Path(root).resolve()).encode("utf-8")).hexdigest()
+    return Path(tempfile.gettempdir()) / f"{LOG_PREFIX}{digest[:16]}.jsonl"
+
+
+def log_dispatch(payload):
+    """Append one record for an ALLOWED Agent call, keeping the last LOG_KEEP. -> True if written.
+
+    Never raises: this is bookkeeping beside a gate, and any failure here must leave the dispatch
+    alone. `inherit` stands for a component no pair named. The reason a tier was chosen is not
+    known at this boundary and is not recorded.
+    """
+    try:
+        if not isinstance(payload, dict) or payload.get("tool_name") != TOOL:
+            return False
+        root = payload.get("cwd")
+        if not isinstance(root, str) or not root:
+            return False
+        tool_input = payload.get("tool_input")
+        tool_input = tool_input if isinstance(tool_input, dict) else {}
+
+        def named(value):
+            return value.strip() if isinstance(value, str) and value.strip() else "inherit"
+
+        record = {"ts": time.time(), "session": named(payload.get("session_id")),
+                  "model": named(tool_input.get("model")),
+                  "effort": named(tool_input.get("effort")),
+                  "subagent_type": named(tool_input.get("subagent_type"))}
+        path = log_path(root)
+        lines = []
+        if path.is_file():
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines.append(json.dumps(record, ensure_ascii=False))
+        with open(path, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write("\n".join(lines[-LOG_KEEP:]) + "\n")
+        return True
+    except Exception:
+        return False
 
 
 def write_receipt(root, value):
@@ -345,6 +393,8 @@ def hook_command(stream):
         decision = decide(payload)
         if decision is not None:
             print(json.dumps(decision, ensure_ascii=False))
+        else:
+            log_dispatch(payload)
     except Exception as exc:
         print(f"gitos dispatch guard: inert - {type(exc).__name__}: {exc}", file=sys.stderr)
     return 0

@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from collections import Counter
 from datetime import date, datetime, timezone
@@ -1420,6 +1421,111 @@ def resume_rule_lines(text: str) -> list[tuple[int, str]]:
     return out
 
 
+RESUME_LINE_LIMIT = 150         # the size target orchestrator.md and the template state in prose
+RESUME_RULES_HEADING_RE = re.compile(r"^#{1,6}\s+.*\brules?\b", re.IGNORECASE)
+RESUME_BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+
+
+def resume_rules_section_lines(text: str) -> list[tuple[int, str]]:
+    """Bullets under a heading naming rules that point at nothing. Shared with the selftest.
+
+    Only list items are judged: prose around a pointer is explanation, a bullet is a claim. Fenced
+    code and blank lines are skipped, and a section runs to the next heading.
+    """
+    out: list[tuple[int, str]] = []
+    in_fence = False
+    in_rules = False
+    for n, raw in enumerate(text.splitlines(), 1):
+        if FENCE.match(raw):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if raw.lstrip().startswith("#"):
+            in_rules = bool(RESUME_RULES_HEADING_RE.match(raw.lstrip()))
+            continue
+        if in_rules and RESUME_BULLET_RE.match(raw) and not RESUME_POINTER_RE.search(raw):
+            out.append((n, raw.strip()[:RESUME_LINE_CAP]))
+    return out
+
+
+def resume_stale_item(home: Path) -> dict | None:
+    """The `resume-stale` finding for a home, or None. ONE definition, shared with the `Stop` hook.
+
+    The newest ledger file on disk (INDEX.md, footprints.md, any work-order) against the RESUME's
+    mtime, with RESUME_STALE_SLACK. HONEST LIMIT: a RESUME written less than the slack before a
+    ledger edit passes even if that edit skipped the refresh, so the check catches a refresh that
+    was forgotten for minutes, not one forgotten for seconds.
+    """
+    path = home / RESUME_FILENAME
+    try:
+        resume_mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    newest_name, newest_mtime = None, 0.0
+    candidates = [home / n for n in RESUME_STATE_FILES]
+    wo_dir = home / "work-orders"
+    if wo_dir.is_dir():
+        candidates.extend(sorted(wo_dir.rglob("*.md")))
+    for c in candidates:
+        try:
+            if not c.is_file():
+                continue
+            m = c.stat().st_mtime
+        except OSError:
+            continue
+        if m > newest_mtime:
+            newest_name, newest_mtime = c.relative_to(home).as_posix(), m
+    if newest_name and newest_mtime - resume_mtime > RESUME_STALE_SLACK:
+        return {"kind": "resume-stale", "newer": newest_name,
+                "newer_mtime": int(newest_mtime),
+                "behind_seconds": int(newest_mtime - resume_mtime),
+                "finding": f"{RESUME_FILENAME} is older than {newest_name} -> the work "
+                           f"state moved on and the live resume did not; refresh it at "
+                           f"the next checkpoint (replace it wholesale, never append)"}
+    return None
+
+
+# A work order whose branch merged but whose file never left work-orders/. The one DETERMINISTIC
+# signal used is a merge commit on the current branch whose subject names a `wo-NNN` branch.
+# Chosen over "Implementer notes filled with no resolved row": in the normal flow the notes are
+# filled BEFORE the orchestrator verifies, so that state is a landing awaiting review and not a
+# missed resolution. NOT detected, by construction: a fast-forward or squash merge (no merge
+# subject names the branch) and a repo with no git. Both stay silent rather than guess.
+LANDED_MERGE_RE = re.compile(r"^Merge branch '(?:[^']*/)?wo[-_]?(\d{3})(?!\d)[^']*'", re.IGNORECASE)
+LANDED_SCAN = 400               # how many recent merge commits are read
+
+
+def landed_unresolved(home: Path) -> list[dict]:
+    """Open work orders whose `wo-NNN` branch has a merge commit on the current branch.
+
+    Read-only, git optional: any git failure returns [] (the check did not look, and a canary
+    that cannot look says nothing rather than inventing a finding). Shared with the `Stop` hook.
+    """
+    on_root, _ = _wo_files(home / "work-orders")
+    if not on_root:
+        return []
+    try:
+        cp = subprocess.run(["git", "-C", str(home), "log", "--merges", f"-n{LANDED_SCAN}",
+                             "--format=%s"], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if cp.returncode != 0:
+        return []
+    merged = {m.group(1) for line in cp.stdout.splitlines()
+              if (m := LANDED_MERGE_RE.match(line.strip()))}
+    out: list[dict] = []
+    for nnn in sorted(set(on_root) & merged):
+        name = on_root[nnn][0]
+        out.append({"kind": "landed-not-resolved", "nnn": nnn, "file": f"work-orders/{name}",
+                    "finding": f"WO-{nnn} has a merge commit for its branch on this branch but "
+                               f"work-orders/{name} is still open -> resolve it: move it to "
+                               f"resolved/, update the INDEX row, replace RESUME.md wholesale, "
+                               f"then re-run the canary"})
+    return out
+
+
 def check_resume(home: Path) -> tuple[list[dict], str | None]:
     """The live session pointer: `<home>/RESUME.md`.  -> (items, skip-reason | None).
 
@@ -1447,41 +1553,40 @@ def check_resume(home: Path) -> tuple[list[dict], str | None]:
     items: list[dict] = []
 
     # 1. freshness — the resume sitting behind the durable state it points at
-    try:
-        resume_mtime = path.stat().st_mtime
-    except OSError:
-        resume_mtime = None
-    newest_name, newest_mtime = None, 0.0
-    candidates = [home / n for n in RESUME_STATE_FILES]
-    wo_dir = home / "work-orders"
-    if wo_dir.is_dir():
-        candidates.extend(sorted(wo_dir.rglob("*.md")))
-    for c in candidates:
-        try:
-            if not c.is_file():
-                continue
-            m = c.stat().st_mtime
-        except OSError:
-            continue
-        if m > newest_mtime:
-            newest_name, newest_mtime = c.relative_to(home).as_posix(), m
-    if resume_mtime is not None and newest_name and newest_mtime - resume_mtime > RESUME_STALE_SLACK:
-        items.append({"kind": "resume-stale", "newer": newest_name,
-                      "behind_seconds": int(newest_mtime - resume_mtime),
-                      "finding": f"{RESUME_FILENAME} is older than {newest_name} -> the work "
-                                 f"state moved on and the live resume did not; refresh it at "
-                                 f"the next checkpoint (replace it wholesale, never append)"})
+    stale = resume_stale_item(home)
+    if stale is not None:
+        items.append(stale)
+
+    # 1b. size — the target existed only as prose; a resume past it is no longer a pointer file
+    n_lines = len(text.splitlines())
+    if n_lines > RESUME_LINE_LIMIT:
+        items.append({"kind": "resume-too-long", "lines": n_lines,
+                      "finding": f"{RESUME_FILENAME} is {n_lines} lines, over the "
+                                 f"{RESUME_LINE_LIMIT}-line limit -> it is replaced wholesale at "
+                                 f"every checkpoint, so keep volatile state and pointers only and "
+                                 f"move anything durable to the brain or the ledger"})
 
     # 2. the division — a STANDING RULE stated here rather than pointed at. Worth more than
     #    freshness: a stale resume costs a reader some confusion, but a rule written here is
     #    DESTROYED by the next checkpoint, which makes this file the cause of the goal drift
     #    the whole arrangement exists to prevent.
-    for n, line in resume_rule_lines(text):
+    rule_lines = resume_rule_lines(text)
+    for n, line in rule_lines:
         items.append({"kind": "resume-standing-rule", "line": n, "text": line,
                       "finding": f"{RESUME_FILENAME}:{n} states a standing rule rather than "
                                  f"pointing at one -> this file is replaced wholesale at every "
                                  f"checkpoint, so the rule would be destroyed by the next "
                                  f"rotation; move it to the brain and point at it from here"})
+    # 3. the same division judged by SHAPE: a bullet under a rules heading that points at nothing.
+    #    A line already reported above is not reported twice.
+    seen_lines = {n for n, _ in rule_lines}
+    for n, line in resume_rules_section_lines(text):
+        if n in seen_lines:
+            continue
+        items.append({"kind": "resume-rules-section", "line": n, "text": line,
+                      "finding": f"{RESUME_FILENAME}:{n} sits in a rules section but is not a "
+                                 f"pointer -> a rules section here holds pointers only; move "
+                                 f"the content to the brain and point at it from here"})
     return items, None
 # ------------------------------------------------- the harness category (OPTIONAL, WO-052)
 # Same rule as `federation` above: NOT-APPLICABLE IS NOT SKIPPED. A repo with no
@@ -1490,7 +1595,7 @@ def check_resume(home: Path) -> tuple[list[dict], str | None]:
 # skip. The drift logic lives in ONE place (scripts/harness.py); this only delegates, the way the
 # brain check delegates to brain_lint. It reads the machine's Claude config resolved from the
 # environment (HOME / CLAUDE_CONFIG_DIR), read-only.
-OPTIONAL_CATEGORIES = OPTIONAL_CATEGORIES + ("harness",)
+OPTIONAL_CATEGORIES = OPTIONAL_CATEGORIES + ("harness", "restore")
 HARNESS_FILENAME = "harness.json"
 HARNESS_TOOL = "harness.py"
 
@@ -1586,6 +1691,62 @@ def check_dispatch_gate(root: Path, skill_dir: Path | None) -> tuple[list[dict],
     return items, None
 
 
+def _matcher_covers(matcher: object, source: str) -> bool:
+    """True when a hook matcher of plain names (`compact|clear`) lists `source` exactly."""
+    return isinstance(matcher, str) and source in re.split(r"[|,\s]+", matcher)
+
+
+def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict], str | None]:
+    """The post-compaction restore hook in the repo's committed `.claude/settings.json`.
+    -> (items, skip-reason | None-if-compared).
+
+    Same shape and the same applicability as `check_dispatch_gate`: the caller applies it only to
+    a repo carrying the anchor. Identity is the `args` list read from the installed hook. REPORTS,
+    NEVER FIXES: laying it is `/gitos upgrade` work. Repo layer only, and hooks are switchable off
+    by configuration (disableAllHooks), so this is a guardrail, not a proof.
+    """
+    items: list[dict] = []
+    if skill_dir is None:
+        return items, "no skill install found"
+    hook_path = skill_dir / "scripts" / "compact_restore.py"
+    if not hook_path.is_file():
+        return items, "the installed skill ships no compact_restore.py"
+    try:
+        expected = _load_module("_gitos_canary_compact_restore", hook_path).hook_entry()["args"]
+    except Exception as e:
+        return items, f"the installed compact_restore.py could not be read ({type(e).__name__})"
+    settings = root / ".claude" / "settings.json"
+    fix = "run `/gitos upgrade` to lay it"
+    if not settings.is_file():
+        items.append({"kind": "restore-missing",
+                      "finding": f"a scaffolded repo with no .claude/settings.json -> the "
+                                 f"post-compaction restore hook is absent, so working state is "
+                                 f"not restored after a compaction; {fix}"})
+        return items, None
+    try:
+        doc = json.loads(settings.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as e:
+        items.append({"kind": "cannot-read",
+                      "finding": f".claude/settings.json could not be read as JSON "
+                                 f"({type(e).__name__}) -> the post-compaction restore hook "
+                                 f"cannot be verified; fix the file, then re-run"})
+        return items, None
+    hooks = doc.get("hooks") if isinstance(doc, dict) else None
+    groups = hooks.get("SessionStart") if isinstance(hooks, dict) else None
+    found = any(isinstance(h, dict) and h.get("args") == expected
+                for g in (groups if isinstance(groups, list) else [])
+                if isinstance(g, dict) and _matcher_covers(g.get("matcher"), "compact")
+                and isinstance(g.get("hooks"), list)
+                for h in g["hooks"])
+    if not found:
+        items.append({"kind": "restore-missing",
+                      "finding": f".claude/settings.json registers no gitos post-compaction "
+                                 f"restore hook on SessionStart/compact -> working state is not "
+                                 f"restored after a compaction; {fix}. Repo layer only; hooks "
+                                 f"are switchable off by configuration (disableAllHooks)"})
+    return items, None
+
+
 def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         registry: "str | None" = None, now: "datetime | None" = None) -> dict:
     r: dict = {"home": str(home), "skill_dir": str(skill_dir) if skill_dir else None,
@@ -1616,6 +1777,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
     # ledger + link rot
     if (home / "INDEX.md").is_file() or (home / "work-orders").is_dir():
         r["ledger"].extend(check_ledger(home))
+        r["ledger"].extend(landed_unresolved(home))
         r["links"].extend(check_links(home))
         checked.update(("ledger", "links"))
     else:
@@ -1717,6 +1879,12 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
             checked.add("dispatch")
         else:
             skip("dispatch", d_reason)
+        c_items, c_reason = check_compact_restore(home.parent, skill_dir)
+        r["restore"] = c_items
+        if c_reason is None:
+            checked.add("restore")
+        else:
+            skip("restore", c_reason)
 
     active = CATEGORIES + tuple(k for k in OPTIONAL_CATEGORIES if k in r)
     for k in active:          # a category with findings is by definition checked
@@ -1725,6 +1893,63 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
     r["checked"] = sorted(checked)
     r["total"] = sum(len(r[k]) for k in active)
     return r
+
+
+def dispatch_distribution(home: Path, skill_dir: Path | None) -> str | None:
+    """INFORMATIONAL: the tier distribution over the recorded allowed dispatches, or None.
+
+    REPORTING ONLY. It never touches `r`, so it cannot change the total or the exit code. No
+    records, no mapping, or anything unreadable -> None and no line. Garbage lines in the record
+    are skipped. The count is stated so a thin sample reads as thin. Each (model, effort) pair is
+    mapped to a tier through the repo's own model-optimization.json; `inherit` is a dispatch that
+    named no pair, `unmapped` one that names a pair no tier uses. A pair several tiers share is
+    reported under all of them.
+    """
+    try:
+        candidates = [p for p in ((skill_dir / "scripts" / "dispatch_guard.py") if skill_dir else None,
+                                  Path(__file__).resolve().parent / "dispatch_guard.py")
+                      if p is not None and p.is_file()]
+        if not candidates:
+            return None
+        guard = _load_module("_gitos_canary_dispatch_log", candidates[0])
+        cfg_path = home / "model-optimization.json"
+        if not cfg_path.is_file():
+            return None
+        mapping = json.loads(cfg_path.read_text(encoding="utf-8-sig"))["harnesses"]["claude"]
+        choices, tiers = mapping["choices"], mapping["tiers"]
+        log = guard.log_path(home.parent)
+        if not log.is_file():
+            return None
+        records = []
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and isinstance(rec.get("model"), str) and isinstance(rec.get("effort"), str):
+                records.append(rec)
+        if not records:
+            return None
+        counts: Counter = Counter()
+        for rec in records:
+            model, effort = rec["model"], rec["effort"]
+            if model == "inherit" and effort == "inherit":
+                counts["inherit"] += 1
+                continue
+            hit = []
+            for tier in ("light", "standard", "deep"):
+                c = choices.get(tiers.get(tier))
+                if not isinstance(c, dict) or not isinstance(c.get("model"), str):
+                    continue
+                want = c.get("effort")
+                if model != "inherit" and guard.same_model(model, c["model"]) and (effort == want or (effort == "inherit" and want == "default")):
+                    hit.append(tier)
+            counts["/".join(hit) if hit else "unmapped"] += 1
+        body = ", ".join(f"{k} {n}" for k, n in sorted(counts.items()))
+        return (f"[info] Dispatch tiers over the last {len(records)} recorded allowed "
+                f"dispatch(es): {body}. Informational; a sample, not a count of every dispatch.")
+    except Exception:
+        return None
 
 
 def print_report(r: dict) -> None:
@@ -1757,6 +1982,8 @@ def print_report(r: dict) -> None:
     # no line rather than a "skipped (not applicable)" one.
     if "dispatch" in r:
         sections.append(("Dispatch tier gate (repo .claude/settings.json)", "dispatch"))
+    if "restore" in r:
+        sections.append(("Post-compaction restore hook (repo .claude/settings.json)", "restore"))
     skips: dict[str, list[dict]] = {}
     for s in r["skipped"]:
         skips.setdefault(s["check"].split(":")[0], []).append(s)
@@ -1777,6 +2004,9 @@ def print_report(r: dict) -> None:
             sub = s["check"].split(":", 1)
             label = f"{title} [{sub[1]}]" if len(sub) > 1 else title
             print(f"[--] {label}: skipped ({s['reason']})")
+    info = dispatch_distribution(Path(r["home"]), Path(r["skill_dir"]) if r["skill_dir"] else None)
+    if info:
+        print(info)
     print(f"\n{'CLEAN - nothing flagged.' if total == 0 else f'{total} item(s) flagged. The canary reports; fixes are normal orchestrator/implementer work - resolution stays gated while red.'}")
 
 

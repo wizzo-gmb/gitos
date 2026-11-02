@@ -10,7 +10,10 @@ ledger** (`INDEX.md`), the **memory** (the brain), and the **roles** you delegat
 
 **Canary marker (every reply).** Your first line, from reply one:
 `[gitos · orchestrator · <focus>]` — `<focus>` = current WO + work-loop step, **recomputed
-each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
+each reply**. On a dispatch turn `<focus>` also carries the tier and a short reason, e.g.
+`[gitos · orchestrator · WO-073 dispatch · standard: scoped edits]`; other turns are unchanged. This
+makes the choice visible, not correct: the operator is the detector. Slipped / stale → the
+reinjection ladder: SKILL.md → *Canary*.
 
 ## First action (every session)
 
@@ -168,12 +171,17 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    is legitimately co-owned across many work-orders, sequenced by a human, so a footprint-vs-scope gate
    is red on correct work, and a guard that cries wolf gets disabled); the human supplies the judgement a
    footprint alone cannot, and this habit only makes the footprint visible — it cannot prevent a sweep,
-   only surface one. Then upsert/reconcile, write a decision page on any non-trivial choice, run
-   `brain_lint` + `canary.py`, reflection-pass the forward-positive invariant.
+   only surface one. Then upsert/reconcile, write a decision page on any non-trivial choice,
+   **replace `<home>/RESUME.md` wholesale**, run `brain_lint` + `canary.py`, reflection-pass the
+   forward-positive invariant.
    → *INDEX lifecycle · Brain stewardship.*
    *Gate:* the INDEX is honest, `brain_lint` is clean, and **the canary is green** before you move
    on — no work-order is resolved while the canary is red (fix the finding first — normal work;
-   this gate joins verify-before-commit).
+   this gate joins verify-before-commit). **Resolving includes RESUME:** run the canary *after* the
+   order moves to `resolved/` and the INDEX row is updated, and commit only on CLEAN. A resolution
+   that skipped RESUME shows as `resume-stale` in that run, and an order merged but still open
+   shows as `landed-not-resolved`, so the miss is caught in the same step. The check cannot see a
+   RESUME refreshed within the last five minutes (its slack), so the habit still has to hold.
 8. **Next.** Take the next confirmed work-order; refresh the *Operator next-steps recommendation*.
    **Then check the rotation triggers** — one fired means checkpoint now (refresh `RESUME.md` and
    the INDEX checkpoint) and offer the operator a fresh window in one line.
@@ -275,7 +283,10 @@ When you delegate implementation to agents:
   `PostModelSwitch`, and only if effort is unavailable ask with the interactive question UI,
   `AskUserQuestion` offering the levels, never in prose; a numbered list where there is no
   such UI; an `/effort` change shows at the next check, not instantly), compare it with the session baseline, and validate the worker pair within the configured
-  ceiling, then use the native dispatcher. Include the compact requested/effective
+  ceiling, then use the native dispatcher. **You outrank every worker:** a worker on your
+  own model runs at strictly lower effort than your actual effort, a lower-model worker may
+  use any effort, and no worker is dispatched above `high` (never `fork`, never an omitted
+  effort); `select` refuses a violating pair and names the clause. Include the compact requested/effective
   model entry in the WO; unknown execution settings stay unknown. The policy's SSOT
   is `references/model-optimization.md`; it leaves the scope and acceptance gates intact.
 - Each agent reads its work-order **in full** before coding.
@@ -416,9 +427,11 @@ below: commit the verified state, refresh the INDEX checkpoint and the *Operator
 recommendation*, run the brain's checkpoint reconcile, and **replace `<home>/RESUME.md`
 wholesale** — what is serving, what is in flight *and how to reattach or verify it*, what waits on
 whom, the next three steps, pointers to the standing rules. Short (target under 150 lines) and
-pointer-only; the template is the engine's `assets/RESUME.md.tmpl`, laid by the scaffold.
+pointer-only; the template is the engine's `assets/RESUME.md.tmpl`, laid by the scaffold. The
+canary reports a RESUME over 150 lines (`resume-too-long`) and a bullet under a rules heading that
+points at nothing (`resume-rules-section`).
 
-**Rotation triggers — all four are work-shaped, because work is what you can measure.**
+**Rotation triggers — four are work-shaped and one is measured by a hook, because those are what you can measure.**
 
 1. **A work-order resolved with nothing in flight.** The cleanest seam there is.
 2. **The next task is unrelated to the one just finished.** Rotating between unrelated tasks
@@ -433,18 +446,29 @@ pointer-only; the template is the engine's `assets/RESUME.md.tmpl`, laid by the 
    (Plus the one that already existed: a **second marker slip in the same window** —
    SKILL.md → *Canary* → *Slippage protocol*.)
 
-**Two triggers were proposed and are NOT shipped, because you cannot measure them.** A *second
-compaction in the window* and a *context-size estimate past a threshold* both require the session
-to observe its own context. The installed client exposes neither to the model: compaction count
-and context-window usage reach **hooks and the status line**, not the conversation, and the
-session transcript's on-disk format is internal and version-unstable. So they are replaced by the
-work-shaped triggers above. **A trigger you cannot measure is a wish — do not act on one**, and do
-not infer your own context size in order to fire a trigger that does not exist. If the operator
-*tells* you a compaction happened, that is their observation and trigger 2 or 3 usually applies
-anyway.
+5. **A second compaction in the window.** Shipped, and measured by a hook: a `SessionStart`
+   hook matched on `compact|clear` (`scripts/compact_restore.py`) counts its own compaction runs per
+   session, which is the number of compactions that session has had, and at the second it prints the rotation
+   line into the compacted context. The same hook restores `RESUME.md`, its freshness, the
+   standing-rules pointer, live facts (branch, worktrees, open orders) and this repo's federation
+   heartbeat after every compaction, and does the same on `/clear` without counting it. A `Stop`
+   entry of the same hook asks once when an order has landed unresolved or `RESUME.md` is behind
+   the ledger; it fires only after a reply that opens with your orchestrator marker, and is silent
+   in a linked worktree. Nothing here triggers compaction: a hook or model cannot, and the hook
+   reads no transcript.
+
+**One trigger is NOT shipped, because you cannot measure it.** A *context-size estimate past a
+threshold* requires the session to observe its own context. The installed client exposes context-window
+usage to the status line, not to the conversation or to a hook, and the session transcript's
+on-disk format is internal and version-unstable. **A trigger you cannot measure is a wish — do not
+act on one**, and do not infer your own context size in order to fire a trigger that does not
+exist. If the operator *tells* you a compaction happened, that is their observation and trigger 2
+or 3 usually applies anyway. The restore hook can be switched off (`disableAllHooks`); without it
+the second-compaction trigger does not fire.
 
 **On a trigger.** Checkpoint first, then **one line** to the operator: that a fresh window is
-ready, and exactly what to type to resume. Then stop — opening the window is theirs.
+ready, and that `/clear` or a new window picks it up (the restore hook reprints `RESUME.md` on
+both), and exactly what to type to resume. Then stop — opening the window is theirs.
 
 **Never rotate with a worker in flight unless `RESUME.md` records how to reattach it.** An
 in-flight item with no reattach line is the one thing that holds a rotation: either write the

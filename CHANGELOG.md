@@ -18,6 +18,36 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v41 — 2026-11-02
+breaking: no
+
+**The engine keeps its own state through compaction, and the orchestrator outranks every worker.** Four
+work-orders. One was filed by a sibling gitos through federation, and every claim about Claude Code or Codex
+behaviour was checked against first-party docs.
+
+- **Working state comes back after `/compact` and `/clear`** (WO-074, WO-076). A `SessionStart` hook prints
+  `RESUME.md` with its freshness, live facts (branch, worktrees, open work orders), the standing-rules pointer and,
+  after a compaction, the session's compaction count. A second compaction in one window is now a measured rotation
+  trigger. Tested on a real `/compact` and a real `/clear`. *Not claimed:* that anything triggers compaction; the
+  docs offer no way to.
+- **RESUME stays current without bloating** (WO-076). Refreshing it is part of resolving a work order, and the canary
+  runs again before the commit. A work order that landed but was never resolved is a canary finding, and a `Stop`
+  hook raises it once in an orchestrator window, honouring the documented loop guard. RESUME over 150 lines, or
+  holding rules instead of pointers, is a finding.
+- **The orchestrator outranks every worker** (WO-075, an operator rule). No worker's model ranks above the lead's; a
+  worker on the lead's own model runs at strictly lower effort; a worker on a lower model may use any effort up to
+  `high`; no worker runs above `high`. Claude and Codex share the documented order, and a word outside it (`ultra`,
+  `minimal`) is never routable. A new SOP in `references/model-optimization.md` separates the model question (how hard
+  is the judgement) from the effort question (how much verification), with the docs' guidance per level. *Not
+  claimed:* that a cheaper pair is cheaper overall; no token multiplier per level is documented. **A repo whose
+  mapping routes a worker at the lead's own pair now fails validation until it is re-mapped.**
+- **Dispatch tier is visible** (WO-073, filed by a sibling through federation). The anchor carries the tier rule, the
+  marker names the tier and reason on a dispatch turn, and the canary reports the recent tier distribution as
+  information only.
+- **A repo can carry its own root `CLAUDE.md` without shipping it**: `sync_to_live` excludes it.
+
+---
+
 ## v40 — 2026-10-30
 breaking: no
 
