@@ -18,6 +18,30 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v42 — 2026-11-02
+breaking: no
+
+**One worktree per work order, and nothing lingers after it lands** (WO-077).
+
+- **`scripts/worktree.py`.** `new NNN` makes `.claude/worktrees/wo-NNN` on branch `wo-NNN` from the
+  current `HEAD`, so the implementer sees the unpushed commit its work order sits on, and makes sure
+  `.claude/worktrees/` is git-ignored. `reap NNN` / `reap --merged` removes a worktree and its branch
+  only when the branch is merged and the tree is clean; git's own refusals are the safety, and it never
+  uses `--force`, `-D` or `unlock`. `status` classes every worktree and `wo-NNN` / `worktree-*` branch
+  as in flight, reapable, abandoned or dirty.
+- **The orchestrator uses worktrees by default.** Every implementer that edits files is dispatched into
+  its own worktree. Two worktrees may touch the same file, with the merge order planned up front; a
+  single checkout keeps the disjoint-files rule. A worktree is reaped before its order resolves.
+  Claude Code's built-in `isolation: "worktree"` is named only for repos that set
+  `worktree.baseRef: "head"`, because its default base is the remote's default branch.
+- **Leftovers are findings.** The canary has a `worktree` category: `worktree-reapable` names the
+  `reap` command, `worktree-abandoned` goes to the operator. The `Stop` backstop names a reapable
+  worktree once. The restore text classes each worktree. `upgrade` reaps merged leftovers, and
+  `scaffold` adds the ignore line to an existing repo.
+- *Not claimed:* a live run of the built-in subagent isolation; it is fixture-tested only.
+
+---
+
 ## v41 — 2026-11-02
 breaking: no
 

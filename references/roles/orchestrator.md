@@ -61,7 +61,9 @@ Bootstrap your state before doing anything:
    installed skill's `scripts/canary.py`) and report **one line**: `canary: CLEAN`, or the
    findings first — forward-positive, cause + correction ("counts.decisions=16, files=17 →
    set 17"). Findings never block starting work; a red canary does block resolving any
-   work-order (work-loop step 7). SSOT: SKILL.md → *Canary*.
+   work-order (work-loop step 7). SSOT: SKILL.md → *Canary*. Then run
+   `python ~/.claude/skills/gitos/scripts/worktree.py status`: a reapable leftover is reaped at once
+   (`reap --merged`), an abandoned one is raised to the operator.
 8. **Federation intake — only if `<home>/intake/` exists.** Run
    `python ~/.claude/skills/gitos/scripts/federation.py intake <repo-root>` and report the
    **count and the metadata lines it prints, verbatim**. Another repo has filed a finding here and
@@ -100,7 +102,7 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
 
 1. **Bootstrap.** Load state — handoff (once), `INDEX.md`, brain, engine-drift check, ensure-git,
    federation heartbeat (federated repos only; absent → no step), state-canary (one-line report),
-   federation intake surface (only if `<home>/intake/` exists; metadata only).
+   `worktree.py status`, federation intake surface (only if `<home>/intake/` exists; metadata only).
    → *First action.*
    - **Check for lenses.** If `<home>/agents/index.md` — or the global library
      `<skill>/agents/index.md` — lists a lens whose `domain` /
@@ -133,9 +135,19 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    topology** — a fresh window per work-order (clean budget, isolation) is the default, but you may
    batch similar/related work into one window, or pick sequence vs. parallel, to optimize context
    usage. Pin disjoint files for anything concurrent + the chosen Option; state the scope bound.
+   **Every implementer that edits files is dispatched into its own worktree, by default and without
+   being asked:** `python ~/.claude/skills/gitos/scripts/worktree.py new NNN` makes `.claude/worktrees/wo-NNN` on
+   branch `wo-NNN` from the current `HEAD` and prints the path to dispatch into. Your own state edits
+   (INDEX, RESUME, brain, work orders) stay on the main checkout, and your cwd never enters a worktree.
+   The built-in `isolation: "worktree"` is the alternative only for a repo whose settings set
+   `worktree.baseRef: "head"`: its default base is the remote's default branch, which lacks the
+   unpushed commits a locally authored work order sits on. Two worktrees may touch the same file; the
+   overlap surfaces at merge, so plan the merge order up front and resolve append-only conflicts (a
+   gate list, a changelog) by keeping both sides. Parallel dispatch into ONE checkout keeps the
+   disjoint-files rule.
    → *Dispatch + verify.*
    *Gate:* no edit begins until the plan is approved and the scope bound is stated; **anything
-   concurrent touches disjoint files.**
+   concurrent in one checkout touches disjoint files.**
 4. **Verify the landing — accept or revise.** On return, read the diff yourself (`git diff` / grep /
    targeted reads; the worker's report is a claim, not evidence), then hand it to the operator. If the
    operator wants changes, **write them into the WO's `## Revisions` section** (scoped, the way you
@@ -156,7 +168,10 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    Caught there it is **unstaged**, not excused — the gate below forbids committing it. **Disclosure is
    for the sweep you find too late:** once the commit exists, name it in the next one and correct
    forward; never rewrite a published commit to look clean. The ledger is an audit trail, not a tidy
-   story — and a sweep you hid is a boundary failure with the evidence deleted.
+   story — and a sweep you hid is a boundary failure with the evidence deleted. **A worktree
+   landing:** merge the `wo-NNN` branch, verify on the merged result, then run
+   `worktree.py reap NNN` *before* step 7 resolves the order, so the canary run that closes resolution
+   sees no leftover. Never stage a worktree path.
    *Gate:* **nothing is committed before steps 4–5 pass** — no commit of an unverified or
    un-adjudicated landing — and **the staged set matches this work-order's scope.**
 7. **Update INDEX + maintain the brain.** Move the item open→resolved (with sha), and **record that

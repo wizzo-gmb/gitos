@@ -174,6 +174,12 @@ never block *starting* work; **no work-order is resolved while the canary is red
 gate joins verify-before-commit). Scope is home state only — domain artifacts (outputs,
 data, logs) stay the diagnostic role's judgment territory.
 
+**Worktree lifecycle — `scripts/worktree.py`.** Every implementer that edits files works in its own
+worktree: `new NNN` makes `.claude/worktrees/wo-NNN` on branch `wo-NNN` from the current `HEAD`,
+`reap NNN` / `reap --merged` removes a merged, clean one (git's own refusals are the safety; never
+`--force`, `-D` or `unlock`), `status` classes each as in flight / reapable / abandoned / dirty. The
+canary reports `worktree-reapable` and `worktree-abandoned` leftovers; it never deletes.
+
 **The gate binds on *actionable* findings — category descoping.** The canary encodes the
 engine's own conventions as its defaults, and a healthy repo may legitimately differ. A
 convention mismatch must never freeze a healthy ledger, so an operator (or a repo's BRIDGE,
@@ -415,4 +421,5 @@ it with a one-line reason.
 - `scripts/scaffold.py` — lays the `.gitos/` tree + brain (idempotent).
 - `scripts/brain_lint.py` — deterministic brain health/redundancy detector (read-only).
 - `scripts/canary.py` — deterministic home-state canary (read-only; report at bootstrap, gate at resolution).
+- `scripts/worktree.py` — one worktree per work order: `new`, `reap` (merged and clean only), `status`; the classification the canary and the `Stop` backstop share.
 - `scripts/federation.py` — the federation primitive: opt-in file + groups, per-tenant registry, bootstrap heartbeat, the one `reachable()` predicate, the ONE authorization path (act-time re-read of the target's own file) behind both `consult` and `file`, the single function that writes into another repo's `intake/`, and the metadata-only `intake` reader.

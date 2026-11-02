@@ -20,6 +20,10 @@ cover:
   - live session resume     (<home>/RESUME.md: sitting behind the durable state it points at, and
                              — the one worth more than freshness — holding a STANDING RULE
                              instead of a pointer to one, which the next checkpoint would destroy)
+  - lingering worktrees     (a merged, clean `wo-NNN` / `worktree-*` worktree or branch still
+                             present = `worktree-reapable`; unmerged work whose work order is
+                             resolved or missing = `worktree-abandoned`. Classified by
+                             worktree.py; the canary never deletes anything)
   - federation (optional)   (a FEDERATED repo's OWN presence record: missing, corrupt, or not
                              refreshed recently = the bootstrap heartbeat is not running; plus
                              its OWN intake hygiene — a malformed proposal, one from a sender
@@ -60,7 +64,7 @@ from urllib.parse import unquote
 
 PAGE_TYPES = ("sources", "entities", "concepts", "decisions")   # brain_lint's constant
 CATEGORIES = ("ledger", "counts", "stamp", "lenses", "links", "brain", "anchor", "tool",
-              "resume")
+              "resume", "worktree")
 # The engine's home tool copies (WO-034). <home>/tools/ holds byte-copies of the engine's own
 # scripts — engine artifacts, a cache of the installed skill that the briefs invoke by home
 # path. `upgrade` refreshes them (references/upgrade.md step 4); this category is what NOTICES
@@ -1526,6 +1530,72 @@ def landed_unresolved(home: Path) -> list[dict]:
     return out
 
 
+# ------------------------------------------------------------- the worktree category (WO-077)
+# A worktree made for a work order (scripts/worktree.py) and left behind after it landed is a leak:
+# a directory, a branch, and sooner or later a `git add -A` that records it as a gitlink. The
+# CLASSIFICATION lives in worktree.py and is IMPORTED here (loaded by path, the way
+# compact_restore.py loads this file), not copied: the tool, this category and the `Stop` hook
+# must agree on what "reapable" means, and a second copy is the way they stop agreeing.
+#
+# TWO KINDS, and only these two are findings:
+#   worktree-reapable   merged into the current branch and clean, still present -> `reap`.
+#   worktree-abandoned  unmerged work with nobody to finish it -> the OPERATOR decides (merge it, or
+#                       remove it by hand). This category never suggests forcing anything.
+# In flight, and dirty with an open work order, are live work and are not findings.
+#
+# READ-ONLY AND GIT-OPTIONAL, like landed_unresolved: git absent or failing is a VISIBLE skip (the
+# check did not look), never a finding and never a crash. It deletes nothing, here or anywhere.
+WORKTREE_TOOL = "worktree.py"
+_WORKTREE_MODULE: list = []
+
+
+def worktree_module(skill_dir: "Path | None" = None):
+    """The sibling worktree.py (or the skill's), loaded by path once, or None. Never raises."""
+    if _WORKTREE_MODULE:
+        return _WORKTREE_MODULE[0]
+    candidates = [Path(__file__).resolve().parent / WORKTREE_TOOL]
+    if skill_dir is not None:
+        candidates.append(Path(skill_dir) / TOOL_SRC_DIR / WORKTREE_TOOL)
+    for cand in candidates:
+        if cand.is_file():
+            try:
+                mod = _load_module("_gitos_worktree", cand)
+            except Exception:
+                continue
+            _WORKTREE_MODULE.append(mod)
+            return mod
+    return None
+
+
+def worktree_inventory(home: Path, skill_dir: "Path | None" = None):
+    """-> (worktree module, inventory dict), either None when it could not be read. Shared with
+    the `Stop` hook and the restore text."""
+    mod = worktree_module(skill_dir)
+    if mod is None:
+        return None, None
+    try:
+        return mod, mod.inventory(mod.root_for_home(home), home)
+    except Exception:
+        return mod, None
+
+
+def worktree_items(home: Path, skill_dir: "Path | None" = None) -> list[dict]:
+    """The worktree findings for a home, or [] when nothing could be read. Shared with the `Stop`
+    hook, which raises only the reapable ones."""
+    mod, inv = worktree_inventory(home, skill_dir)
+    return mod.findings(inv) if inv is not None else []
+
+
+def check_worktrees(home: Path, skill_dir: "Path | None") -> tuple[list[dict], str | None]:
+    """-> (items, skip-reason | None)."""
+    mod, inv = worktree_inventory(home, skill_dir)
+    if mod is None:
+        return [], f"{WORKTREE_TOOL} not found beside canary.py or in the skill"
+    if inv is None:
+        return [], "git could not be read here (no repository, or git failed)"
+    return mod.findings(inv), None
+
+
 def check_resume(home: Path) -> tuple[list[dict], str | None]:
     """The live session pointer: `<home>/RESUME.md`.  -> (items, skip-reason | None).
 
@@ -1861,6 +1931,14 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         checked.add("resume")
     else:
         skip("resume", rs_reason)
+    # lingering worktrees: reapable and abandoned ones. Read-only; a git that cannot be read is a
+    # visible skip.
+    w_items, w_reason = check_worktrees(home, skill_dir)
+    r["worktree"].extend(w_items)
+    if w_reason is None:
+        checked.add("worktree")
+    else:
+        skip("worktree", w_reason)
     # harness: optional, same not-applicable-is-not-skipped rule (see OPTIONAL_CATEGORIES).
     h_items, h_reason, h_applicable = check_harness(home, skill_dir)
     if h_applicable:
@@ -1970,6 +2048,7 @@ def print_report(r: dict) -> None:
         ("Durable anchor (CLAUDE.md recovery seed)", "anchor"),
         ("Engine tool copies (<home>/tools/ vs skill)", "tool"),
         ("Live session resume (fresh; pointers, not rules)", "resume"),
+        ("Lingering worktrees (reapable / abandoned)", "worktree"),
     ]
     # The optional category prints ONLY when this repo has it. An unfederated repo gets no line
     # at all — not even a "skipped (not applicable)" one, which would be reporting a check that

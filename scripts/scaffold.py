@@ -297,6 +297,20 @@ def compact_restore_module():
         return None
 
 
+def worktree_module():
+    """The engine's worktree lifecycle tool, loaded from this `scripts/` dir BY PATH, or None."""
+    path = Path(__file__).resolve().parent / "worktree.py"
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_gitos_scaffold_worktree", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
 def detect_home(root: Path, requested: str) -> tuple[Path, str]:
     """Return (home_dir, label). label in {'.gitos','.pipeline','outputs/debug','docs/agents'}."""
     if requested != "auto":
@@ -796,6 +810,23 @@ def main() -> int:
                 report(write_if_missing(ga, STARTER_GITATTRIBUTES), ga, root)
                 print("     Starter .gitignore/.gitattributes laid. The baseline COMMIT is the")
                 print("     inception agent's next step (scaffold lays files; it never commits).")
+
+    # ---- worktrees are never tracked (WO-077) -----------------------------
+    # Each implementer works in `.claude/worktrees/wo-NNN` (scripts/worktree.py). A path that is
+    # not ignored is one `git add -A` away from being recorded as a gitlink, so an EXISTING repo
+    # gets the one line, commented, appended when it is missing (idempotent: ignored already ->
+    # no write). A repo with no git has nothing to ignore into; a fresh `git init` above has
+    # already run, so it is covered here too. The line is left for the next commit - scaffold
+    # lays files and never commits.
+    if not diagnostic_only and has_git(root):
+        wt = worktree_module()
+        if wt is None:
+            print("SKIP .gitignore worktree line - worktree.py not found beside scaffold.py")
+        elif wt.toplevel(root) is not None:
+            if wt.ensure_ignored(root):
+                print(f"OK   appended `{wt.IGNORE_LINE}` to .gitignore (agent worktrees are never tracked)")
+            else:
+                print(f"SKIP .gitignore already ignores {wt.IGNORE_LINE}")
 
     # ---- live session resume (WO-053) -------------------------------------
     # `<home>/RESUME.md` is the store for what is true RIGHT NOW: replaced wholesale at every

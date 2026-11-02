@@ -302,6 +302,12 @@ entry). It registers a `SessionStart` hook matched on `compact|clear` and a `Sto
 the `Stop` entry added. The canary's `restore` category reports it missing in a scaffolded repo; this
 step is the fix. Claude Code only, and `disableAllHooks` switches it off.
 
+**4j. Worktree leftovers.**
+Run `python <SKILL_DIR>/scripts/worktree.py status <repo-root>` (read-only). Reap the reapable
+leftovers it lists with `reap --merged` (git's own refusals stay the safety: nothing unmerged or
+dirty is removed), and raise any abandoned one to the operator, who merges it or removes it by hand.
+Scaffold has already made sure `.claude/worktrees/` is in `.gitignore`.
+
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
 `<home>/brain/.brainmeta.json` (`engine_version` field) for a repo with a brain, else

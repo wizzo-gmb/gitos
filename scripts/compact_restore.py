@@ -149,6 +149,41 @@ def _canary():
         return None
 
 
+def _worktree_lines(root, home):
+    """The live-facts lines for worktrees and lingering branches, classed by worktree.py (through
+    the canary, which owns the shared classification). -> list of lines, [] when there is nothing
+    to say, or None when the classification is unavailable (the caller falls back to a bare list).
+    """
+    canary = _canary()
+    if canary is None:
+        return None
+    try:
+        mod, inv = canary.worktree_inventory(home)
+    except Exception:
+        return None
+    if inv is None:
+        return None
+    items = inv["items"]
+    with_tree = [i for i in items if i["path"]]
+    branch_only = [i for i in items if not i["path"]]
+    out = []
+    if with_tree:
+        shown = ", ".join(f"{Path(i['path']).name} [{i['branch']}] {i['class']}"
+                          for i in with_tree[:WORKTREE_CAP])
+        more = len(with_tree) - WORKTREE_CAP
+        out.append(f"Worktrees: {shown}{f' (+{more} more)' if more > 0 else ''}.")
+    if branch_only:
+        parts = []
+        for cls in ("reapable", "abandoned"):
+            names = [i["name"] for i in branch_only if i["class"] == cls]
+            if names:
+                parts.append(f"{cls} {', '.join(names[:WORKTREE_CAP])}"
+                             f"{f' (+{len(names) - WORKTREE_CAP} more)' if len(names) > WORKTREE_CAP else ''}")
+        if parts:
+            out.append("Branches with no worktree: " + "; ".join(parts) + ".")
+    return out
+
+
 def live_facts(root, home):
     """Current branch, worktrees and open work orders, read now. -> a list of lines.
 
@@ -165,7 +200,10 @@ def live_facts(root, home):
             head = (_git(root, "rev-parse", "--short", "HEAD") or "").strip()
             branch = f"(detached HEAD{' at ' + head if head else ''})"
         lines.append(f"Live facts: branch {branch}.")
-        listing = _git(root, "worktree", "list", "--porcelain")
+        classed = _worktree_lines(root, home)
+        listing = _git(root, "worktree", "list", "--porcelain") if classed is None else None
+        if classed:
+            lines.extend(classed)
         if listing is not None:
             trees, current = [], None
             for line in listing.splitlines():
@@ -329,11 +367,30 @@ def stop_state(home, canary):
     if stale is not None:
         keys.append(f"stale:{stale['newer']}@{stale.get('newer_mtime', 0)}")
         asks.append(f"RESUME.md is older than {stale['newer']}")
+    resolve_asks = list(asks)
+    # A reapable worktree that is still on disk. Branch-only leftovers are the canary's to report
+    # (it also covers abandoned ones, which need the operator and are never raised here).
+    reap = []
+    try:
+        reap = [f for f in canary.worktree_items(home) if f["kind"] == "worktree-reapable"
+                and f.get("has_worktree")]
+    except Exception:
+        reap = []
+    for f in reap:
+        keys.append(f"reap:{f['name']}")
+        asks.append(f"the worktree {f['name']} is merged and clean")
+    tail = []
+    if resolve_asks:
+        tail.append("finish the resolution now: move the order to work-orders/resolved/, update its "
+                    "INDEX row, replace RESUME.md wholesale, then run canary.py")
+    if reap:
+        target = reap[0]["nnn"] if len(reap) == 1 and reap[0]["nnn"] else "--merged"
+        tail.append(f"reap {'it' if len(reap) == 1 else 'them'} with "
+                    f"`python <skill>/scripts/worktree.py reap {target}`")
     if not keys:
         return None
-    text = ("gitos: " + "; ".join(asks) + ". If you are the orchestrator, finish the "
-            "resolution now: move the order to work-orders/resolved/, update its INDEX row, replace RESUME.md "
-            "wholesale, then run canary.py. An implementer or any other role ignores this.")
+    text = ("gitos: " + "; ".join(asks) + ". If you are the orchestrator, "
+            + ", then ".join(tail) + ". An implementer or any other role ignores this.")
     return "|".join(keys), text
 
 
