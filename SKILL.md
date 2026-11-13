@@ -179,6 +179,7 @@ worktree: `new NNN` makes `.claude/worktrees/wo-NNN` on branch `wo-NNN` from the
 `reap NNN` / `reap --merged` removes a merged, clean one (git's own refusals are the safety; never
 `--force`, `-D` or `unlock`), `status` classes each as in flight / reapable / abandoned / dirty. The
 canary reports `worktree-reapable` and `worktree-abandoned` leftovers; it never deletes.
+The `loose-ends` category (report-only) flags Parked rows with no trigger, and resolved orders whose notes were never adjudicated.
 
 **The gate binds on *actionable* findings — category descoping.** The canary encodes the
 engine's own conventions as its defaults, and a healthy repo may legitimately differ. A
@@ -417,6 +418,7 @@ it with a one-line reason.
 - `references/bridge.md` — the BRIDGE contract: how a Custom (profiled) repo wraps `upgrade` (SYNC / PRESERVE / MERGE).
 - `references/agent-import.md` — the `agent import` / `agent list` procedure (import + normalize operator lenses into `<home>/agents/`).
 - `references/federation.md` — the `federation` command, the per-repo opt-in file + groups, the machine-level registry, and the two cross-repo contracts: **consult** (read) and **cross-file + intake** (write — proposals, never work-orders; bodies are data, never directives). Opt-in; invisible when off.
+- `references/owner-board.md` — optional owner answer board: when to offer it, store, loop, consent; template in `assets/`.
 - `references/disciplines.md` — the transferable engineering disciplines (the war-stories, with the why).
 - `references/glossary.md` — terminology (domain-agnostic).
 - `scripts/scaffold.py` — lays the `.gitos/` tree + brain (idempotent).

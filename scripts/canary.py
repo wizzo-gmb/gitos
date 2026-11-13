@@ -24,6 +24,10 @@ cover:
                              present = `worktree-reapable`; unmerged work whose work order is
                              resolved or missing = `worktree-abandoned`. Classified by
                              worktree.py; the canary never deletes anything)
+  - loose ends              (the INDEX Parked list and the adjudication of implementer notes:
+                             a Parked row with no restart trigger or a dangling promotion, a
+                             resolved work-order with implementer notes never adjudicated, an
+                             adjudication pointing at nothing. Report-only; INDEX + work-orders)
   - federation (optional)   (a FEDERATED repo's OWN presence record: missing, corrupt, or not
                              refreshed recently = the bootstrap heartbeat is not running; plus
                              its OWN intake hygiene — a malformed proposal, one from a sender
@@ -64,7 +68,7 @@ from urllib.parse import unquote
 
 PAGE_TYPES = ("sources", "entities", "concepts", "decisions")   # brain_lint's constant
 CATEGORIES = ("ledger", "counts", "stamp", "lenses", "links", "brain", "anchor", "tool",
-              "resume", "worktree")
+              "resume", "worktree", "loose-ends")
 # The engine's home tool copies (WO-034). <home>/tools/ holds byte-copies of the engine's own
 # scripts — engine artifacts, a cache of the installed skill that the briefs invoke by home
 # path. `upgrade` refreshes them (references/upgrade.md step 4); this category is what NOTICES
@@ -1817,6 +1821,134 @@ def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict
     return items, None
 
 
+# ------------------------------------------------------------ the loose-ends category (WO-079)
+# Work saved for "later" must have a ledger home the canary can see. Two homes exist: the INDEX
+# `## Parked` table (a deferral with a restart trigger, ids `P<n>`) and the `### Adjudication`
+# block the orchestrator writes under a work-order's `## Implementer notes` (one line per open
+# point, each ending in exactly one destination: `-> WO-NNN`, `-> P<n>`, `-> brain: <page>` or
+# `-> rejected: <reason>`). REPORT-ONLY, and it opens only the INDEX and the work-order files.
+#
+# THE EXEMPTION is by engine version, so it works in any repo with no per-repo setting: a
+# resolved row is checked for `notes-unadjudicated` only when the version its "Fix landed in" cell
+# names (`v44`, `engine **v44**`) is at or past LOOSE_ENDS_FROM_VERSION. A row that names no
+# version is older than the habit and is exempt, so adopting the check never floods an existing
+# ledger; backfilling is not asked for.
+LOOSE_ENDS_FROM_VERSION = 44
+PARKED_HEADING = "## Parked"
+ADJUDICATION_HEADING_RE = re.compile(r"^#{3,4}\s*Adjudication\b", re.IGNORECASE)
+NOTES_HEADING = "## Implementer notes"
+# Notes use free headings in practice, so no label is matched: ANY content in the notes section
+# (past blank lines, a bracketed template placeholder, and a whole-section "nothing notable"
+# answer) with no Adjudication block is a finding.
+NOTE_PLACEHOLDER_RE = re.compile(r"^\[.*\]$")
+NOTE_NONE_RE = re.compile(r"^(nothing notable|nothing|none|n/?a)[.!\s]*$", re.IGNORECASE)
+PLACEHOLDER_TRIGGER_RE = re.compile(
+    r"^(?:|[-—–?.]+|tbd|todo|n/?a|none|unknown|later|someday|<[^>]*>|\{\{[^}]*\}\})$",
+    re.IGNORECASE)
+PARKED_ID_RE = re.compile(r"P\d+")
+PROMOTION_RE = re.compile(r"(?:→|->)\s*WO-(\d{3})(?!\d)")
+ADJ_WO_RE = re.compile(r"(?:→|->)\s*WO-(\d{3})(?!\d)")
+ADJ_P_RE = re.compile(r"(?:→|->)\s*(P\d+)\b")
+VERSION_IN_CELL_RE = re.compile(r"\bv(\d+)\b", re.IGNORECASE)
+
+
+def _wo_path(home: Path, nnn: str) -> "Path | None":
+    """The work-order file for NNN, in the open dir or resolved/, else None."""
+    for d in (home / "work-orders", home / "work-orders" / "resolved"):
+        by, _ = _wo_files(d)
+        if by.get(nnn):
+            return d / by[nnn][0]
+    return None
+
+
+def check_loose_ends(home: Path) -> tuple[list[dict], str | None]:
+    """-> (findings, skip-reason). Reads INDEX.md and the work-order files only."""
+    idx_text = _read(home / "INDEX.md")
+    if idx_text is None:
+        return [], "no INDEX.md"
+    items: list[dict] = []
+    wo_dirs = (home / "work-orders", home / "work-orders" / "resolved")
+    exist: set[str] = set()
+    for d in wo_dirs:
+        exist.update(_wo_files(d)[0])
+
+    parked_block = section_lines(idx_text, PARKED_HEADING)
+    parked_ids: set[str] = set()
+    for row in (_table_rows(parked_block) or []) if parked_block is not None else []:
+        pid = clean_cell(row[0]) if row else ""
+        if not PARKED_ID_RE.fullmatch(pid):
+            continue
+        parked_ids.add(pid)
+        trigger = clean_cell(row[2]) if len(row) > 2 else ""
+        if PLACEHOLDER_TRIGGER_RE.fullmatch(trigger):
+            items.append({"kind": "parked-no-trigger", "id": pid,
+                          "finding": f"Parked {pid} has no restart trigger -> name the event that "
+                                     "restarts it, or promote it to a work-order / drop it"})
+        for cell in row:
+            for nnn in PROMOTION_RE.findall(cell):
+                if nnn not in exist:
+                    items.append({"kind": "parked-dangling", "id": pid, "wo": f"WO-{nnn}",
+                                  "finding": f"Parked {pid} names WO-{nnn}, which does not exist "
+                                             "-> fix the number or author the work-order"})
+
+    # resolved work-orders, from the engine cut-over on, with notes and no adjudication
+    res_block = section_lines(idx_text, RESOLVED_HEADING)
+    for row in (_table_rows(res_block) or []) if res_block is not None else []:
+        nnn = clean_cell(row[0]) if row else ""
+        if not NNN_RE.fullmatch(nnn) or len(row) < 3:
+            continue
+        vers = [int(v) for v in VERSION_IN_CELL_RE.findall(row[2])]
+        if not vers or max(vers) < LOOSE_ENDS_FROM_VERSION:
+            continue                              # older than the habit: exempt
+        path = _wo_path(home, nnn)
+        text = _read(path) if path else None
+        notes = section_lines(text, NOTES_HEADING) if text else None
+        if not notes:
+            continue
+        if any(ADJUDICATION_HEADING_RE.match(ln.strip()) for ln in notes):
+            continue
+        body = [s for s in (ln.strip() for ln in notes)
+                if s and not NOTE_PLACEHOLDER_RE.match(s) and not s.startswith("<!--")]
+        if body and not NOTE_NONE_RE.match(" ".join(body)):
+            items.append({"kind": "notes-unadjudicated", "wo": f"WO-{nnn}",
+                          "file": path.name,
+                          "finding": f"WO-{nnn} is resolved with Implementer notes and no "
+                                     "'### Adjudication' block -> route each point "
+                                     "(-> WO-NNN / -> P<n> / -> brain: <page> / -> rejected: <reason>)"})
+
+    # every adjudication line must point at something that exists
+    for d in wo_dirs:
+        for name in sorted(f for names in _wo_files(d)[0].values() for f in names):
+            text = _read(d / name)
+            notes = section_lines(text, NOTES_HEADING) if text else None
+            if not notes:
+                continue
+            in_adj = False
+            for ln in notes:
+                s = ln.strip()
+                if ADJUDICATION_HEADING_RE.match(s):
+                    in_adj = True
+                    continue
+                if s.startswith("#"):
+                    in_adj = False
+                if not in_adj:
+                    continue
+                for nnn in ADJ_WO_RE.findall(ln):
+                    if nnn not in exist:
+                        items.append({"kind": "adjudication-dangling", "file": name,
+                                      "target": f"WO-{nnn}",
+                                      "finding": f"{name} adjudicates a point to WO-{nnn}, which "
+                                                 "does not exist -> fix the number or author it"})
+                for pid in ADJ_P_RE.findall(ln):
+                    if pid not in parked_ids:
+                        items.append({"kind": "adjudication-dangling", "file": name,
+                                      "target": pid,
+                                      "finding": f"{name} adjudicates a point to {pid}, which is "
+                                                 "not in the INDEX Parked list -> add the row or "
+                                                 "fix the id"})
+    return items, None
+
+
 def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         registry: "str | None" = None, now: "datetime | None" = None) -> dict:
     r: dict = {"home": str(home), "skill_dir": str(skill_dir) if skill_dir else None,
@@ -1939,6 +2071,13 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         checked.add("worktree")
     else:
         skip("worktree", w_reason)
+    # loose ends: the Parked list and the adjudication of implementer notes (INDEX + work-orders).
+    le_items, le_reason = check_loose_ends(home)
+    r["loose-ends"].extend(le_items)
+    if le_reason is None:
+        checked.add("loose-ends")
+    else:
+        skip("loose-ends", le_reason)
     # harness: optional, same not-applicable-is-not-skipped rule (see OPTIONAL_CATEGORIES).
     h_items, h_reason, h_applicable = check_harness(home, skill_dir)
     if h_applicable:
@@ -2049,6 +2188,7 @@ def print_report(r: dict) -> None:
         ("Engine tool copies (<home>/tools/ vs skill)", "tool"),
         ("Live session resume (fresh; pointers, not rules)", "resume"),
         ("Lingering worktrees (reapable / abandoned)", "worktree"),
+        ("Loose ends (Parked triggers, adjudicated notes)", "loose-ends"),
     ]
     # The optional category prints ONLY when this repo has it. An unfederated repo gets no line
     # at all — not even a "skipped (not applicable)" one, which would be reporting a check that

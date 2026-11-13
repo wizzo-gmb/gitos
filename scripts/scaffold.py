@@ -38,6 +38,7 @@ import argparse
 import difflib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from datetime import date
@@ -120,6 +121,24 @@ def write_if_missing(path: Path, content: str) -> bool:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+    return True
+
+
+def ensure_parked_section(index_path: Path) -> bool:
+    """Insert the empty `## Parked` section before `## Resolved` in an existing INDEX that lacks
+    it (WO-079). Idempotent: an INDEX that has the heading, or has no `## Resolved` to anchor on,
+    is left byte-identical. Existing rows are never touched. Returns True if it wrote."""
+    raw = index_path.read_bytes().decode("utf-8")
+    if re.search(r"^## Parked", raw, re.MULTILINE):
+        return False
+    m = re.search(r"^## Resolved", raw, re.MULTILINE)
+    if not m:
+        return False
+    tmpl = read_template("INDEX.md.tmpl").replace("\r\n", "\n")
+    section = tmpl[tmpl.index("## Parked"):tmpl.index("## Resolved")]
+    if "\r\n" in raw:
+        section = section.replace("\n", "\r\n")
+    index_path.write_bytes((raw[:m.start()] + section + raw[m.start():]).encode("utf-8"))
     return True
 
 
@@ -484,6 +503,8 @@ def main() -> int:
     # ---- work side --------------------------------------------------------
     report(write_if_missing(home / "INDEX.md",
                             render(read_template("INDEX.md.tmpl"), **tokens)), home / "INDEX.md", root)
+    if ensure_parked_section(home / "INDEX.md"):
+        print("OK   added the Parked section to INDEX.md")
     report(write_if_missing(home / "log_vocabulary.md",
                             render(read_template("log_vocabulary.md.tmpl"), **tokens)),
            home / "log_vocabulary.md", root)

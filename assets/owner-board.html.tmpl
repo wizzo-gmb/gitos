@@ -1,0 +1,271 @@
+<!-- Owner board template (WO-082). Needs a harness whose pages have a readable store; in Claude Code,
+publish with `capabilities: {db: {}}`. Collection `items` (written by the orchestrator, one document per
+card): order, group, ref, status (open|closed), title, why, where, ask, options [{label, rec?, note?}],
+reply, recorded_at (the orchestrator sets it when it records the answer). Collection `answers` (written by
+the page, document id = the card id, or `general`): choice, note, at, copied_at (the page sets it on Copy).
+Copy text carries only answers not yet submitted: copied_at or recorded_at >= at (WO-083). Rules and the loop: references/owner-board.md. Set the title, heading, lede and :root tokens. -->
+<title>Owner board</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Owner board template (gitos). Layout: one column of ask cards grouped by kind, a sticky filter strip on top, a fixed tally bar at the bottom.
+   Replace these tokens with the project's design system; keep the three blocks (light, system dark, explicit dark). */
+:root {
+  color-scheme: light;
+  --bg: #f6f7f8; --surface: #ffffff; --raised: #eef0f2; --line: #d9dde1; --line-strong: #8a929a;
+  --fg: #16191c; --quiet: #565e66; --green: #1f7a4d; --green-ink: #ffffff; --amber: #8a5a00; --red: #b3261e;
+  --sans: system-ui, "Segoe UI", Roboto, sans-serif; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --r1: 7px; --r2: 5px; --r3: 4px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  color-scheme: dark; --bg: #111315; --surface: #181b1e; --raised: #1f2327; --line: #2c3136; --line-strong: #6b737b;
+  --fg: #e7eaed; --quiet: #a0a8b0; --green: #3fbf7f; --green-ink: #06140c; --amber: #e0a23a; --red: #e5604d; } }
+:root[data-theme="dark"] {
+  color-scheme: dark; --bg: #111315; --surface: #181b1e; --raised: #1f2327; --line: #2c3136; --line-strong: #6b737b;
+  --fg: #e7eaed; --quiet: #a0a8b0; --green: #3fbf7f; --green-ink: #06140c; --amber: #e0a23a; --red: #e5604d; }
+html, body { background: var(--bg); color: var(--fg); }
+body { font: 14px/1.5 var(--sans); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 96px; }
+.wrap { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+header.top { padding-block: 24px 0; display: flex; flex-direction: column; gap: 4px; }
+h1 { font: 600 20px/1.3 var(--sans); margin: 0; text-wrap: balance; }
+.lede { color: var(--quiet); margin: 0; max-width: 65ch; }
+.strip { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, textarea:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.tab { background: transparent; border: 1px solid var(--line); border-radius: var(--r2); padding: 4px 10px; color: var(--quiet); }
+.tab[aria-pressed="true"] { border-color: var(--line-strong); color: var(--fg); background: var(--raised); }
+.tab b { font: 500 12px var(--mono); margin-left: 6px; color: var(--fg); }
+.status { margin-left: auto; font: 12px var(--mono); color: var(--quiet); }
+.status.warn { color: var(--amber); }
+h2 { font: 500 11px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--quiet); margin: 12px 0 0; }
+.list { display: flex; flex-direction: column; gap: 8px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r1); padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.card.answered { border-color: color-mix(in srgb, var(--green) 45%, var(--line)); }
+.card.closed { background: transparent; }
+.head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.ref { font: 500 12px var(--mono); color: var(--quiet); border: 1px solid var(--line); border-radius: var(--r3); padding: 0 6px; }
+.title { font: 600 15px/1.35 var(--sans); margin: 0; flex: 1 1 240px; min-width: 0; text-wrap: balance; }
+.pill { font: 500 11px var(--mono); border-radius: var(--r3); padding: 1px 6px; border: 1px solid var(--line); color: var(--quiet); white-space: nowrap; }
+.pill.need { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 50%, var(--line)); }
+.pill.done { color: var(--green); border-color: color-mix(in srgb, var(--green) 50%, var(--line)); }
+.why { margin: 0; color: var(--fg); max-width: 70ch; overflow-wrap: anywhere; }
+.where { margin: 0; font: 12px var(--mono); color: var(--quiet); overflow-wrap: anywhere; }
+.opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.opt { background: var(--raised); border: 1px solid var(--line-strong); border-radius: var(--r2); padding: 6px 10px; text-align: left; max-width: 100%; }
+.opt:hover { border-color: var(--fg); }
+.opt[aria-pressed="true"] { background: var(--green); border-color: var(--green); color: var(--green-ink); font-weight: 600; }
+.opt .rec { font: 11px var(--mono); opacity: .8; margin-left: 6px; }
+.noterow { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+textarea { flex: 1 1 260px; min-width: 0; min-height: 34px; resize: vertical; background: var(--bg); color: var(--fg); border: 1px solid var(--line-strong); border-radius: var(--r2); padding: 6px 8px; font: 13px/1.4 var(--sans); }
+.save { background: transparent; border: 1px solid var(--line-strong); border-radius: var(--r2); padding: 6px 10px; }
+.saved { font: 12px var(--mono); color: var(--quiet); align-self: center; }
+.reply { margin: 0; border-left: 2px solid var(--green); padding: 2px 0 2px 10px; color: var(--fg); max-width: 70ch; overflow-wrap: anywhere; }
+.reply span { font: 11px var(--mono); color: var(--quiet); display: block; }
+.empty { border: 1px dashed var(--line-strong); border-radius: var(--r1); padding: 24px 16px; color: var(--quiet); }
+.bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--raised); border-top: 1px solid var(--line); padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.bar .in { max-width: 860px; margin: 0 auto; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.tally { font: 500 13px var(--mono); font-variant-numeric: tabular-nums; }
+.bar .hint { color: var(--quiet); font-size: 12px; flex: 1 1 200px; min-width: 0; }
+#copyout { width: 100%; min-height: 90px; font: 12px var(--mono); }
+@media (prefers-reduced-motion: no-preference) { .opt, .tab { transition: border-color .12s, background-color .12s; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Owner board</h1>
+    <p class="lede">Each card is something an open work order needs from you. Pick an option, add a note if you want, and it is saved for Claude to read. Nothing here starts work by itself; Claude records each answer in the project's ledger first.</p>
+  </header>
+
+  <div class="strip" role="toolbar" aria-label="Filter">
+    <button class="tab" id="tab-need" data-f="need" aria-pressed="true">Needs you<b id="n-need">0</b></button>
+    <button class="tab" id="tab-answered" data-f="answered" aria-pressed="false">Answered<b id="n-answered">0</b></button>
+    <button class="tab" id="tab-closed" data-f="closed" aria-pressed="false">Closed<b id="n-closed">0</b></button>
+    <span class="status" id="status" role="status">Loading the asks…</span>
+  </div>
+
+  <main id="main"><div class="empty">The open asks will appear here once they load.</div></main>
+
+  <section class="card" id="general-card">
+    <div class="head"><span class="ref">note</span><h3 class="title">Anything else for Claude</h3></div>
+    <p class="why">A new instruction, a correction, or something the cards missed.</p>
+    <div class="noterow">
+      <textarea id="note-general" placeholder="Write it here"></textarea>
+      <button class="save" id="save-general">Save note</button>
+      <span class="saved" id="saved-general"></span>
+    </div>
+  </section>
+</div>
+
+<div class="bar"><div class="in">
+  <span class="tally" id="tally">0 of 0 answered</span>
+  <span class="hint" id="barhint">Answers save as you click.</span>
+  <button class="save" id="copy">Copy my answers</button>
+  <textarea id="copyout" readonly hidden aria-label="Your answers as text"></textarea>
+</div></div>
+
+<script>
+(function () {
+  var items = [], answers = {}, filter = "need", db = null, canWrite = true, chains = {};
+  var $ = function (id) { return document.getElementById(id); };
+  var GROUPS = ["Close or keep open", "Decisions", "Your actions", "Parked work"];
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function ans(id) { return answers[id] || {}; }
+  // BEGIN copy-rule (pure; the selftest gate runs this block under Node)
+  function hasAnswer(a) { return !!(a && (a.choice || (a.note && a.note.trim()))); }
+  function stateFor(it, a) { if (it.status === "closed") return "closed"; return hasAnswer(a) ? "answered" : "need"; }
+  function isSubmitted(item, answer) {
+    var at = answer && answer.at ? Date.parse(answer.at) : NaN;
+    if (isNaN(at)) return false;
+    var c = answer.copied_at ? Date.parse(answer.copied_at) : NaN, r = item && item.recorded_at ? Date.parse(item.recorded_at) : NaN;
+    return (!isNaN(c) && c >= at) || (!isNaN(r) && r >= at);
+  }
+  function copyLines(items, answers, useMarks) {
+    var lines = [], ids = [], none = [];
+    items.forEach(function (it) {
+      var a = answers[it.id] || {};
+      if (it.status === "closed") return;
+      if (stateFor(it, a) === "need") none.push(it.id);
+      if (!hasAnswer(a) || (useMarks && isSubmitted(it, a))) return;
+      ids.push(it.id);
+      lines.push((it.ref || it.id) + " [" + it.id + "]: " + (a.choice || "(no option)") + (a.note ? " | note: " + a.note.replace(/\s+/g, " ") : ""));
+    });
+    var g = answers.general;
+    if (g && g.note && g.note.trim() && !(useMarks && isSubmitted(null, g))) { ids.push("general"); lines.push("general: " + g.note.replace(/\s+/g, " ")); }
+    if (!lines.length) lines.push("no new answers since your last copy");
+    lines.push("undecided: " + (none.join(", ") || "none"));
+    return { text: lines.join("\n"), ids: ids };
+  }
+  // END copy-rule
+  function stateOf(it) { return stateFor(it, ans(it.id)); }
+  function setStatus(t, warn) { var s = $("status"); s.textContent = t; s.className = "status" + (warn ? " warn" : ""); }
+
+  function write(id, patch) {
+    var next = Object.assign({}, ans(id), patch, { at: new Date().toISOString() });
+    answers[id] = next; render();
+    if (!db) { setStatus("Not saved: storage is unavailable here. Use Copy my answers.", true); return Promise.resolve(false); }
+    chains[id] = (chains[id] || Promise.resolve()).then(function () {
+      return db.doc("answers/" + id).set({ choice: next.choice || null, note: next.note || "", at: next.at });
+    }).then(function () { setStatus("Saved " + new Date().toLocaleTimeString()); return true; })
+      .catch(function (e) {
+        if (e && e.code === "invalid_argument") canWrite = false;
+        setStatus("Could not save (" + ((e && e.code) || "error") + "). Use Copy my answers.", true); return false;
+      });
+    return chains[id];
+  }
+
+  function card(it) {
+    var st = stateOf(it), a = ans(it.id);
+    var c = el("section", "card " + st);
+    var head = el("div", "head");
+    head.appendChild(el("span", "ref", it.ref || it.id));
+    head.appendChild(el("h3", "title", it.title));
+    head.appendChild(el("span", "pill " + (st === "need" ? "need" : st === "answered" ? "done" : ""), st === "need" ? "needs you" : st));
+    if (st === "answered" && isSubmitted(it, a)) head.appendChild(el("span", "pill", it.recorded_at && Date.parse(it.recorded_at) >= Date.parse(a.at) ? "recorded" : "sent"));
+    c.appendChild(head);
+    if (st === "closed") {
+      if (a.choice) c.appendChild(el("p", "where", "You answered: " + a.choice + (a.note ? " · " + a.note : "")));
+      if (it.reply) { var r0 = el("p", "reply"); r0.appendChild(el("span", "", "Claude")); r0.appendChild(document.createTextNode(it.reply)); c.appendChild(r0); }
+      return c;
+    }
+    if (it.why) c.appendChild(el("p", "why", it.why));
+    if (it.where) c.appendChild(el("p", "where", it.where));
+    var opts = el("div", "opts");
+    (it.options || []).forEach(function (o) {
+      var b = el("button", "opt", o.label); b.type = "button";
+      b.setAttribute("aria-pressed", a.choice === o.label ? "true" : "false");
+      if (o.rec) b.appendChild(el("span", "rec", "recommended"));
+      if (o.note) b.title = o.note;
+      b.addEventListener("click", function () { write(it.id, { choice: a.choice === o.label ? null : o.label }); });
+      opts.appendChild(b);
+    });
+    c.appendChild(opts);
+    var row = el("div", "noterow");
+    var ta = el("textarea"); ta.id = "note-" + it.id; ta.placeholder = it.ask || "Note (optional)"; ta.value = a.note || "";
+    var sv = el("button", "save", "Save note"); sv.type = "button";
+    sv.addEventListener("click", function () { write(it.id, { note: ta.value }); });
+    row.appendChild(ta); row.appendChild(sv);
+    if (a.at) row.appendChild(el("span", "saved", "saved " + new Date(a.at).toLocaleString()));
+    c.appendChild(row);
+    if (it.reply) { var r = el("p", "reply"); r.appendChild(el("span", "", "Claude")); r.appendChild(document.createTextNode(it.reply)); c.appendChild(r); }
+    return c;
+  }
+
+  function render() {
+    var drafts = {}, focus = document.activeElement && document.activeElement.id;
+    document.querySelectorAll("#main textarea").forEach(function (t) { drafts[t.id] = t.value; });
+    var counts = { need: 0, answered: 0, closed: 0 };
+    items.forEach(function (it) { counts[stateOf(it)]++; });
+    $("n-need").textContent = counts.need; $("n-answered").textContent = counts.answered; $("n-closed").textContent = counts.closed;
+    $("tally").textContent = counts.answered + " of " + (counts.need + counts.answered) + " answered";
+    var main = $("main"); main.textContent = "";
+    var shown = items.filter(function (it) { return stateOf(it) === filter; });
+    if (!items.length) { main.appendChild(el("div", "empty", "No asks are loaded yet. Claude adds them here; nothing is waiting on you until they appear.")); return; }
+    if (!shown.length) { main.appendChild(el("div", "empty", filter === "need" ? "Nothing needs you right now." : filter === "answered" ? "No answers yet. Pick an option on a card under Needs you." : "Nothing has been closed yet.")); return; }
+    var names = GROUPS.slice();
+    shown.forEach(function (it) { if (names.indexOf(it.group) < 0) names.push(it.group); });
+    names.forEach(function (g) {
+      var rows = shown.filter(function (it) { return it.group === g; });
+      if (!rows.length) return;
+      main.appendChild(el("h2", "", g));
+      var list = el("div", "list"); rows.forEach(function (it) { list.appendChild(card(it)); }); main.appendChild(list);
+    });
+    Object.keys(drafts).forEach(function (id) { var t = $(id); if (t && drafts[id] !== (ans(id.slice(5)).note || "")) t.value = drafts[id]; });
+    if (focus && $(focus)) $(focus).focus();
+  }
+
+  function markCopied(ids) {
+    var now = new Date().toISOString();
+    ids.forEach(function (id) {
+      if (!answers[id]) return;
+      answers[id] = Object.assign({}, answers[id], { copied_at: now });
+      chains[id] = (chains[id] || Promise.resolve()).then(function () {
+        var a = answers[id]; if (!a) return;
+        return db.doc("answers/" + id).set({ choice: a.choice || null, note: a.note || "", at: a.at, copied_at: a.copied_at || now });
+      }).catch(function () {});
+    });
+    render();
+  }
+
+  document.querySelectorAll(".tab").forEach(function (b) {
+    b.addEventListener("click", function () {
+      filter = b.dataset.f;
+      document.querySelectorAll(".tab").forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+      render();
+    });
+  });
+  $("save-general").addEventListener("click", function () {
+    write("general", { note: $("note-general").value }).then(function (ok) { $("saved-general").textContent = ok ? "saved" : ""; });
+  });
+  $("copy").addEventListener("click", function () {
+    var out = $("copyout"), r = copyLines(items, answers, !!db), text = r.text; out.value = text;
+    if (db) markCopied(r.ids); else setStatus("Storage is unavailable: nothing can be marked sent, so every open answer is copied.", true);
+    var done = function () { $("barhint").textContent = "Copied. Paste it to Claude."; };
+    var fall = function () { out.hidden = false; out.focus(); out.select(); $("barhint").textContent = "Select the text below and copy it."; };
+    try { navigator.clipboard.writeText(text).then(done, fall); } catch (e) { fall(); }
+  });
+
+  function start(d) {
+    db = d;
+    if (!db) { setStatus("This view cannot load the asks (sign in, or open it from claude.ai).", true); render(); return; }
+    var timer = setTimeout(function () { setStatus("Still loading: the store has not answered yet.", true); }, 10000);
+    var got = 0, ready = function () { if (++got >= 2) { clearTimeout(timer); setStatus("Up to date"); } };
+    var first = { i: true, a: true };
+    db.collection("items").onSnapshot(function (snap) {
+      items = snap.docs.map(function (x) { return Object.assign({ id: x.id }, x.data()); })
+        .sort(function (p, q) { return (p.order || 0) - (q.order || 0); });
+      render(); if (first.i && !snap.metadata.fromCache) { first.i = false; ready(); }
+    }, function (e) { clearTimeout(timer); setStatus("The asks could not be loaded (" + e.code + ").", true); });
+    db.collection("answers").onSnapshot(function (snap) {
+      var next = {}; snap.docs.forEach(function (x) { next[x.id] = x.data(); });
+      Object.keys(answers).forEach(function (k) { if (!next[k] && chains[k]) next[k] = answers[k]; });
+      answers = next;
+      var g = $("note-general"); if (document.activeElement !== g && answers.general) g.value = answers.general.note || "";
+      render(); if (first.a && !snap.metadata.fromCache) { first.a = false; ready(); }
+    }, function (e) { clearTimeout(timer); setStatus("Your answers could not be loaded (" + e.code + ").", true); });
+  }
+  render();
+  if (window.claude && window.claude.use) window.claude.use("db").then(start, function () { start(null); });
+  else start(null);
+})();
+</script>

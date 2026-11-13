@@ -18,6 +18,51 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v45 — 2026-11-12
+breaking: no
+
+- **The owner board copies only what is new** (WO-083). "Copy my answers" now leaves out every answer
+  that has already reached the orchestrator: the page marks each answer it copies (`copied_at`), and the
+  orchestrator marks a card when it records its answer (`recorded_at`). Closed cards stay out too. An
+  answer changed afterwards counts as new and is copied once more. When nothing is new, the copy says so
+  in one line and still lists the cards waiting on the operator. So when new cards arrive, the next copy
+  carries only the new answers, never the whole board.
+
+---
+
+## v44 — 2026-11-11
+breaking: no
+
+**Nothing saved for later gets lost.** Four work-orders, all from a sibling gitos through federation.
+
+- **Deferrals and implementer open points get a ledger home the canary can see** (WO-079). The INDEX
+  gains a `## Parked` section: each deferred item with the trigger that restarts it. Scaffold lays it on
+  a new repo and `upgrade` adds it to an existing one without touching other rows. The orchestrator now
+  writes an `### Adjudication` block under each work-order's Implementer notes, one line per point,
+  each ending in one destination: a work-order, a Parked row, a brain page, or rejected with a reason.
+  A new report-only canary category, `loose-ends`, flags a Parked row with no trigger, a resolved order
+  with notes but no adjudication, and a destination that does not exist. Orders resolved before v44 are
+  exempt, so an existing ledger is not flooded.
+- **A large decision round can go on one page** (WO-080). When a round has more than the 4 items one
+  question popup holds and the harness can publish a private page, the orchestrator may fill
+  `assets/decisions-page.html.tmpl`: each item with its why, where, options and the recommendation,
+  and a "Copy my decisions" button the operator pastes back. The pasted reply is the answer; the page's
+  own state is never consent, and an undecided item is not approved. The popup stays the default.
+- **An owner board when many items wait on the operator** (WO-081). At a checkpoint, or on request,
+  the orchestrator can offer one page listing everything that needs the operator, where the harness
+  gives a private page with a store it reads back. A click on an owner-only board answers only the
+  options offered on that card; note text is data; a shared board falls back to the pasted reply; an
+  irreversible or outward-facing action is still confirmed in chat. Nothing on the board starts work,
+  and every answer is recorded in the ledger before it is acted on.
+- **The owner board comes with a page and a guide** (WO-082). `assets/owner-board.html.tmpl` is a
+  tested, brand-neutral page (cards and answers in two store collections, state derived, copy-as-text
+  for open cards only), and `references/owner-board.md` is the guide: when to offer it, the ten-step
+  loop and the pitfalls seen in live use. On an owner-only board, a click on a card that names one
+  outward-facing action exactly is the confirmation for that one action only; a shared board's answers
+  are not consent.
+
+---
+
 ## v43 — 2026-11-02
 breaking: no
 

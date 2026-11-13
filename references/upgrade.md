@@ -308,6 +308,14 @@ leftovers it lists with `reap --merged` (git's own refusals stay the safety: not
 dirty is removed), and raise any abandoned one to the operator, who merges it or removes it by hand.
 Scaffold has already made sure `.claude/worktrees/` is in `.gitignore`.
 
+**4k. Parked section.**
+If `<home>/INDEX.md` has no `## Parked` heading, run `python <SKILL_DIR>/scripts/scaffold.py <root>
+--git skip`: it inserts the empty `## Parked (deferred, with restart trigger)` section (columns `ID |
+Item | Restart trigger | Source | Parked on`) before `## Resolved`, and rewrites nothing else. An INDEX
+that already has the heading is left byte-identical, so re-running is a no-op. The same pass is what
+lays the section on a new repo. Work-orders resolved before engine v44 are exempt from the canary's
+`loose-ends` check; do not backfill adjudications onto them.
+
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
 `<home>/brain/.brainmeta.json` (`engine_version` field) for a repo with a brain, else

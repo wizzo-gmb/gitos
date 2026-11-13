@@ -1,0 +1,124 @@
+<!doctype html>
+<!--
+gitos decisions page (WO-080). One self-contained file, no external requests.
+
+FILL FORMAT: replace the single token ITEMS_JSON in double braces (it appears once, inside the
+JSON data block with id "items") with a JSON array. Fill it with
+json.dumps(items), then replace every "<" with \u003c, ">" with \u003e, "&" with \u0026,
+U+2028 with \u2028 and U+2029 with \u2029 in the result, so item text can never close the
+data block. Do not put any other text in the file by hand.
+
+Each item: {"id": "D1", "title": "...", "why": "...", "where": "file:line or screen",
+"now": "optional text", "proposed": "optional text",
+"options": [{"key": "a", "label": "..."}], "recommendation": "a", "reason": "one line"}.
+Omit "now"/"proposed" (or use "") to hide the panes. A "Decide later" choice is added by the page.
+
+All item text is inserted as text, never as HTML. The page holds no secrets and no foreign text.
+The operator's PASTED REPLY is the answer; the page state is never consent. Copy output is one
+line per item: "<id>: <choice key>", where an undecided item reads "<id>: undecided" and
+Decide later reads "<id>: later".
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decisions</title>
+<style>
+:root{--bg:#fafafa;--fg:#1b1b1f;--mut:#5b5b66;--card:#fff;--bd:#d6d6de;--acc:#1f5fd1;--accfg:#fff;--rec:#176b3a;--pane:#f0f0f4}
+@media (prefers-color-scheme:dark){:root{--bg:#16161a;--fg:#ececf1;--mut:#a0a0ad;--card:#202026;--bd:#3a3a44;--acc:#6ea0ff;--accfg:#10131a;--rec:#6fd69a;--pane:#2a2a32}}
+body{margin:0;padding:16px 16px 90px;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:860px;margin:0 auto}
+.item{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px;margin:0 0 14px}
+.item h2{font-size:16px;margin:0 0 4px}
+.where{color:var(--mut);font:13px ui-monospace,monospace;margin:0 0 8px;overflow-wrap:anywhere}
+.why{margin:0 0 8px;white-space:pre-wrap}
+.panes{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 10px}
+.pane{background:var(--pane);border-radius:6px;padding:8px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
+.pane b{display:block;color:var(--mut);margin-bottom:2px}
+@media (max-width:600px){.panes{grid-template-columns:1fr}}
+.opts{display:flex;flex-wrap:wrap;gap:8px}
+button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;cursor:pointer}
+button.on{background:var(--acc);color:var(--accfg);border-color:var(--acc)}
+.rec{color:var(--rec);font-size:13px;margin:8px 0 0}
+#bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--bd);padding:10px 16px;display:flex;gap:12px;align-items:center;justify-content:center}
+#copy{background:var(--acc);color:var(--accfg);border-color:var(--acc)}
+</style>
+</head>
+<body>
+<main id="list"></main>
+<div id="bar"><span id="count">0 of 0 decided</span><button id="copy" type="button">Copy my decisions</button><span id="msg" role="status"></span></div>
+<script type="application/json" id="items">{{ITEMS_JSON}}</script>
+<script>
+// Pure: the copy line for one item. The gitos selftest reproduces this logic.
+function copyLine(item, choice) {
+  return item.id + ": " + (choice || "undecided");
+}
+(function () {
+  var items = [];
+  try { items = JSON.parse(document.getElementById("items").textContent); } catch (e) { items = []; }
+  var KEY = "gitos-decisions:" + items.map(function (i) { return i.id; }).join(",");
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { state = {}; }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = String(text);
+    return n;
+  }
+  var list = document.getElementById("list");
+  var buttons = {};
+  function refresh() {
+    var done = 0;
+    items.forEach(function (it) {
+      var c = state[it.id];
+      if (c && c !== "later") done++;
+      (buttons[it.id] || []).forEach(function (b) { b.node.className = b.key === c ? "on" : ""; });
+    });
+    document.getElementById("count").textContent = done + " of " + items.length + " decided";
+  }
+  items.forEach(function (it) {
+    var card = el("section", "item");
+    card.appendChild(el("h2", "", it.id + " - " + (it.title || "")));
+    if (it.where) card.appendChild(el("p", "where", it.where));
+    if (it.why) card.appendChild(el("p", "why", it.why));
+    if (it.now || it.proposed) {
+      var panes = el("div", "panes");
+      [["Now", it.now], ["Proposed", it.proposed]].forEach(function (p) {
+        if (!p[1]) return;
+        var d = el("div", "pane");
+        d.appendChild(el("b", "", p[0]));
+        d.appendChild(document.createTextNode(String(p[1])));
+        panes.appendChild(d);
+      });
+      card.appendChild(panes);
+    }
+    var row = el("div", "opts");
+    buttons[it.id] = [];
+    (it.options || []).concat([{ key: "later", label: "Decide later" }]).forEach(function (o) {
+      var b = el("button", "", o.label + (o.key === it.recommendation ? " (recommended)" : ""));
+      b.type = "button";
+      b.addEventListener("click", function () { state[it.id] = o.key; save(); refresh(); });
+      buttons[it.id].push({ key: o.key, node: b });
+      row.appendChild(b);
+    });
+    card.appendChild(row);
+    if (it.recommendation && it.reason) card.appendChild(el("p", "rec", "Recommended: " + it.recommendation + ". " + it.reason));
+    list.appendChild(card);
+  });
+  document.getElementById("copy").addEventListener("click", function () {
+    var text = items.map(function (it) { return copyLine(it, state[it.id]); }).join("\n");
+    var msg = document.getElementById("msg");
+    function ok() { msg.textContent = "Copied. Paste it back in the chat."; }
+    function fallback() {
+      var t = el("textarea"); t.value = text; document.body.appendChild(t); t.select();
+      try { document.execCommand("copy"); ok(); } catch (e) { msg.textContent = "Select and copy the lines manually."; }
+      document.body.removeChild(t);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, fallback); else fallback();
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>

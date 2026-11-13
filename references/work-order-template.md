@@ -250,6 +250,22 @@ observations, and the orchestrator decides and acts on them.
 
 "Nothing notable" is a valid and useful answer.
 
+#### Adjudication
+
+Written by the **orchestrator**, never the implementer, as a `### Adjudication` sub-block under
+`## Implementer notes` when it adjudicates them. One line per open point, deviation, caveat or
+follow-up, each ending in exactly one destination:
+
+- `→ WO-NNN` — becomes (or already is) that work-order;
+- `→ P<n>` — deferred: a row in the INDEX `## Parked` list, with its restart trigger;
+- `→ brain: <page>` — a durable fact, upserted to that brain page;
+- `→ rejected: <one-line reason>` — discarded.
+
+The canary's `loose-ends` category reads it: a resolved order (engine v44 or later) with notes
+and no block is `notes-unadjudicated` (any content other than a "nothing notable" answer counts,
+whatever the headings), and a destination that does not exist is
+`adjudication-dangling`. Orders resolved before v44 are exempt and are not backfilled.
+
 Only when model optimization was enabled at dispatch: add one compact model/outcome entry —
 requested model/effort; confirmed effective values or an explicit unknown; acceptance, revisions, or
 escalation with a material reason. Observed usage is optional. The orchestrator adjudicates any
