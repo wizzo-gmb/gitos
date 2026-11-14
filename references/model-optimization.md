@@ -233,6 +233,12 @@ verification, so a verification demand is the dominant signal, and a settled app
 does not cancel a hidden edge-case burden. Where no rule matches, **standard** stands
 as the opening default. The ceiling binds after the rule resolves.
 
+With System One on, `system_one.py complexity <home> NNN` scores a work-order on three levels and
+two yes/no inputs (shared tooling touched, a design choice left open). It is one input to the
+orchestrator's own reading: it selects no tier, is not passed to `model_optimization.py`, and the
+standing rule stays: open at this repo's standard tier, go deeper only for a reason specific to this
+task. An unsure score prints `no input`.
+
 Treat this mapping as a **prior pending local data**, re-derivable once enough
 dispatches carry a recorded tier and effort. Its support is one community-sourced
 benchmark whose failure categories a model judge assigned and which are therefore

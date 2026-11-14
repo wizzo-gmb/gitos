@@ -45,20 +45,21 @@ prompts are *never* stored as-is.
    f. **Catalogue** — add or refresh the row in `<home>/agents/index.md`.
 3. **Report** what was imported (names, where they landed, the registry rows added).
 
-**Destination — both layers by default.** Steps e–f write the normalized lens to **both** layers: the
-**global library** `<skill>/agents/<name>.md` + its registry `<skill>/agents/index.md` (create both on
-first use), *and* the current repo's `<home>/agents/<name>.md` + its registry. The global copy is the
-machine-wide **distribution hub** — every repo reads it, and `upgrade` refreshes repo copies from it;
-the repo copy is **git-tracked and portable** — it travels with the repo to other machines and
-collaborators. On request, target a single layer: *repo-only* (a project-specific lens that shouldn't
-follow you everywhere) or *global-only*. On a name collision at read time the repo's own lens wins. The
-global library is operator content — engine updates never ship, overwrite, or delete it.
+**Destination — the global library, selected here by default.** Steps e–f write the normalized lens to
+the **global library** `<skill>/agents/<name>.md` + its registry `<skill>/agents/index.md` (create both
+on first use) and **select** it in the current repo (`scripts/lenses.py select --root <ROOT> <name>`,
+which also needs lenses enabled for the repo) — with **no repo copy**. The global lens is the
+machine-wide **distribution hub**: an edit reaches every repo that selected it. On request, import
+*repo-only* (a project-specific lens that shouldn't follow you everywhere: write `<home>/agents/<name>.md`
++ its registry, git-tracked and portable) or *global-only* (no selection). On a name collision at read
+time the repo's own lens wins. The global library is operator content — engine updates never ship,
+overwrite, or delete it.
 
 ## `/gitos agent list`
 
 Print both registries — the repo's `<home>/agents/index.md` and the global `<skill>/agents/index.md` —
-name · domain · when-to-apply · applies-to, labeled by layer. If both are empty, say so (no lenses
-imported yet).
+name · domain · when-to-apply · applies-to, labeled by layer and marked **active** or **inactive** for
+this repo (`scripts/lenses.py status` lists them). If both are empty, say so (no lenses imported yet).
 
 ## Boundary rule (load-bearing)
 

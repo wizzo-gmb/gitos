@@ -211,13 +211,18 @@ Direct the running orchestrator to:
   *What never moves here:* a **standing rule** found in one of those files goes to the brain, not
   into `RESUME.md`. `RESUME.md` is replaced wholesale at every checkpoint, so a rule parked there
   is destroyed by the next rotation — `canary.py`'s `resume/standing-rule` reports it;
-- **refresh lens copies from the global library** — the global `<skill>/agents/` is the
-  machine-wide lens distribution hub (SKILL.md → *Lenses*). For each lens in
-  `<home>/agents/` whose name also exists globally, byte-compare; where they differ,
-  **report-and-ask** to refresh the repo copy from the global (never silently clobber — a
-  deliberately-forked local variant survives by declining). Then offer any global lens
-  *not yet* in the repo as an optional install. Update the repo registry to match what was
-  accepted. No global lenses / no `<home>/agents/` → skip, no-op;
+- **refresh lens copies from the global library, and offer lens selection** — lenses are off by
+  default and a repo selects global lenses by name in `<home>/lenses.json` (SKILL.md → *Lenses*).
+  A repo with **no** `lenses.json` is asked once. The suggested answer keeps what the repo uses
+  today: if `<home>/agents/` holds lenses, suggest turning lenses on with those lenses; with no repo
+  lenses, suggest off. For each repo copy that is byte-identical to a global lens, suggest selecting
+  the global lens instead of keeping the copy; the copy is removed only if the operator agrees.
+  Write the answer with `scripts/lenses.py`. Upgrade never turns lenses off silently. The copy
+  refresh stays for deliberate local variants: for each lens in `<home>/agents/` whose name also
+  exists globally, byte-compare; where they differ, **report-and-ask** to refresh the repo copy
+  from the global (never silently clobber — a deliberately-forked local variant survives by
+  declining). Update the repo registry to match what was accepted. No global lenses / no
+  `<home>/agents/` → skip, no-op;
 - **offer federation — the tool computes the ask; you ask it.** Federation lets independent gitos
   instances **on one machine** reach each other, so work that belongs to a sibling repo can go
   there instead of crossing the gap by copy-paste. Run:

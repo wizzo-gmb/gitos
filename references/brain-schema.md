@@ -155,7 +155,9 @@ experience back into the brain as it builds**, and prunes redundancy. Three laye
 Whenever you learn or decide something worth remembering, before writing anything:
 
 1. **Search first.** Read `wiki/index.md` and grep `wiki/` for an existing page on
-   this atom (entity / concept / decision / source). This search-before-write step
+   this atom (entity / concept / decision / source). With System One on,
+   `system_one.py brain-target <home> --fact FILE` suggests `update <page>` or `new page` from
+   candidates chosen in code; read the page before you write. This search-before-write step
    is the *primary* defense against duplication — most "new" facts belong on a page
    that already exists.
 2. **Upsert.** UPDATE the existing page (revise the relevant section, bump
@@ -181,6 +183,8 @@ likely context compaction**, or roughly every N captured atoms — run a short p
 - **Reconcile.** Re-read the pages you touched. **Merge near-duplicates**: pick the
   canonical page, fold in the other's content, and replace the loser with a
   `see [[Canonical]]` redirect stub (or delete it after re-pointing inbound links).
+  With System One on, `system_one.py brain-dupes <home>` asks about each candidate pair and
+  flags `merge-candidate` for you to read and confirm; it merges nothing.
   Mark superseded content `superseded_by [[X]] (date)`. Fix broken `[[links]]`.
 - **Refresh** `wiki/index.md` and `.brainmeta.json`.
 

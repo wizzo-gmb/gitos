@@ -57,6 +57,9 @@ timer and works without the store (it says so and offers the copy text).
 
 1. **Build the list from the ledger.** Include every item that needs the operator. Re-read each item's
    source in the ledger before writing its card: a card built on a stale premise wastes a round.
+   With many cards, `system_one.py cards --items FILE` (a JSON list of id, title, why, options) suggests a
+   group for each card with a local model. It names no option: the recommendation stays the
+   orchestrator's, and its digest says so.
 2. **Write each "why" for the operator, not the code.** No ids without words, no jargon. Spell out
    lists in full (name every check, not "the eight checks"). Name the decision and what each option does.
 3. **Publish** the template with the project's name and tokens, `capabilities: {db: {}}`.

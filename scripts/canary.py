@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -722,6 +723,35 @@ def check_brainmeta(home: Path, installed: int | None) -> tuple[list[dict], list
                                        f"-> impossible state; re-stamp {installed} or update the skill install"})
     # ev <= installed -> OK (behind just means an upgrade is pending)
     return counts_items, stamp_items, None
+
+
+def lens_setting(home: Path) -> dict:
+    """`<home>/lenses.json` (WO-091), read standalone so this file keeps running on its own:
+    {"on", "global", "repo_off", "error"}. Missing -> off, no error. Only a literal true turns it on;
+    a malformed file is off with an `error`."""
+    out = {"on": False, "global": [], "repo_off": [], "error": None}
+    path = home / "lenses.json"
+    if not path.is_file():
+        return out
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as e:
+        out["error"] = f"not readable JSON ({e})"
+        return out
+    if not isinstance(raw, dict):
+        out["error"] = "not a JSON object"
+        return out
+    if "enabled" in raw and not isinstance(raw["enabled"], bool):
+        out["error"] = '"enabled" must be a JSON true or false'
+        return out
+    for key in ("global", "repo_off"):
+        v = raw.get(key, [])
+        if not isinstance(v, list) or not all(isinstance(n, str) and n for n in v):
+            out["error"] = f'"{key}" must be a list of lens names'
+            return out
+        out[key] = v
+    out["on"] = raw.get("enabled") is True
+    return out
 
 
 def check_lens_layer(layer_dir: Path, layer: str) -> list[dict]:
@@ -1949,6 +1979,67 @@ def check_loose_ends(home: Path) -> tuple[list[dict], str | None]:
     return items, None
 
 
+# ------------------------------------------------- the system-one category (OPTIONAL, MACHINE-LOCAL)
+# An optional local decision model (scripts/system_one.py). Optional in the same sense as
+# `federation`: no machine config, or a repo that opted out, means the category is ABSENT from the
+# report entirely. The logic lives in system_one.py and is IMPORTED here by path, not copied; a
+# machine that has a config but no readable system_one.py gets a VISIBLE skip. Report-only.
+#   endpoint-down     configured, repo not opted out, the health probe fails.
+#   registry-invalid  the question registry does not load (a table gap, a duplicate id, ...).
+#   high-override     a use whose last 50 finalized rows are overridden more than 30 %.
+OPTIONAL_CATEGORIES = OPTIONAL_CATEGORIES + ("system-one",)
+SYSTEM_ONE_TOOL = "system_one.py"
+
+
+def system_one_module(skill_dir: "Path | None" = None):
+    candidates = [Path(__file__).resolve().parent / SYSTEM_ONE_TOOL]
+    if skill_dir is not None:
+        candidates.append(Path(skill_dir) / TOOL_SRC_DIR / SYSTEM_ONE_TOOL)
+    for cand in candidates:
+        if cand.is_file():
+            try:
+                return _load_module("_gitos_system_one", cand)
+            except Exception:
+                continue
+    return None
+
+
+def check_system_one(home: Path, skill_dir: "Path | None") -> tuple[list[dict], str | None, bool]:
+    """-> (items, skip-reason | None, applicable). Not applicable = no machine config, or opted out."""
+    mod = system_one_module(skill_dir)
+    if mod is None:
+        env = os.environ.get("GITOS_SYSTEM_ONE_HOME")
+        cfg = (Path(env) if env else Path(os.path.expanduser("~")) / ".claude" / "gitos-system-one")             / "config.json"
+        if cfg.is_file():
+            return [], f"{SYSTEM_ONE_TOOL} not found beside canary.py or in the skill", True
+        return [], None, False
+    if not mod.is_configured(home):
+        return [], None, False
+    items: list[dict] = []
+    try:
+        cfg = mod.load_config()
+        ok, detail = mod.health(cfg["endpoint"], cfg)
+        if not ok:
+            items.append({"kind": "endpoint-down",
+                          "finding": f"System One is configured but the endpoint does not answer "
+                                     f"({detail}) -> start the model server or fix the endpoint; "
+                                     f"callers fall through to the reasoning model meanwhile"})
+    except Exception as e:
+        items.append({"kind": "endpoint-down", "finding": f"System One config unusable ({e})"})
+    problems = mod.registry_problems()
+    for msg in problems:
+        items.append({"kind": "registry-invalid",
+                      "finding": f"the System One question registry does not load: {msg}"})
+    try:
+        for use, rate in mod.high_override(home):
+            items.append({"kind": "high-override",
+                          "finding": f"System One use `{use}`: {rate:.0%} of the last 50 finalized "
+                                     f"rows were overridden -> review its questions or table"})
+    except Exception as e:
+        return items, f"the System One log could not be read ({type(e).__name__})", True
+    return items, None, True
+
+
 def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         registry: "str | None" = None, now: "datetime | None" = None) -> dict:
     r: dict = {"home": str(home), "skill_dir": str(skill_dir) if skill_dir else None,
@@ -2007,20 +2098,39 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
     else:
         skip("brain", "no brain")
 
-    # lens registries, both layers
+    # lens registries: the repo layer as always; the global layer only when the repo selects
+    # at least one global lens (<home>/lenses.json, WO-091; a missing file means lenses are off)
+    lens_cfg = lens_setting(home)
+    if lens_cfg["error"]:
+        r["lenses"].append({"kind": "config-malformed", "layer": "repo",
+                            "finding": f"lenses.json: {lens_cfg['error']} -> fix the file "
+                                       "(lenses stay off until it is valid)"})
+        checked.add("lenses")
     repo_agents = home / "agents"
     if repo_agents.is_dir():
         r["lenses"].extend(check_lens_layer(repo_agents, "repo"))
         checked.add("lenses")
     else:
         skip("lenses:repo", "no <home>/agents/")
-    if skill_dir is not None:
-        global_agents = skill_dir / "agents"
-        if global_agents.is_dir():
-            r["lenses"].extend(check_lens_layer(global_agents, "global"))
+    if lens_cfg["on"]:
+        for n in sorted(set(lens_cfg["repo_off"])):
+            if not (repo_agents / f"{n}.md").is_file():
+                r["lenses"].append({"kind": "repo-off-missing", "layer": "repo", "name": n,
+                                    "finding": f"lenses.json repo_off names '{n}' but <home>/agents/{n}.md "
+                                               "does not exist -> remove the name"})
+    if lens_cfg["on"] and lens_cfg["global"]:
+        if skill_dir is not None:
+            global_agents = skill_dir / "agents"
+            for n in sorted(set(lens_cfg["global"])):
+                if not (global_agents / f"{n}.md").is_file():
+                    r["lenses"].append({"kind": "selected-missing", "layer": "global", "name": n,
+                                        "finding": f"lenses.json selects global lens '{n}' but the global "
+                                                   f"library has no {n}.md -> deselect it or restore the lens"})
+            if global_agents.is_dir():
+                r["lenses"].extend(check_lens_layer(global_agents, "global"))
             checked.add("lenses")
-        else:
-            skip("lenses:global", "no <skill>/agents/")
+    elif skill_dir is not None:
+        skip("lenses:global", "no global lenses selected in lenses.json")
 
     # durable context anchor: the gitos block in repo-root CLAUDE.md (home is <root>/.gitos,
     # so its parent is the repo root). A wholly absent CLAUDE.md is a VISIBLE skip — whether
@@ -2086,6 +2196,14 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
             checked.add("harness")
         else:
             skip("harness", h_reason)
+    # system-one: optional, absent unless a machine config exists and this repo did not opt out.
+    so_items, so_reason, so_applicable = check_system_one(home, skill_dir)
+    if so_applicable:
+        r["system-one"] = so_items
+        if so_reason is None:
+            checked.add("system-one")
+        else:
+            skip("system-one", so_reason)
     # dispatch tier gate: the repo's committed `.claude/settings.json`. APPLICABLE only to a
     # repo the engine actually scaffolded, which the CLAUDE.md anchor is the evidence for - an
     # unscaffolded home never had the gate laid, so it gets no key and no line at all.
@@ -2199,6 +2317,9 @@ def print_report(r: dict) -> None:
         sections.append(("Harness (declared skills/plugins/MCP/hooks/agents vs visible)", "harness"))
     # Same rule, same reason: an unscaffolded repo never had the dispatch gate laid, so it gets
     # no line rather than a "skipped (not applicable)" one.
+    if "system-one" in r:
+        sections.append(("System One (local decision model: endpoint, registry, overrides)",
+                         "system-one"))
     if "dispatch" in r:
         sections.append(("Dispatch tier gate (repo .claude/settings.json)", "dispatch"))
     if "restore" in r:

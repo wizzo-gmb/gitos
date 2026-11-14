@@ -18,6 +18,37 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v46 — 2026-11-14
+breaking: yes
+
+**Migration.** Lenses are now off unless a repo has `<home>/lenses.json` with `enabled: true`. A repo that
+used lenses before must run `/gitos upgrade` once: it asks, and suggests keeping what the repo uses today.
+Until then that repo's lenses are inactive. Nothing else needs action; System One is off unless configured.
+
+- **System One: an optional local decision model the engine's scripts can ask** (WO-084 to WO-090). The
+  order is code rules, then the local model, then the reasoning model, then the operator. The model only
+  answers typed questions the engine wrote; a table in code turns the answers into an outcome. Outcomes
+  that only annotate or order work run on their own; anything that closes, rejects, merges or folds is
+  reported and waits. A failed call is an error, never a "no". With no configuration the engine behaves
+  as before.
+  - `scripts/system_one.py` and the one question registry, `scripts/system_one_questions.py`.
+  - Ledger: `triage` routes implementer notes, Parked rows and duplicate orders; `final` records what was
+    done with each suggestion.
+  - Intake and pages: `screen` annotates pending proposals (local model only, the engine's words only);
+    `cards` suggests a group per card.
+  - Brain and lenses: `lenses`, `brain-dupes`, `brain-target`.
+  - Diagnostic: `scan` gives a reading order for logs.
+  - Verification and dispatch: `scope` and `complexity`, both advisory.
+  - A reference server, `assets/system-one/serve_decider.py`, and a *Machine setup* section in
+    `references/system-one.md`. A local-network server needs `trusted_hosts` and a token.
+  - An optional `system-one` canary category.
+- **Lenses are opt-in per repo** (WO-091). `<home>/lenses.json` turns lenses on and names the global
+  lenses the repo uses, one by one. Global lenses are selected, not copied. `scripts/lenses.py` shows and
+  changes the setting. Inception asks; upgrade asks once. The canary reports a malformed setting and a
+  selected lens that no longer exists.
+
+---
+
 ## v45 — 2026-11-12
 breaking: no
 

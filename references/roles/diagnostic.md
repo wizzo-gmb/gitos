@@ -56,8 +56,7 @@ on prior work rather than contradict it silently.
    `~/.claude/projects/<project-dir>/memory/diagnostic_role_brief.md` or
    `gitos_role_brief.md` — it may point at additional context or name the
    default role to resume.
-5. **Check for lenses.** If `<home>/agents/index.md` — or the global library
-   `<skill>/agents/index.md` — lists a lens whose `domain` /
+5. **Check for lenses.** If the **active lenses** (`lenses.py status`) include one whose `domain` /
    `when-to-apply` matches your current work, read it and apply its guidance **within this
    role's boundary** (see SKILL.md → *Lenses*). A lens may inform **how** you investigate;
    it never authorizes an edit — the diagnostic role stays read-only.
@@ -131,6 +130,8 @@ For each family, look for log evidence first. File a work-order when proof is su
 If you observe an anomaly but can't prove it from available artifacts, mark it
 `unconfirmed` and document precisely what evidence would prove or disprove it — this is
 still a useful deliverable.
+
+**Optional reading order.** When System One is on (`references/system-one.md`), `system_one.py scan <home> FILE...` groups a log's lines into templates and sorts them by anomaly family. The digest is a reading order, not a finding: it tells you which lines to open first, and the templates it set aside as normal are only as good as the vocabulary. A work-order's evidence is still the literal lines you read yourself; never cite the digest. Off or down, scan the logs the usual way.
 
 ## Phase 3 — Write work-orders
 

@@ -27,9 +27,9 @@ Bootstrap your state before doing anything:
 3. Read the brain: `<home>/brain/BRAIN.md` + `<home>/brain/wiki/index.md`, then the
    specific pages relevant to today's task. The brain is *why the repo is the way it
    is*; reading it is how you avoid re-deriving what a past session already learned.
-   - **Check for lenses.** Read `<home>/agents/index.md` and the global
-     `<skill>/agents/index.md` (the lens registries) so the
-     operator-imported lenses available this session are known up front. If a lens's
+   - **Check for lenses.** Run `lenses.py status` (the **active lenses**; off when
+     `<home>/lenses.json` is absent) so the
+     operator-imported lenses available this session are known up front. If an active lens's
      `domain` / `when-to-apply` matches your current work, read it and apply its guidance
      **within this role's boundary** (see SKILL.md → *Lenses*).
 4. **Engine drift check.** Compare the skill's `ENGINE_VERSION`
@@ -104,8 +104,7 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    federation heartbeat (federated repos only; absent → no step), state-canary (one-line report),
    `worktree.py status`, federation intake surface (only if `<home>/intake/` exists; metadata only).
    → *First action.*
-   - **Check for lenses.** If `<home>/agents/index.md` — or the global library
-     `<skill>/agents/index.md` — lists a lens whose `domain` /
+   - **Check for lenses.** If the **active lenses** (`lenses.py status`) include one whose `domain` /
      `when-to-apply` matches your current work, read it and apply its guidance **within this
      role's boundary** (see SKILL.md → *Lenses*).
    *Gate:* you've read the ledger and the relevant brain pages **before** acting.
@@ -135,6 +134,11 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    topology** — a fresh window per work-order (clean budget, isolation) is the default, but you may
    batch similar/related work into one window, or pick sequence vs. parallel, to optimize context
    usage. Pin disjoint files for anything concurrent + the chosen Option; state the scope bound.
+   Name the lenses that match the work-order in the dispatch brief (with System One on,
+   `system_one.py lenses <home> --wo NNN` lists them; read each `maybe` yourself).
+   With System One on, `system_one.py complexity <home> NNN` prints a level and its inputs: one input to
+   your own reading, never the choice of model or effort (the standing rule in
+   `references/model-optimization.md` stays).
    **Every implementer that edits files is dispatched into its own worktree, by default and without
    being asked:** `python ~/.claude/skills/gitos/scripts/worktree.py new NNN` makes `.claude/worktrees/wo-NNN` on
    branch `wo-NNN` from the current `HEAD` and prints the path to dispatch into. Your own state edits
@@ -154,6 +158,9 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    author Proposed fix scope) and **re-dispatch** the implementer to that one WO — repeat until the
    operator is satisfied; only then resolve it. A genuinely *new* direction is a follow-up work-order,
    not a revision. → *Dispatch + verify.*
+   With System One on, run `system_one.py scope <home> NNN` first to order your read: it lists
+   `forbidden` and `outside-scope` files by rule and the hunks worth a look; it never substitutes for
+   reading every hunk.
    *Gate:* you do **not** proceed on the worker's word (an unread diff is not a verified one), and you
    do **not** resolve a WO the operator hasn't accepted.
 5. **Adjudicate the notes.** Read the Implementer notes; ACCEPT each (→ brain / follow-up work-order /
@@ -165,6 +172,11 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    deferred in a turn gets a Parked row (`## Parked` in the INDEX, with its restart trigger) or a
    work-order in that same turn, never only a chat line; at each checkpoint, re-read Parked and
    promote the items whose trigger has fired. The canary's `loose-ends` category checks both.
+   *With System One on* (`references/system-one.md`): run `python <skill>/scripts/system_one.py triage
+   <home>` and read the digest; read every `READ` item (`confirm` and `escalate`) yourself, write the
+   Adjudication block yourself (the digest only suggests, and is never pasted under that heading), then
+   record each outcome with `system_one.py final <use> <item> accepted|overridden [--outcome O]`.
+   Off or down, the digest is one line and this step is unchanged.
 6. **Commit.** Commit the verified work; record the sha. **A commit is scoped to one work-order, the
    same way an edit is** — so **stage by explicit path**. Staging is directory-shaped and work-orders
    are not: a bulk stage takes whatever a dispatched agent has in flight, and the disjoint-files gate
@@ -499,6 +511,9 @@ whom, the next three steps, pointers to the standing rules. Short (target under 
 pointer-only; the template is the engine's `assets/RESUME.md.tmpl`, laid by the scaffold. The
 canary reports a RESUME over 150 lines (`resume-too-long`) and a bullet under a rules heading that
 points at nothing (`resume-rules-section`).
+With System One on, also run `system_one.py triage <home>` at the checkpoint: read the digest, read
+every `READ` item (`confirm` and `escalate`) yourself, write any Adjudication block yourself, and record
+finals with `system_one.py final`. Without it, the checkpoint is unchanged.
 
 **Rotation triggers — four are work-shaped and one is measured by a hook, because those are what you can measure.**
 
@@ -568,6 +583,12 @@ You never edit code directly; all code changes go through dispatched implementer
 also defer shared-state mutation and irreversible/external actions to the operator, and
 you call the **diagnostic** role (read-only) when something needs careful evidence-first
 investigation rather than a fix.
+
+## System One digests
+
+When a script prints a System One digest (`references/system-one.md`), read the digest rather than
+re-deriving it. Confirm every `confirm` outcome yourself by reading the item; the script only reports it.
+Record the final with `system_one.record_final(use, item, final, by)` (`accepted` or `overridden`).
 
 ## Out of scope
 

@@ -28,7 +28,7 @@ the brain — collect them before running the scaffold.
 
 > **Note — lenses.** Operator-imported **lenses** (if any) live in `<home>/agents/` and are applied
 > by all roles when their `domain` / `when-to-apply` matches (see SKILL.md → *Lenses*); inception
-> itself does not author lenses.
+> itself does not author lenses. They are off until the interview's lens step (step 8) turns them on.
 
 1. **Project identity.** What is this repo? Domain, stage, and the one-sentence
    description of what it does or what problem it solves.
@@ -71,6 +71,12 @@ the brain — collect them before running the scaffold.
      time. Expect the brain to need a reconcile pass after seeding.
 
    Explain these options to the user and let them choose at runtime.
+
+8. **Lenses.** Lenses are off by default. Ask whether this repo should use them; the
+   default answer is no. If yes, list the global library's lenses (`<skill>/agents/index.md`)
+   with their `domain` and let the operator pick several in the harness's question UI. After
+   the scaffold, write the answer with `python <SKILL_DIR>/scripts/lenses.py enable --root <ROOT>`
+   and `lenses.py select --root <ROOT> NAME...`; for "no", write nothing.
 
 ---
 

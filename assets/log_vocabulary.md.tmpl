@@ -23,6 +23,20 @@ Notes: <anything else a diagnostic agent needs to know>
 
 ---
 
+## Lines that are normal
+
+A line you have seen and know to be normal output can be recorded as a bullet that starts with
+`normal:` (`expected:` works too). A trailing `*` matches every line that begins with that text. A
+leading timestamp is ignored. The two bullets below are examples: replace them with your own.
+
+- normal: `example service started *`
+- normal: `example heartbeat ok seq=1`
+
+`system_one.py scan` sets lines marked normal aside before any model call, so they never use a model
+judgment. Without System One the bullets are still a useful record of what quiet output looks like.
+
+---
+
 ## Source families
 
 ### 1. Runtime / application logs
