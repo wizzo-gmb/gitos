@@ -104,8 +104,10 @@ printed behind `  | `); the orchestrator reads the digest and writes the block. 
 | use | item | outcomes (`confirm` marked) |
 |---|---|---|
 | `note-route` | a point of an implementer note with no routing label | `follow-up`, `brain`, `reject`*, `escalate` |
-| `note-trigger` | a point routed `follow-up`: a Parked row or a work-order | `parked`, `work-order` |
-| `followup-point` | a point under a *Follow-ups* heading | `parked`, `work-order`, `reject`* |
+| `note-trigger` | a point routed `follow-up`: a Parked row or the loose-ends list | `parked`, `loose-end` |
+| `followup-point` | a point under a *Follow-ups* heading | `parked`, `loose-end`, `reject`* |
+| `loose-end-join` | a (loose end, open undispatched work-order) pair chosen by `loose_ends.py candidates`: "doing the order as scoped would also need, or include, the item" | `join`, `separate` |
+| `loose-end-bundle` | a pair of loose ends chosen by code: "one order could do both together" | `bundle`, `apart` |
 | `process-point` | a point under a *Process notes* heading | `follow-up`, `reject`* |
 | `parked-trigger` | an open Parked row, with commit subjects since `Parked on`, WO titles, the version | `fired`, `waiting` |
 | `row-state` | a row of a register (`--register`; id in the first column) | `needs-work`, `in-progress`, `waiting-proof`, `waiting-owner`, `waiting-external`, `closable`*, `superseded`*, `note-only`, `unsettled` |
@@ -146,7 +148,16 @@ accept or revert`); *Durable facts* -> `brain`. *Follow-ups* asks only `already_
 `has_trigger`; *Process notes* asks only `names_owed_work`; any other heading, or none, gets the full
 `note-route` questions. Headings are matched case-insensitively, with or without bold, colon, dash or
 full stop. Notes triaged: every open work-order's, and resolved ones only when the canary's
-`notes-unadjudicated` check covers them.
+`notes-unadjudicated` check covers them. A follow-up with no trigger routes to `loose-end`: it goes on the
+loose-ends list and is drained with the rest, so it can join an open order instead of always becoming a
+new one.
+
+**The `loose-ends` group.** `triage` reads `<home>/loose-ends.md` with no flag (no file: no group). Each
+`new` item is asked `row-state`; then each (item, open order) join candidate and each (item, item) bundle
+candidate, all chosen by code. An item waiting on the operator is asked nothing. The digest lists each
+item's `row-state`, then its best join, then the bundles as groups (pairs joined by code into connected
+groups). `closable`, `superseded` and `fold` stay `confirm` outcomes; `join` and `bundle` are reversible
+because the orchestrator still writes the order.
 
 ## The diagnostic scan
 

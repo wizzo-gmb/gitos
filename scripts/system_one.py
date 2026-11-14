@@ -995,18 +995,79 @@ def _duplicate_items(home: Path, c, parked: list) -> list:
 
 
 _USE_OF = {"notes": "note-route", "parked": "parked-trigger", "duplicates": "duplicate",
-           "register": "row-state"}
+           "register": "row-state", "loose-ends": "row-state"}
+
+
+def _loose_ends():
+    """loose_ends.py, imported by path (it imports this module back lazily, for the signals)."""
+    mod = sys.modules.get("_gitos_loose_ends_s1")
+    if mod is None:
+        path = Path(__file__).resolve().with_name("loose_ends.py")
+        spec = importlib_util.spec_from_file_location("_gitos_loose_ends_s1", path)
+        mod = importlib_util.module_from_spec(spec)
+        sys.modules["_gitos_loose_ends_s1"] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop("_gitos_loose_ends_s1", None)
+            raise
+    return mod
+
+
+def _loose_end_items(home: Path) -> tuple:
+    """-> (items, new rows). Read from `<home>/loose-ends.md` with no flag. Each `new` item is asked
+    `row-state`; the (item, open order) join pairs and the (item, item) bundle pairs are chosen by
+    code (`loose_ends.candidates`). An item waiting on the operator is asked nothing."""
+    le = _loose_ends()
+    if not le.list_path(home).is_file():
+        return [], []
+    rows = [r for r in le.rows_of(home) if r["state"].strip() == le.STATE_NEW and le.ID_RE.fullmatch(r["id"])]
+    if not rows:
+        return [], []
+    cand = le.candidates(home, sm=sys.modules[__name__])
+    items = [{"group": "loose-ends", "use": "row-state", "ref": r["id"], "text": _cap(r["item"], 300),
+              "state": _cap(f"Loose end {r['id']} (from {r['source']}): {r['item']}")} for r in rows]
+    for j in cand["join"]:
+        items.append({"group": "loose-ends", "use": "loose-end-join", "ref": f"{j['item']}~{j['wo']}",
+                      "text": f"A {j['wo']}: {_cap(j['wo_text'], 500)}\nB {j['item']}: {_cap(j['item_text'], 300)}",
+                      "state": f"Work-order A ({j['wo']}): {_cap(j['wo_text'], 900)}\n"
+                               f"Item B ({j['item']}): {_cap(j['item_text'], 300)}"})
+    for b in cand["bundle"]:
+        items.append({"group": "loose-ends", "use": "loose-end-bundle", "ref": f"{b['a']}~{b['b']}",
+                      "text": f"A {b['a']}: {_cap(b['a_text'], 300)}\nB {b['b']}: {_cap(b['b_text'], 300)}",
+                      "state": f"Item A ({b['a']}): {_cap(b['a_text'], 400)}\n"
+                               f"Item B ({b['b']}): {_cap(b['b_text'], 400)}"})
+    return items, rows
+
+
+def _bundle_groups(results: list) -> list:
+    """Connected groups of items joined by `bundle` pairs, joined by code: [[L1, L2, L5], ...]."""
+    parent: dict = {}
+
+    def find(x):
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for r in results:
+        if r["use"] == "loose-end-bundle" and r["outcome"] == "bundle":
+            a, b = r["ref"].split("~")
+            parent[find(a)] = find(b)
+    groups: dict = {}
+    for x in list(parent):
+        groups.setdefault(find(x), []).append(x)
+    return sorted((sorted(g, key=lambda t: int(t[1:])) for g in groups.values()), key=lambda g: int(g[0][1:]))
 
 
 _REJECT_DONE = "reject: done in this order"
 
 
 def _refine_follow_up(r: dict, it: dict, home) -> tuple:
-    """A `follow-up` outcome: ask `note-trigger` for a Parked row or a work-order."""
+    """A `follow-up` outcome: ask `note-trigger` for a Parked row or the loose-ends list."""
     t = decide("note-trigger", it["ref"], it["state"], home=home)
     r = {**r, "inputs": {**r["inputs"], **t["inputs"]}, "pass": max(r["pass"], t["pass"])}
-    return r, {"parked": "follow-up (Parked row)", "work-order": "follow-up (work-order)"
-               }.get(t["outcome"], "follow-up (Parked or work-order: read it)")
+    return r, {"parked": "follow-up (Parked row)", "loose-end": "follow-up (loose end)"
+               }.get(t["outcome"], "follow-up (Parked or loose end: read it)")
 
 
 def _judge_note(it: dict, home) -> tuple:
@@ -1022,7 +1083,7 @@ def _judge_note(it: dict, home) -> tuple:
     if kind == "followup":
         r = decide("followup-point", ref, state, home=home)
         return "followup-point", r, {"parked": "follow-up (Parked row)",
-                                     "work-order": "follow-up (work-order)",
+                                     "loose-end": "follow-up (loose end)",
                                      "reject": _REJECT_DONE}.get(r["outcome"], r["outcome"])
     if kind == "process":
         r = decide("process-point", ref, state, home=home)
@@ -1058,7 +1119,10 @@ def triage(home, register: "str | None" = None) -> dict:
     c = _canary()
     items = _note_items(home, c)
     parked = _parked_items(home, c)
-    items += parked + _duplicate_items(home, c, parked)
+    loose, loose_rows = _loose_end_items(home)
+    as_dup = [{"ref": r["id"], "text": r["item"]} for r in loose_rows]
+    items += parked + _duplicate_items(home, c, parked + as_dup)
+    items += loose
     if register:
         items += _register_items(register, c)
     results = []
@@ -1066,7 +1130,7 @@ def triage(home, register: "str | None" = None) -> dict:
         if it["group"] == "notes":
             use, r, label = _judge_note(it, home)
         else:
-            use = _USE_OF[it["group"]]
+            use = it.get("use") or _USE_OF[it["group"]]
             r = decide(use, it["ref"], it["state"], home=home)
             label = r["outcome"]
         results.append({"group": it["group"], "use": use, "ref": it["ref"], "outcome": r["outcome"],
@@ -1077,7 +1141,16 @@ def triage(home, register: "str | None" = None) -> dict:
     for r in results:
         r["review"] = r["confirm"] or r["outcome"] in ("escalate", "deviation")
         counts["confirm" if r["confirm"] else "escalate" if r["review"] else "settled"] += 1
-    return {"registry": _registry().REGISTRY_VERSION, "items": results, "counts": counts}
+    seen: set = set()
+    for r in results:                     # the best join of an item: its first `join` pair (best score first)
+        r["best"] = False
+        if r["use"] == "loose-end-join" and r["outcome"] == "join":
+            item = r["ref"].split("~")[0]
+            if item not in seen:
+                seen.add(item)
+                r["best"] = True
+    return {"registry": _registry().REGISTRY_VERSION, "items": results, "counts": counts,
+            "bundles": _bundle_groups(results)}
 
 
 def _flags(r: dict) -> str:
@@ -1092,11 +1165,17 @@ def format_digest(d: dict) -> str:
     starts with a marker (`ok`, `READ`, `|`, `==`, `counts`), never with a markdown heading."""
     out = [f"== system-one triage (registry v{d['registry']}): {len(d['items'])} items =="]
     order = {"fired": 0, "waiting": 1}
-    for group in ("notes", "parked", "duplicates", "register"):
+    for group in ("notes", "parked", "duplicates", "register", "loose-ends"):
         rows = [r for r in d["items"] if r["group"] == group]
         if not rows:
             continue
         rows.sort(key=lambda r: (r["review"], order.get(r["outcome"], 2)))
+        if group == "loose-ends":
+            # each item's row-state, then its best join; a bundle pair is rolled into a group below
+            rank = {"row-state": 0, "loose-end-join": 1, "loose-end-bundle": 2}
+            rows = [r for r in rows if r["use"] == "row-state" or r["review"]
+                    or (r["use"] == "loose-end-join" and r.get("best"))]
+            rows.sort(key=lambda r: (rank[r["use"]], r["ref"]))
         out.append(f"== {group}: {len(rows)} ==")
         for r in rows:
             mark = "READ" if r["review"] else "ok  "
@@ -1109,6 +1188,9 @@ def format_digest(d: dict) -> str:
                     out.append(f"  | {ln}")
                 if r["inputs"]:
                     out.append("  | answers: " + ", ".join(f"{k}={v}" for k, v in r["inputs"].items()))
+        if group == "loose-ends":
+            for g in d.get("bundles", []):
+                out.append(f"ok   bundle {' '.join(g)}  (one order could do these together)")
     c = d["counts"]
     out.append(f"counts: settled {c['settled']}, confirm {c['confirm']}, escalate {c['escalate']}")
     return "\n".join(out)

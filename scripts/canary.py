@@ -1856,7 +1856,7 @@ def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict
 # `## Parked` table (a deferral with a restart trigger, ids `P<n>`) and the `### Adjudication`
 # block the orchestrator writes under a work-order's `## Implementer notes` (one line per open
 # point, each ending in exactly one destination: `-> WO-NNN`, `-> P<n>`, `-> brain: <page>` or
-# `-> rejected: <reason>`). REPORT-ONLY, and it opens only the INDEX and the work-order files.
+# `-> rejected: <reason>`, or `-> L<n>`: moved to the loose-ends list, shape only). REPORT-ONLY, and it opens only the INDEX and the work-order files.
 #
 # THE EXEMPTION is by engine version, so it works in any repo with no per-repo setting: a
 # resolved row is checked for `notes-unadjudicated` only when the version its "Fix landed in" cell
@@ -1882,6 +1882,123 @@ ADJ_P_RE = re.compile(r"(?:→|->)\s*(P\d+)\b")
 VERSION_IN_CELL_RE = re.compile(r"\bv(\d+)\b", re.IGNORECASE)
 
 
+# The loose-ends LIST (WO-093): `<home>/loose-ends.md`, one table `| ID | Added | Source | Item | State |`
+# and a `<!-- next: L<n> -->` comment under it. Both limits are constants here, at the top of the check.
+LOOSE_LIST_NAME = "loose-ends.md"
+LOOSE_ITEM_MAX = 300                 # characters of an Item
+LOOSE_STALE_DAYS = 14                # a `new` item older than this is stale
+LOOSE_STALE_COUNT = 20               # more `new` items than this is stale
+LOOSE_HEADER = ["id", "added", "source", "item", "state"]
+LOOSE_ID_RE = re.compile(r"L\d+")
+LOOSE_NEXT_RE = re.compile(r"<!--\s*next:\s*L\d+\s*-->")
+LOOSE_WAIT_RE = re.compile(r"waiting:\s*user\s*(?:—|–|--|-)\s*(\S.*)")
+_LOOSE_PIPE = re.compile(r"(?<!\\)\|")
+
+
+def _loose_cells(line: str) -> list[str]:
+    s = line.strip()
+    s = s[1:] if s.startswith("|") else s
+    s = s[:-1] if s.endswith("|") and not s.endswith("\\|") else s
+    return [c.strip().replace("\\|", "|") for c in _LOOSE_PIPE.split(s)]
+
+
+def parse_loose_list(text: str) -> dict:
+    """{"rows": [[id, added, source, item, state, ncells]], "outside": [first stray line] , "table": bool}.
+    The header is everything before the table; after it only blank lines and the next-id comment are
+    allowed (anything else is `outside`)."""
+    lines = text.splitlines()
+    t = next((i for i, ln in enumerate(lines)
+              if ln.lstrip().startswith("|") and [c.lower() for c in _loose_cells(ln)] == LOOSE_HEADER), None)
+    out: dict = {"rows": [], "outside": [], "table": t is not None}
+    if t is None:
+        return out
+    j = t + 1
+    if j < len(lines) and lines[j].lstrip().startswith("|"):
+        j += 1
+    while j < len(lines) and lines[j].lstrip().startswith("|"):
+        c = _loose_cells(lines[j])
+        out["rows"].append((c + [""] * 5)[:5] + [len(c)])
+        j += 1
+    out["outside"] = [ln.strip() for ln in lines[j:]
+                      if ln.strip() and not LOOSE_NEXT_RE.fullmatch(ln.strip())]
+    return out
+
+
+def loose_list_waiting(home: Path, today: "date | None" = None) -> "tuple[int, int] | None":
+    """(waiting-on-the-operator count, age in days of the oldest of them), or None when there are none."""
+    text = _read(home / LOOSE_LIST_NAME)
+    if text is None:
+        return None
+    today = today or date.today()
+    ages = []
+    for r in parse_loose_list(text)["rows"]:
+        if LOOSE_WAIT_RE.fullmatch(r[4]):
+            try:
+                ages.append(max(0, (today - date.fromisoformat(r[1])).days))
+            except ValueError:
+                ages.append(0)
+    return (len(ages), max(ages)) if ages else None
+
+
+def check_loose_list(home: Path, today: "date | None" = None) -> list[dict]:
+    """Findings for `<home>/loose-ends.md` (nothing when the file does not exist). A `waiting: user`
+    item is never a finding: the report prints one info line for those."""
+    text = _read(home / LOOSE_LIST_NAME)
+    if text is None:
+        return []
+    today = today or date.today()
+    items: list[dict] = []
+    parsed = parse_loose_list(text)
+    if not parsed["table"]:
+        return [{"kind": "loose-ends-malformed", "file": LOOSE_LIST_NAME,
+                 "finding": f"{LOOSE_LIST_NAME} has no `| ID | Added | Source | Item | State |` table "
+                            "-> restore it from assets/loose-ends.md.tmpl"}]
+    seen: set[str] = set()
+    new_ages: list[tuple[int, str]] = []
+    for lid, added, source, item, state, ncells in parsed["rows"]:
+        name = lid or "(no id)"
+        if ncells != 5:
+            items.append({"kind": "loose-ends-malformed", "id": name,
+                          "finding": f"loose end {name} has {ncells} columns, not 5 -> fix the row"})
+        if not LOOSE_ID_RE.fullmatch(lid):
+            items.append({"kind": "loose-ends-malformed", "id": name,
+                          "finding": f"loose end {name} has a bad id (want L<n>) -> fix the id"})
+        elif lid in seen:
+            items.append({"kind": "loose-ends-malformed", "id": lid,
+                          "finding": f"loose end {lid} appears twice -> ids are never reused: renumber the new one"})
+        seen.add(lid)
+        try:
+            age = max(0, (today - date.fromisoformat(added)).days)
+        except ValueError:
+            age = None
+            items.append({"kind": "loose-ends-malformed", "id": name,
+                          "finding": f"loose end {name} has no valid Added date (want YYYY-MM-DD) -> fix the row"})
+        if state != "new" and not LOOSE_WAIT_RE.fullmatch(state):
+            items.append({"kind": "loose-ends-malformed", "id": name,
+                          "finding": f"loose end {name} has State {state!r}: it is `new` or "
+                                     "`waiting: user — <the question>` (an empty question is malformed) "
+                                     "-> fix the State; a routed or closed item is removed from the list"})
+        elif state == "new" and age is not None:
+            new_ages.append((age, name))
+        if len(item) > LOOSE_ITEM_MAX:
+            items.append({"kind": "loose-ends-oversized", "id": name,
+                          "finding": f"loose end {name} is {len(item)} characters (limit {LOOSE_ITEM_MAX}) "
+                                     "-> author a work order for it and drop the row `--to WO-NNN`"})
+    if parsed["outside"]:
+        items.append({"kind": "loose-ends-oversized", "file": LOOSE_LIST_NAME,
+                      "finding": f"{LOOSE_LIST_NAME} has text outside its header and table "
+                                 f"({parsed['outside'][0][:60]!r}...) -> move this to RESUME or the work "
+                                 "order it belongs to; the list is rows only"})
+    n_new = sum(1 for r in parsed["rows"] if r[4] == "new")
+    old = max(new_ages) if new_ages else None
+    if (old is not None and old[0] > LOOSE_STALE_DAYS) or n_new > LOOSE_STALE_COUNT:
+        oldest = f", oldest {old[1]} at {old[0]} days" if old else ""
+        items.append({"kind": "loose-ends-stale",
+                      "finding": f"{n_new} new loose end(s){oldest} (limits: {LOOSE_STALE_DAYS} days, "
+                                 f"{LOOSE_STALE_COUNT} items) -> drain the list (say *triage the loose ends*)"})
+    return items
+
+
 def _wo_path(home: Path, nnn: str) -> "Path | None":
     """The work-order file for NNN, in the open dir or resolved/, else None."""
     for d in (home / "work-orders", home / "work-orders" / "resolved"):
@@ -1891,12 +2008,12 @@ def _wo_path(home: Path, nnn: str) -> "Path | None":
     return None
 
 
-def check_loose_ends(home: Path) -> tuple[list[dict], str | None]:
-    """-> (findings, skip-reason). Reads INDEX.md and the work-order files only."""
+def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict], str | None]:
+    """-> (findings, skip-reason). Reads INDEX.md, the work-order files and `loose-ends.md`."""
     idx_text = _read(home / "INDEX.md")
     if idx_text is None:
         return [], "no INDEX.md"
-    items: list[dict] = []
+    items: list[dict] = check_loose_list(home, today)
     wo_dirs = (home / "work-orders", home / "work-orders" / "resolved")
     exist: set[str] = set()
     for d in wo_dirs:
@@ -1944,7 +2061,8 @@ def check_loose_ends(home: Path) -> tuple[list[dict], str | None]:
                           "file": path.name,
                           "finding": f"WO-{nnn} is resolved with Implementer notes and no "
                                      "'### Adjudication' block -> route each point "
-                                     "(-> WO-NNN / -> P<n> / -> brain: <page> / -> rejected: <reason>)"})
+                                     "(-> WO-NNN / -> P<n> / -> brain: <page> / -> rejected: <reason> "
+                                     "/ -> L<n>)"})
 
     # every adjudication line must point at something that exists
     for d in wo_dirs:
@@ -2182,7 +2300,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
     else:
         skip("worktree", w_reason)
     # loose ends: the Parked list and the adjudication of implementer notes (INDEX + work-orders).
-    le_items, le_reason = check_loose_ends(home)
+    le_items, le_reason = check_loose_ends(home, today)
     r["loose-ends"].extend(le_items)
     if le_reason is None:
         checked.add("loose-ends")
@@ -2344,6 +2462,9 @@ def print_report(r: dict) -> None:
             sub = s["check"].split(":", 1)
             label = f"{title} [{sub[1]}]" if len(sub) > 1 else title
             print(f"[--] {label}: skipped ({s['reason']})")
+    waiting = loose_list_waiting(Path(r["home"]))
+    if waiting:
+        print(f"[--] loose ends: {waiting[0]} waiting on you, oldest {waiting[1]}d")
     info = dispatch_distribution(Path(r["home"]), Path(r["skill_dir"]) if r["skill_dir"] else None)
     if info:
         print(info)

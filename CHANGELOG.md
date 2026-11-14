@@ -18,6 +18,29 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v48 — 2026-11-14
+breaking: no
+
+- **A loose-ends list, drained at the seams** (WO-093). `<home>/loose-ends.md` holds small items that came up
+  and were not acted on, so the current work order stays on track. No file means an empty list; the first
+  `scripts/loose_ends.py add` creates it. An item is at most 300 characters: anything with evidence, a cause
+  or a fix is a work order, a session plan is RESUME, and nothing is dispatched from the list.
+- The deferral rule is now "written down in the same turn": a Parked row when there is a trigger, otherwise
+  the list. Adjudication gains a fifth ending, `→ L<n>`.
+- The orchestrator drains the list after a resolve, at each checkpoint, at first action when the canary
+  reports `loose-ends-stale` (over 14 days or 20 items), and on "triage the loose ends". It applies joins
+  into undispatched orders, bundles, parks and brain moves; the operator approves closes, folds, risky and
+  uncertain items in one batch. An item that needs the operator waits with its question.
+- System One: `loose-end-join` and `loose-end-bundle`, a `loose-ends` triage group, registry v9; a follow-up
+  with no trigger now routes to `loose-end` instead of `work-order`. With System One off, `loose_ends.py
+  candidates` gives the same join and bundle candidates from code.
+- Canary: `loose-ends-malformed`, `loose-ends-oversized`, `loose-ends-stale`; items waiting on the operator
+  are an info line, never a finding.
+- Upgrade: a legacy loose-ends register is offered for import at most once per file, and the answer is
+  recorded (`loose_ends.py legacy pending|decline`, `import`). A repo with none sees nothing.
+
+---
+
 ## v47 — 2026-11-14
 breaking: yes
 

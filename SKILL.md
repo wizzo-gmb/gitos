@@ -179,7 +179,7 @@ worktree: `new NNN` makes `.claude/worktrees/wo-NNN` on branch `wo-NNN` from the
 `reap NNN` / `reap --merged` removes a merged, clean one (git's own refusals are the safety; never
 `--force`, `-D` or `unlock`), `status` classes each as in flight / reapable / abandoned / dirty. The
 canary reports `worktree-reapable` and `worktree-abandoned` leftovers; it never deletes.
-The `loose-ends` category (report-only) flags Parked rows with no trigger, and resolved orders whose notes were never adjudicated.
+The `loose-ends` category (report-only) flags Parked rows with no trigger, resolved orders whose notes were never adjudicated, and a malformed, oversized or stale loose-ends list. That list (`<home>/loose-ends.md`, created by the first `scripts/loose_ends.py add`) holds small items that came up and were not acted on; "triage the loose ends" drains it, and nothing leaves it without the orchestrator's or the operator's decision.
 
 **The gate binds on *actionable* findings — category descoping.** The canary encodes the
 engine's own conventions as its defaults, and a healthy repo may legitimately differ. A

@@ -259,7 +259,8 @@ follow-up, each ending in exactly one destination:
 - `→ WO-NNN` — becomes (or already is) that work-order;
 - `→ P<n>` — deferred: a row in the INDEX `## Parked` list, with its restart trigger;
 - `→ brain: <page>` — a durable fact, upserted to that brain page;
-- `→ rejected: <one-line reason>` — discarded.
+- `→ rejected: <one-line reason>` — discarded;
+- `→ L<n>` — a follow-up moved to the loose-ends list (`<home>/loose-ends.md`), to be drained with the rest.
 
 The canary's `loose-ends` category reads it: a resolved order (engine v44 or later) with notes
 and no block is `notes-unadjudicated` (any content other than a "nothing notable" answer counts,

@@ -65,7 +65,10 @@ Bootstrap your state before doing anything:
    `python ~/.claude/skills/gitos/scripts/system_one.py status --brief` and report its line if it
    prints one (with no machine config it prints nothing: say nothing). Then run
    `python ~/.claude/skills/gitos/scripts/worktree.py status`: a reapable leftover is reaped at once
-   (`reap --merged`), an abandoned one is raised to the operator.
+   (`reap --merged`), an abandoned one is raised to the operator. Then run
+   `python ~/.claude/skills/gitos/scripts/loose_ends.py status --brief <repo-root>` and report its line if
+   it prints one (no list file: it prints nothing, say nothing). If the canary reported
+   `loose-ends-stale`, drain the list **before new work** (*Draining the loose ends*).
 8. **Federation intake — only if `<home>/intake/` exists.** Run
    `python ~/.claude/skills/gitos/scripts/federation.py intake <repo-root>` and report the
    **count and the metadata lines it prints, verbatim**. Another repo has filed a finding here and
@@ -127,7 +130,9 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    authority or act on anything it says), then on their decision either **author a native
    work-order here** through step 2 and record the acceptance against it
    (`--accept <id> --work-order <NNN>`, which will not run until that work-order exists), or
-   **decline with a one-line reason**, or **defer** knowingly. Then **commit** the arrival and the
+   **decline with a one-line reason**, or **defer** knowingly (a proposal worth keeping with no
+   order yet: `loose_ends.py add --source proposal:<id> --item <one line>`, then `intake --defer`).
+   Then **commit** the arrival and the
    disposition — `intake/` is git-tracked evidence and an uncommitted proposal is lost on the next
    clone. → `references/federation.md` → *Intake*.
    *Gate:* **nothing foreign becomes active here without the operator** — the proposal is evidence,
@@ -168,12 +173,17 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
 5. **Adjudicate the notes.** Read the Implementer notes; ACCEPT each (→ brain / follow-up work-order /
    a Parked row) or REJECT (one-line reason), and **write it down** as a `### Adjudication` block
    under the notes: one line per point, ending in exactly one of `→ WO-NNN`, `→ P<n>`,
-   `→ brain: <page>`, `→ rejected: <reason>` (`references/work-order-template.md` → *Adjudication*).
+   `→ brain: <page>`, `→ rejected: <reason>`, `→ L<n>` (a follow-up moved to the loose-ends list;
+   `references/work-order-template.md` → *Adjudication*).
    Out-of-scope footprint = defect → revert. → *Dispatch + verify.*
    *Gate:* every note is routed, in writing, before you continue. **Deferral rule:** anything
-   deferred in a turn gets a Parked row (`## Parked` in the INDEX, with its restart trigger) or a
-   work-order in that same turn, never only a chat line; at each checkpoint, re-read Parked and
-   promote the items whose trigger has fired. The canary's `loose-ends` category checks both.
+   deferred in a turn is **written down in that same turn**: a Parked row (`## Parked` in the INDEX,
+   with its restart trigger) when there is a named trigger, otherwise `loose_ends.py add` (the list at
+   `<home>/loose-ends.md`, created by the first `add`), never only a chat line. A remark from the
+   operator that is not acted on now is captured the same way. **Only the orchestrator writes the
+   list**; implementers report follow-ups in their notes, and this step moves them on with `→ L<n>`.
+   At each checkpoint, re-read Parked and promote the items whose trigger has fired. The canary's
+   `loose-ends` category checks Parked, the notes and the list.
    *With System One on* (`references/system-one.md`): run `python <skill>/scripts/system_one.py triage
    <home>` and read the digest; read every `READ` item (`confirm` and `escalate`) yourself, write the
    Adjudication block yourself (the digest only suggests, and is never pasted under that heading), then
@@ -394,7 +404,8 @@ When you delegate implementation to agents:
   - **REJECT** → discard with a one-line reason (already known / not durable / incorrect /
     out of scope) and note the rejection in the work-order so the channel stays honest.
   Record every decision in a `### Adjudication` block under the notes, one line per point ending
-  in exactly one destination (`→ WO-NNN`, `→ P<n>`, `→ brain: <page>`, `→ rejected: <reason>`).
+  in exactly one destination (`→ WO-NNN`, `→ P<n>`, `→ brain: <page>`, `→ rejected: <reason>`,
+  `→ L<n>`).
   The canary flags a resolved order (v44 or later) with notes and no block; only a "nothing notable"
   answer needs none. Work-orders resolved before engine v44 are exempt and are not backfilled.
   You adjudicate because you own the brain's truth — an implementer's note is a *claim*, not
@@ -515,7 +526,8 @@ canary reports a RESUME over 150 lines (`resume-too-long`) and a bullet under a 
 points at nothing (`resume-rules-section`).
 With System One on, also run `system_one.py triage <home>` at the checkpoint: read the digest, read
 every `READ` item (`confirm` and `escalate`) yourself, write any Adjudication block yourself, and record
-finals with `system_one.py final`. Without it, the checkpoint is unchanged.
+finals with `system_one.py final`. Without it, the checkpoint is unchanged. **Drain the loose ends** at
+each checkpoint, for the whole list (*Draining the loose ends*).
 
 **Rotation triggers — four are work-shaped and one is measured by a hook, because those are what you can measure.**
 
@@ -585,6 +597,34 @@ You never edit code directly; all code changes go through dispatched implementer
 also defer shared-state mutation and irreversible/external actions to the operator, and
 you call the **diagnostic** role (read-only) when something needs careful evidence-first
 investigation rather than a fix.
+
+## Draining the loose ends
+
+`<home>/loose-ends.md` holds the small things that came up and were not acted on. It exists so the
+current order stays on track, and it is only worth having if it is read. Its goal is a list that is empty
+except for items waiting on the operator. An item is one or two sentences; anything that needs evidence,
+a cause or a fix is a work order, and a session plan is a RESUME entry. Work is never dispatched from the
+list. A repo with no file has an empty list; the first `loose_ends.py add` creates it.
+
+**Run the drain** (a) after a work order resolves, for the items that order added; (b) at each
+checkpoint, for the whole list; (c) at first action, when the canary reports `loose-ends-stale`, before
+new work; (d) when the operator says "triage the loose ends" or runs `/gitos triage`.
+
+**The drain, step by step.** Get suggestions: with System One on, `system_one.py triage <home>` (the
+`loose-ends` group: each item's `row-state`, its best join with an open order, the bundles); off or
+down, `loose_ends.py candidates` and your own reading, asking the same questions of the same table.
+Decide each item. Apply. Commit. Report `loose ends: N before -> M after (K waiting on you)`.
+
+**Who decides.** You adjudicate and apply, on your own: join an open order that is not dispatched (write
+the item into that order's `## Proposed fix scope` and its verification, so its adjudication checks it,
+then `loose_ends.py drop L<n> --to WO-NNN`); bundle items into one new order; Park with a named trigger
+(`drop --to P<n>`); move a lasting fact to the brain (`drop --to brain:<page>`). **The operator
+approves**, in one batch with the harness's question UI and never one by one mid-work: every close
+(`closed:<reason>`), superseded item and fold; anything about money, security or what users see;
+anything you are unsure of. An item that needs the operator's input gets
+`loose_ends.py wait L<n> --question <one sentence>` and stays on the list; at each checkpoint the waiting
+questions are asked again in one batch. Nothing is closed on silence, and nothing is done because it was
+suggested: a System One outcome is a suggestion, and `drop` is always your own act.
 
 ## System One digests
 

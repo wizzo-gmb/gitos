@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import itertools
 
-REGISTRY_VERSION = 8
+REGISTRY_VERSION = 9
 
 REVERSIBLE = "reversible"
 CONFIRM = "confirm"
@@ -185,7 +185,8 @@ register(
     outcomes={"follow-up": REVERSIBLE, "brain": REVERSIBLE, "reject": CONFIRM},
 )
 
-# `note-trigger`: asked only for a note routed `follow-up`, to suggest a Parked row or a work-order.
+# `note-trigger`: asked only for a note routed `follow-up`, to suggest a Parked row or the loose-ends
+# list (WO-093: a follow-up with no trigger is drained with the rest, so it can join an open order).
 register(
     "note-trigger",
     questions=[
@@ -195,8 +196,8 @@ register(
                           "being reached or another change landing.",
                   "false": "The work can start whenever someone chooses; no event is named."}),
     ],
-    table=lambda i: {"yes": "parked", "no": "work-order"}.get(i["has_trigger"], ESCALATE),
-    outcomes={"parked": REVERSIBLE, "work-order": REVERSIBLE},
+    table=lambda i: {"yes": "parked", "no": "loose-end"}.get(i["has_trigger"], ESCALATE),
+    outcomes={"parked": REVERSIBLE, "loose-end": REVERSIBLE},
 )
 
 # `parked-trigger`: does an open Parked row's restart trigger look fired? It only orders the digest.
@@ -308,7 +309,7 @@ def _followup_point(i: dict) -> str:
         return ESCALATE
     if i["already_done"] == "yes":
         return "reject"
-    return "parked" if i["has_trigger"] == "yes" else "work-order"
+    return "parked" if i["has_trigger"] == "yes" else "loose-end"
 
 
 register(
@@ -325,7 +326,7 @@ register(
                   "false": "The work can start whenever someone chooses; no event is named."}),
     ],
     table=_followup_point,
-    outcomes={"parked": REVERSIBLE, "work-order": REVERSIBLE, "reject": CONFIRM},
+    outcomes={"parked": REVERSIBLE, "loose-end": REVERSIBLE, "reject": CONFIRM},
 )
 
 register(
@@ -603,4 +604,31 @@ register(
                          "false": "The scope text states the exact edit."})],
     table=lambda i: {"yes": "yes", "no": "no"}.get(i["needs_design_choice"], ESCALATE),
     outcomes={"yes": REVERSIBLE, "no": REVERSIBLE},
+)
+
+
+# ------------------------------------------------------------------ loose-ends uses (WO-093)
+# Candidates are chosen by code (`loose_ends.py candidates`); the model only confirms a pair. `join`
+# and `bundle` are reversible: the orchestrator still writes the order (or the new one) itself.
+register(
+    "loose-end-join",
+    questions=[question("joins", "noul",
+                        "Doing work-order A as scoped would also need, or naturally include, item B.",
+                        {"true": "Item B is part of what order A changes, or order A cannot be done "
+                                 "properly without it.",
+                         "false": "Item B is a separate matter that order A does not need or include."})],
+    table=lambda i: {"yes": "join", "no": "separate"}.get(i["joins"], ESCALATE),
+    outcomes={"join": REVERSIBLE, "separate": REVERSIBLE},
+)
+
+register(
+    "loose-end-bundle",
+    questions=[question("bundles", "noul",
+                        "One work order could do item A and item B together, because they change "
+                        "the same thing for related reasons.",
+                        {"true": "Both items change the same file, rule or behaviour for connected "
+                                 "reasons, so one order would be smaller than two.",
+                         "false": "They change different things, or for unrelated reasons."})],
+    table=lambda i: {"yes": "bundle", "no": "apart"}.get(i["bundles"], ESCALATE),
+    outcomes={"bundle": REVERSIBLE, "apart": REVERSIBLE},
 )

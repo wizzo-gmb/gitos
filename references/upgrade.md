@@ -329,6 +329,21 @@ that already has the heading is left byte-identical, so re-running is a no-op. T
 lays the section on a new repo. Work-orders resolved before engine v44 are exempt from the canary's
 `loose-ends` check; do not backfill adjudications onto them.
 
+**4l. Legacy loose-ends registers.**
+The loose-ends list is **lazy**: upgrade does not lay `<home>/loose-ends.md` and a repo with no file has an
+empty list. The only step here is the legacy register question, asked **at most once per file**. Run
+`python <SKILL_DIR>/scripts/loose_ends.py legacy pending --root <repo-root>`. **If it prints nothing there
+is no question and no output.** Otherwise it lists files (a work order or file under the home whose name or
+`# ` title says loose ends or register) not yet answered; for each, ask once, with the harness's question
+UI, whether to import it and drain, and record the answer: `loose_ends.py import --root <repo-root> <FILE>`
+(adds each table row as a `new` item with Source `import:<its id>`; never edits the file, never imports a
+row twice; rows that say done, fixed, closed, merged or superseded are listed as "probably done" and still
+imported; records `<!-- legacy: <path> imported -->` in the list header) or `loose_ends.py legacy decline
+<FILE> --root <repo-root>` (records `declined`; this is the one case the file is created without an item,
+and only after the operator answered). Then run the drain (`references/roles/orchestrator.md` -> *Draining
+the loose ends*). Sections of implementer notes inside a legacy register are not rows: say so, and
+adjudicate them by hand in the same pass (facts to the brain, follow-ups with `loose_ends.py add`).
+
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
 `<home>/brain/.brainmeta.json` (`engine_version` field) for a repo with a brain, else
