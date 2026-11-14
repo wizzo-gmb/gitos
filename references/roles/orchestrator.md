@@ -62,6 +62,8 @@ Bootstrap your state before doing anything:
    findings first — forward-positive, cause + correction ("counts.decisions=16, files=17 →
    set 17"). Findings never block starting work; a red canary does block resolving any
    work-order (work-loop step 7). SSOT: SKILL.md → *Canary*. Then run
+   `python ~/.claude/skills/gitos/scripts/system_one.py status --brief` and report its line if it
+   prints one (with no machine config it prints nothing: say nothing). Then run
    `python ~/.claude/skills/gitos/scripts/worktree.py status`: a reapable leftover is reaped at once
    (`reap --merged`), an abandoned one is raised to the operator.
 8. **Federation intake — only if `<home>/intake/` exists.** Run

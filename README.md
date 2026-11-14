@@ -160,6 +160,11 @@ its work when the domain matches, *within that role's boundary* (a read-only rol
 import the orchestrator normalizes your prompt into the engine's voice and you confirm the result, so
 imported steering reads like the rest of gitos. It's injected context, not a fifth role.
 
+**Lenses are off until a repo turns them on.** `<home>/lenses.json` holds the switch and names each global
+lens the repo uses, so a quant repo never checks design lenses and the other way round. Inception asks;
+`/gitos upgrade` asks once, and in a repo that already has lenses it suggests keeping what that repo uses.
+`python scripts/lenses.py status` shows what is active.
+
 
 ## Model optimization — optional, off by default
 
@@ -180,6 +185,50 @@ No advisor or additional ledger is needed, and no lesson is required. Disabling
 optimization preserves previous evidence and guidance.
 
 Configuration, harness support, and limits: [model optimization](references/model-optimization.md).
+
+## System One — optional, off by default
+
+A lot of what the orchestrator does between real decisions is small, repeated judgment: is this
+implementer note owed work or a fact for the brain, is this proposal a duplicate of an order we already
+have, which lenses apply to this order, which log lines are worth reading first. **System One** hands those
+to a small local decision model that answers typed questions (yes or no with a probability, or one of a
+fixed list) in a fraction of a second, so the main model doesn't spend whole passes on them.
+
+The model never decides on its own. The engine writes every question, a table in code turns the answers
+into an outcome, and only outcomes that annotate or order work run by themselves. Anything that would
+close, reject, merge or fold something is reported for the orchestrator to confirm. An unsure answer goes to
+the reasoning model as before, and a failed call is an error, never a "no".
+
+```text
+system_one.py setup                  find and check a local server; --write saves the machine config
+system_one.py repo on|off|status     use it in this repo, or not
+system_one.py status --brief         one line: on, off, not chosen, or down
+system_one.py triage <home>          route implementer notes, Parked rows, duplicate orders
+system_one.py screen <home>          annotate pending federation proposals (local model only)
+system_one.py lenses <home> --wo N   which of this repo's active lenses apply
+system_one.py scan <home> LOG...     a reading order for log files
+system_one.py scope <home> N         an advisory check of a work-order's diff against its scope
+```
+
+**What you need.** A CUDA GPU with about 10 GB free, and Linux or WSL2. The tested model is
+[`perplexity-ai/pplx-decider-flash-v1.2`](https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2)
+(Apache-2.0); any server that answers the same request shape works.
+
+**Setting it up, once per machine.**
+
+1. Download the model and install its requirements in a Python 3.12 environment.
+2. Start the shipped server: `python assets/system-one/serve_decider.py <model-dir> --warmup`. It
+   listens on `127.0.0.1:8765`.
+3. Run `python scripts/system_one.py setup`. It checks that the server is really a System One server,
+   shows what it would write, and writes the machine config only with `--write`.
+4. Each repo is then asked once, at inception or on the next `/gitos upgrade`, whether to use it. A repo
+   that hasn't answered stays off.
+
+Auto-start, serving other machines on your network, the Windows settings that matter when the GPU also
+drives your display, and measured speeds: **`references/system-one.md`** → *Machine setup*.
+
+**Without it, nothing changes.** No machine config means no question, no extra output and no network call:
+gitos behaves exactly as it did before.
 
 ## Federation — optional, off by default
 

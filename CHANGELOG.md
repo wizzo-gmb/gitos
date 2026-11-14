@@ -18,6 +18,23 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v47 — 2026-11-14
+breaking: yes
+
+**Migration.** System One now runs in a repo only after that repo chooses it. On a machine with a System
+One config, run `/gitos upgrade` once in each repo: it asks. Until then System One is off there. A machine
+with no config sees no question and no change.
+
+- **System One is opt-in per repo** (WO-092). `<home>/system-one.json` with `enabled: true` turns it on;
+  a missing file means off. `system_one.py repo on|off|status` changes it, and `status --brief` prints
+  one line that the orchestrator reports at first action. Inception and upgrade ask once, and only on a
+  machine that has System One configured or a server answering on the default address.
+- **`system_one.py setup`** checks a server before the machine config is written: `/health`, the model
+  list, and one probe decision. It prints what it would write, writes only with `--write`, and never
+  overwrites an existing config without `--force`. `setup --detect` is the silent check upgrade uses.
+
+---
+
 ## v46 — 2026-11-14
 breaking: yes
 

@@ -78,6 +78,15 @@ the brain — collect them before running the scaffold.
    the scaffold, write the answer with `python <SKILL_DIR>/scripts/lenses.py enable --root <ROOT>`
    and `lenses.py select --root <ROOT> NAME...`; for "no", write nothing.
 
+9. **System One.** Ask this step **only when** `~/.claude/gitos-system-one/config.json` exists, or
+   `python <SKILL_DIR>/scripts/system_one.py setup --detect` prints a line (a local server answers on the
+   default endpoint). In the second case offer `system_one.py setup --write` first and run it only on a
+   yes; it checks the server before it writes. With neither, this step does not exist: no question and no
+   output. Then ask whether this repo uses System One, with the harness's question UI. Say in one
+   sentence what it does (a small local model answers routine yes/no judgments for scripts) and that the
+   repo's text goes to the configured endpoint. The default answer is no. After the scaffold, write the
+   answer with `python <SKILL_DIR>/scripts/system_one.py repo on|off <ROOT>`.
+
 ---
 
 ## Phase 2 — Scaffold

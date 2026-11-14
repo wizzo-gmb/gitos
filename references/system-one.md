@@ -4,7 +4,7 @@ The engine makes many small, repeated judgments (note routing, parked triggers, 
 screening). **System One** lets a script ask a small local model a typed question instead of spending a
 pass of the reasoning model. Implemented by `scripts/system_one.py` (client, cascade, log, CLI) and
 `scripts/system_one_questions.py` (the single registry of question wording and decision tables).
-**Invisible when off:** with no machine config every function reports off, no file is created, no
+**Opt-in per repo, invisible when off:** with no machine config (or a repo that has not chosen) every function reports off, no file is created, no
 network call is made and the canary prints nothing new.
 
 ## The cascade
@@ -25,6 +25,15 @@ no engine script applies it. Writing callers guard with `require_reversible(resu
 
 ## Config
 
+Two levels. **The machine config** says a server exists; **the repo's choice** says this repo uses it. A
+repo is on only with both: the machine config and a literal `{"enabled": true}` in `<home>/system-one.json`
+(tracked, like `lenses.json`). `{"enabled": false}`, a missing file, or a malformed file means off, and the
+reason is said: "not configured on this machine", "this repo has not chosen (run upgrade or `system_one.py
+repo on`)", "this repo turned System One off", "this repo's system-one.json is malformed". Inception and
+upgrade ask the question; `system_one.py repo on|off|status [ROOT]` writes and shows it (atomically, keeping
+unrelated keys). `system_one.py status --brief` prints one line (`system-one: on (<model>)`, `off in this
+repo`, `not chosen here`, `down (<reason class>)`), and nothing with no machine config.
+
 Machine file `~/.claude/gitos-system-one/config.json` (`GITOS_SYSTEM_ONE_HOME` overrides the directory):
 
 | field | meaning |
@@ -41,7 +50,7 @@ Machine file `~/.claude/gitos-system-one/config.json` (`GITOS_SYSTEM_ONE_HOME` o
 | `trusted_hosts` | exact hosts or CIDR ranges treated as local (see Other machines) |
 | `allow_remote` | permit a non-local endpoint (state is scrubbed) |
 
-A repo opts out with `<home>/system-one.json` `{"enabled": false}`. Retries: 429 and 5xx, 3 tries.
+Retries: 429 and 5xx, 3 tries.
 
 ## Privacy
 
@@ -192,10 +201,18 @@ raises, so one bad request cannot fail its neighbours. Request bodies are never 
 per batch. A non-loopback `--host` is refused unless `--token-env NAME` names an environment variable that
 holds a token; the token is compared in constant time and never printed.
 
-**Machine config.** Write `~/.claude/gitos-system-one/config.json` on the machine that runs the engine (see
-*Config*), for example `{"endpoint": "http://127.0.0.1:8765", "model": "pplx-decider-flash-v1.2"}`, then run
-`system_one.py status`. When the engine runs on Windows and the server in WSL2, WSL2 forwards `localhost`, so
-the loopback URL works unchanged.
+**Machine config.** Last step: `python scripts/system_one.py setup`. It looks only at
+`http://127.0.0.1:8765/v1/systemone` (or the `--endpoint` you give; it never scans other ports or hosts) and
+checks, in order, that `/health` answers `status: ok` with a model name, that `/v1/models` lists it, and that
+one `probe` decision comes back with probabilities, printing each step. Something that answers but fails a
+check is reported as not a System One server and nothing is written. Without `--write` it prints what it
+would write; `setup --write` writes `~/.claude/gitos-system-one/config.json` (`endpoint`, `model`,
+`timeout_s`) atomically, never over an existing one without `--force`, and refuses a non-loopback endpoint
+whose host is not in `trusted_hosts`. `setup --detect` is the quiet form for inception and upgrade (one
+line if a server answers, else nothing, 2-second timeout). Then `system_one.py status`, and in each repo
+`system_one.py repo on`. You can still write the file by hand (see *Config*), for example
+`{"endpoint": "http://127.0.0.1:8765", "model": "pplx-decider-flash-v1.2"}`. When the engine runs on
+Windows and the server in WSL2, WSL2 forwards `localhost`, so the loopback URL works unchanged.
 
 **Auto-start.**
 

@@ -10,7 +10,8 @@ Judgments come from the model, decisions come from a table in code. A failed cal
 (`Unavailable`), never a "no".
 
 INVISIBLE WHEN OFF. With no machine config every function reports off, no file is created and no
-network call is made. A repo opts out with `<home>/system-one.json` `{"enabled": false}`.
+network call is made. A repo is on only with `<home>/system-one.json` `{"enabled": true}`; no file
+means it has not chosen, which is off.
 
 PUBLIC API (everything a use needs; later work-orders extend the registry, not this file)
 
@@ -154,23 +155,50 @@ def load_config() -> "dict | None":
     return cfg
 
 
-def opted_out(home: "Path | None") -> bool:
+REPO_REASONS = {
+    "missing": "this repo has not chosen (run upgrade or `system_one.py repo on`)",
+    "off": "this repo turned System One off",
+    "malformed": "this repo's system-one.json is malformed",
+}
+
+
+def repo_choice(home: "Path | None") -> "tuple[str, str]":
+    """This repo's own choice, `<home>/system-one.json`: (`on` | `off` | `missing` | `malformed`, detail).
+    Only a literal `enabled: true` is on; a missing file is `missing` (not chosen, so off)."""
     if home is None:
-        return False
+        return "on", ""
+    path = Path(home) / OPTOUT_NAME
+    if not path.is_file():
+        return "missing", ""
     try:
-        data = json.loads((Path(home) / OPTOUT_NAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    return isinstance(data, dict) and data.get("enabled") is False
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return "malformed", f"unreadable ({type(e).__name__})"
+    if not isinstance(data, dict):
+        return "malformed", "not a JSON object"
+    if "enabled" not in data:
+        return "missing", "no `enabled` key"
+    en = data.get("enabled")
+    if en is True:
+        return "on", ""
+    if en is False:
+        return "off", ""
+    return "malformed", "`enabled` must be true or false"
+
+
+def opted_out(home: "Path | None") -> bool:
+    """True when this repo is not on (not chosen, off, or malformed). No repo home: not opted out."""
+    return repo_choice(home)[0] != "on"
 
 
 def _active_config(home) -> dict:
-    """The config for a call. Raises Off when there is none or the repo opted out."""
-    if opted_out(_home(home)):
-        raise Off("this repo opted out of System One")
+    """The config for a call. Raises Off when there is none or this repo is not on."""
     cfg = load_config()
     if cfg is None:
         raise Off("System One is not configured on this machine")
+    state, _ = repo_choice(_home(home))
+    if state != "on":
+        raise Off(REPO_REASONS[state])
     return cfg
 
 
@@ -2054,28 +2082,235 @@ def _scope_cli(args) -> int:
         return 0
 
 
+# ------------------------------------------------------------------------------------- repo choice
+def _write_json_atomic(path: Path, obj) -> None:
+    import tempfile
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".s1-", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(obj, indent=2) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def set_repo_choice(home, enabled: bool) -> None:
+    """Write `<home>/system-one.json` `enabled`, atomically, keeping unrelated keys. Refuses a malformed
+    file (fix or delete it first)."""
+    home = Path(home)
+    state, detail = repo_choice(home)
+    if state == "malformed":
+        raise ValueError(f"system-one.json is malformed ({detail}): fix or delete it first")
+    raw: dict = {}
+    if (home / OPTOUT_NAME).is_file():
+        raw = json.loads((home / OPTOUT_NAME).read_text(encoding="utf-8"))
+    raw["enabled"] = enabled
+    _write_json_atomic(home / OPTOUT_NAME, raw)
+
+
+def _repo_home(root) -> Path:
+    root = Path(root)
+    return root / ".gitos" if (root / ".gitos").is_dir() else root
+
+
+def _repo_cli(args) -> int:
+    home = _repo_home(args.root)
+    try:
+        if args.action in ("on", "off"):
+            if not home.is_dir():
+                print(f"repo: no home under {args.root}", file=sys.stderr)
+                return 2
+            set_repo_choice(home, args.action == "on")
+        state, detail = repo_choice(home)
+    except (OSError, ValueError) as e:
+        print(f"repo: {e}", file=sys.stderr)
+        return 2
+    words = {"on": "on", "off": "off", "missing": "not chosen (off)", "malformed": "malformed (off)"}
+    print(f"system-one repo: {words[state]}" + (f" - {detail}" if detail else ""))
+    return 0
+
+
+# ------------------------------------------------------------------------------------- setup
+SETUP_ENDPOINT = "http://127.0.0.1:8765/v1/systemone"
+SETUP_TIMEOUT_S = 10.0
+DETECT_TIMEOUT_S = 2.0
+
+
+def _get_json(url: str, timeout: float, headers: dict) -> "tuple[str, object, str]":
+    """GET -> (`down` | `answers`, parsed JSON or None, detail). `down` is no HTTP answer at all."""
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(1 << 20)
+    except urllib.error.HTTPError as e:
+        return "answers", None, f"HTTP {e.code}"
+    except Exception as e:
+        return "down", None, type(e).__name__
+    try:
+        return "answers", json.loads(raw.decode("utf-8")), ""
+    except ValueError:
+        return "answers", None, "not JSON"
+
+
+def _listed_models(data) -> list:
+    rows = data.get("data") if isinstance(data, dict) and "data" in data else \
+        data.get("models") if isinstance(data, dict) else data
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if isinstance(r, str):
+            out.append(r)
+        elif isinstance(r, dict):
+            out += [r[k] for k in ("id", "name", "model") if isinstance(r.get(k), str)]
+    return out
+
+
+def check_server(endpoint: str, base_cfg: "dict | None" = None, timeout: float = SETUP_TIMEOUT_S) -> dict:
+    """Is `endpoint` a System One server? Three checks, in order, stopping at the first that fails:
+    `/health` says `status: ok` with a model name; `/v1/models` lists that model; one `probe` decision
+    comes back in a valid answer shape with probabilities. -> {state: ok|down|not-system-one, steps,
+    model, failed}. Contacts only the one endpoint."""
+    cfg = {**DEFAULTS, **(base_cfg or {}), "endpoint": endpoint, "timeout_s": timeout}
+    sp = urllib.parse.urlsplit(endpoint)
+    origin = f"{sp.scheme}://{sp.netloc}"
+    hdr = _headers(cfg)
+    res: dict = {"endpoint": endpoint, "state": "not-system-one", "steps": [], "model": "", "failed": ""}
+
+    def step(name, ok, detail):
+        res["steps"].append({"name": name, "ok": ok, "detail": detail})
+        if not ok:
+            res["failed"] = name
+        return ok
+
+    kind, data, why = _get_json(origin + "/health", timeout, hdr)
+    if kind == "down":
+        res["state"] = "down"
+        step("health", False, why)
+        return res
+    model = data.get("model") if isinstance(data, dict) else None
+    if not (isinstance(data, dict) and data.get("status") == "ok" and isinstance(model, str) and model):
+        step("health", False, why or "no `status: ok` with a model name")
+        return res
+    res["model"] = model
+    step("health", True, f"status ok, model {model}")
+    kind, data, why = _get_json(origin + "/v1/models", timeout, hdr)
+    if model not in _listed_models(data):
+        step("models", False, why or f"`/v1/models` does not list {model}")
+        return res
+    step("models", True, f"lists {model}")
+    try:
+        reg = _registry()
+        qs = reg.request_questions("probe")
+        ans = normalize_response(_post(endpoint, cfg, model, "hello there", qs)[0], list(qs))
+        if not all(a["probabilities"] for a in ans.values()):
+            raise Unavailable("the answer carries no probabilities")
+    except Unavailable as e:
+        step("probe", False, _clean(str(e), cfg))
+        return res
+    step("probe", True, "a decision came back with probabilities")
+    res["state"] = "ok"
+    return res
+
+
+def _setup_cli(args) -> int:
+    endpoint = args.endpoint or SETUP_ENDPOINT
+    try:
+        existing = load_config()
+    except Unavailable:
+        existing = None
+    base = existing or {}
+    cls = endpoint_class(endpoint, base)
+    if args.detect:
+        if cls == "remote":
+            return 0
+        r = check_server(endpoint, base, DETECT_TIMEOUT_S)
+        if r["state"] == "ok":
+            print(f"system-one: a server answers at {endpoint} (model {r['model']}); "
+                  f"`system_one.py setup --write` sets it up")
+        return 0
+    if cls == "remote":
+        print(f"setup: refused: {endpoint} is not loopback and its host is not in `trusted_hosts` "
+              f"of the machine config; nothing was contacted", file=sys.stderr)
+        return 2
+    print(f"checking {endpoint}")
+    r = check_server(endpoint, base)
+    for s in r["steps"]:
+        print(f"  {s['name']:<7} {'ok' if s['ok'] else 'FAILED'}  {s['detail']}")
+    if r["state"] == "down":
+        print(f"nothing answers at {endpoint} ({r['steps'][0]['detail']}); nothing was written")
+        return 1
+    if r["state"] != "ok":
+        print(f"something answers at {endpoint} but it is not a System One server ({r['failed']}); "
+              f"nothing was written")
+        return 1
+    new = {**(existing or {}), "endpoint": endpoint, "model": r["model"],
+           "timeout_s": (existing or {}).get("timeout_s", DEFAULTS["timeout_s"])}
+    path = system_home() / CONFIG_NAME
+    if not args.write:
+        print(f"would write {path}:\n{json.dumps(new, indent=2)}")
+        if path.is_file():
+            print("a machine config already exists; writing it needs --write --force")
+        else:
+            print("to write it: system_one.py setup --write"
+                  + (f" --endpoint {endpoint}" if args.endpoint else ""))
+        return 0
+    if path.is_file() and not args.force:
+        print(f"setup: {path} already exists and is not overwritten without --force", file=sys.stderr)
+        return 2
+    _write_json_atomic(path, new)
+    print(f"wrote {path}")
+    return 0
+
+
 # ------------------------------------------------------------------------------------- CLI
-def _status(as_json: bool) -> int:
+def _brief() -> int:
+    """One line, or nothing when there is no machine config."""
+    try:
+        cfg = load_config()
+    except Unavailable:
+        print("system-one: down (config)")
+        return 0
+    if cfg is None:
+        return 0
+    state, _ = repo_choice(find_home())
+    if state in ("off", "malformed"):
+        print("system-one: off in this repo")
+    elif state == "missing":
+        print("system-one: not chosen here")
+    else:
+        ok, detail = health(cfg["endpoint"], cfg)
+        print(f"system-one: on ({cfg.get('model') or 'model unnamed'})" if ok
+              else f"system-one: down ({detail})")
+    return 0
+
+
+def _status(as_json: bool, brief: bool = False) -> int:
+    if brief:
+        return _brief()
     home = find_home()
     info: dict = {"state": "off"}
-    if home is not None and opted_out(home):
-        info["reason"] = "this repo opted out"
-    else:
+    try:
+        cfg = load_config()
+    except Unavailable as e:
+        cfg = None
+        info["reason"] = str(e)
+    if cfg is not None and repo_choice(home)[0] != "on":
+        info["reason"] = REPO_REASONS[repo_choice(home)[0]]
+    elif cfg is not None:
+        ok, detail = health(cfg["endpoint"], cfg)
+        info.update({"state": "on", "endpoint": cfg["endpoint"], "model": cfg.get("model", ""),
+                     "class": endpoint_class(cfg["endpoint"], cfg), "health": detail if not ok else "ok",
+                     "key": ("set" if _key(cfg) else "unset") if cfg.get("key_env") else "none",
+                     "group": cfg["group"]})
         try:
-            cfg = load_config()
-        except Unavailable as e:
-            cfg = None
-            info["reason"] = str(e)
-        if cfg is not None:
-            ok, detail = health(cfg["endpoint"], cfg)
-            info.update({"state": "on", "endpoint": cfg["endpoint"], "model": cfg.get("model", ""),
-                         "class": endpoint_class(cfg["endpoint"], cfg), "health": detail if not ok else "ok",
-                         "key": ("set" if _key(cfg) else "unset") if cfg.get("key_env") else "none",
-                         "group": cfg["group"]})
-            try:
-                info["registry_version"] = _registry().REGISTRY_VERSION
-            except Exception as e:
-                info["registry_version"] = f"invalid ({type(e).__name__})"
+            info["registry_version"] = _registry().REGISTRY_VERSION
+        except Exception as e:
+            info["registry_version"] = f"invalid ({type(e).__name__})"
     if as_json:
         print(json.dumps(info))
     elif info["state"] == "off":
@@ -2138,6 +2373,15 @@ def main(argv: "list | None" = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("status", help="off / on, endpoint, model, health, registry version")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--brief", action="store_true", help="one line, or nothing with no machine config")
+    rg = sub.add_parser("repo", help="this repo's choice: on, off or status (<home>/system-one.json)")
+    rg.add_argument("action", choices=("on", "off", "status"))
+    rg.add_argument("root", nargs="?", default=".")
+    su = sub.add_parser("setup", help="find and check a local server, then write the machine config")
+    su.add_argument("--endpoint", help=f"default {SETUP_ENDPOINT}")
+    su.add_argument("--write", action="store_true", help="write the machine config")
+    su.add_argument("--force", action="store_true", help="overwrite an existing machine config")
+    su.add_argument("--detect", action="store_true", help="quiet: one line if a server answers, else nothing")
     a = sub.add_parser("ask", help="ask the configured model")
     a.add_argument("--state", required=True)
     a.add_argument("--questions", required=True)
@@ -2198,7 +2442,11 @@ def main(argv: "list | None" = None) -> int:
     args = ap.parse_args(argv)
     try:
         if args.cmd == "status":
-            return _status(args.json)
+            return _status(args.json, args.brief)
+        if args.cmd == "repo":
+            return _repo_cli(args)
+        if args.cmd == "setup":
+            return _setup_cli(args)
         if args.cmd == "ask":
             out = ask(_load_json_or_text(args.state), _load_json_or_text(args.questions))
             if args.json:
