@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import itertools
 
-REGISTRY_VERSION = 14
+REGISTRY_VERSION = 15
 
 REVERSIBLE = "reversible"
 CONFIRM = "confirm"
@@ -137,215 +137,9 @@ register(
 )
 
 
-# ------------------------------------------------------------------ the ledger uses (WO-085)
-# Code gathers the facts and builds a small state per item; the model answers; the table decides.
-# Each question stands alone: the model sees one question and one state, never the other questions.
-# `parked-trigger`: does an open Parked row's restart trigger look fired? It only orders the digest.
-register(
-    "parked-trigger",
-    questions=[
-        question("fired", "noul",
-                 "The event named as the restart trigger has happened, according to the commit "
-                 "subjects, work-order titles or version listed after the row.",
-                 {"true": "A listed commit subject, work-order title or version states the event "
-                          "the trigger names.",
-                  "false": "Nothing listed states that event; the trigger needs something that is "
-                           "not listed."}),
-    ],
-    table=lambda i: {"yes": "fired", "no": "waiting"}.get(i["fired"], ESCALATE),
-    outcomes={"fired": REVERSIBLE, "waiting": REVERSIBLE},
-)
-
-# `duplicate`: a candidate pair chosen by code (shared references, shared paths, word overlap).
-# The model only confirms; `fold` is a confirm outcome.
-register(
-    "duplicate",
-    questions=[
-        question("same_item", "noul",
-                 "Item A and item B describe the same piece of work.",
-                 {"true": "Both ask for the same change to the same thing, so doing one makes the "
-                          "other unnecessary.",
-                  "false": "They ask for different changes, or the same area with different goals."}),
-    ],
-    table=lambda i: {"yes": "fold", "no": "distinct"}.get(i["same_item"], ESCALATE),
-    outcomes={"fold": CONFIRM, "distinct": REVERSIBLE},
-)
-
-
-# ------------------------------------------------------------------ intake and board uses (WO-086)
-# SEVERITY IS A `choice` OVER THE FOUR LEVEL NAMES, each level described as a situation: tables
-# keep taking noul and choice inputs only, so no registry extension was needed. Screening is split
-# into three one-question uses (area, severity, engine-change) rather than one three-question use:
-# an unsure input forces a whole use to `escalate`, and each judgment should print or not on its own.
-# Every outcome only ANNOTATES a listing, so all are reversible.
-PROPOSAL_AREAS = {
-    "canary": "The proposal is about the canary's checks, categories or reporting.",
-    "ledger": "The proposal is about work-orders, the index, resume files or how work is recorded.",
-    "federation": "The proposal is about sharing proposals, the registry or intake between repos.",
-    "model-optimization": "The proposal is about choosing or recording which model runs a task.",
-    "harness": "The proposal is about the scripts that dispatch, run or verify agent work.",
-    "brain": "The proposal is about the orchestrator's memory notes and how they are kept.",
-    "roles-and-docs": "The proposal is about role instructions, reference text or documentation.",
-    "operator-pages": "The proposal is about the owner board or the decisions page an operator reads.",
-    "other": "The proposal is about something that none of the other areas covers.",
-}
-PROPOSAL_SEVERITIES = {
-    "low": "Cosmetic, convenience or defensive cleanup; nothing is wrong today.",
-    "medium": "Logs or reports mislead, the engine's description drifts from what is deployed, "
-              "or a risk exists but nothing has gone wrong yet.",
-    "high": "The engine silently gives wrong results that people then act on, or a boundary "
-            "that isolates or secures something is broken.",
-    "critical": "A user could be harmed, data is corrupted or lost, a production system is down, "
-                "or money or personal health data is at risk.",
-}
-CARD_GROUPS = {
-    "close-or-keep-open": "The card asks whether finished or stale work should be closed or kept open.",
-    "decisions": "The card asks the operator to choose between ways of doing something.",
-    "your-actions": "The card asks the operator to do a step that only the operator can do.",
-    "parked-work": "The card is about work waiting for a later event, with no action due now.",
-}
-
-
+# ------------------------------------------------------------------ loose-ends helper
 def _name_or_escalate(qid: str):
     return lambda i: ESCALATE if i[qid] == "unsure" else i[qid]
-
-
-register(
-    "proposal-area",
-    questions=[question("area", "choice", "Which area of the engine does the proposal concern?",
-                        PROPOSAL_AREAS)],
-    table=_name_or_escalate("area"),
-    outcomes={a: REVERSIBLE for a in PROPOSAL_AREAS},
-)
-
-register(
-    "proposal-severity",
-    questions=[question("severity", "choice",
-                        "Which situation does the proposal describe, if it is left unaddressed?",
-                        PROPOSAL_SEVERITIES)],
-    table=_name_or_escalate("severity"),
-    outcomes={s: REVERSIBLE for s in PROPOSAL_SEVERITIES},
-)
-
-register(
-    "proposal-engine-change",
-    questions=[question("asks_engine_change", "noul",
-                        "The proposal asks for a change to the engine's own scripts or reference text.",
-                        {"true": "It names a script, check, command or reference text to add, "
-                                 "alter or remove.",
-                         "false": "It reports an observation or asks about a project's own code "
-                                  "or data."})],
-    table=lambda i: {"yes": "engine-change", "no": "no-engine-change"}.get(i["asks_engine_change"],
-                                                                           ESCALATE),
-    outcomes={"engine-change": REVERSIBLE, "no-engine-change": REVERSIBLE},
-)
-
-# `proposal-duplicate`: one (proposal, work-order) pair chosen by code. An annotation only.
-register(
-    "proposal-duplicate",
-    questions=[question("same_ask", "noul",
-                        "Item A and item B ask for the same change to the same thing.",
-                        {"true": "Both ask for the same change, so doing one makes the other "
-                                 "unnecessary.",
-                         "false": "They ask for different changes, or the same area with "
-                                  "different goals."})],
-    table=lambda i: {"yes": "likely-duplicate", "no": "distinct"}.get(i["same_ask"], ESCALATE),
-    outcomes={"likely-duplicate": REVERSIBLE, "distinct": REVERSIBLE},
-)
-
-# `card-group`: which group of the board a card belongs to. It never picks an option.
-register(
-    "card-group",
-    questions=[question("group", "choice", "Which group does the card belong to?", CARD_GROUPS)],
-    table=_name_or_escalate("group"),
-    outcomes={g: REVERSIBLE for g in CARD_GROUPS},
-)
-
-
-# ------------------------------------------------------------------ brain uses (WO-087)
-# `brain-duplicate`: one page pair chosen by code (shared tags, title tokens, shared links).
-# `merge-candidate` is a confirm outcome: pages are never merged on a model's word.
-register(
-    "brain-duplicate",
-    questions=[question("same_claim", "noul",
-                        "Page A and page B state the same claim about the same subject.",
-                        {"true": "Both pages say the same thing, so one of them could replace the "
-                                 "other without losing a fact.",
-                         "false": "They state different claims, or cover different subjects or "
-                                  "scopes."})],
-    table=lambda i: {"yes": "merge-candidate", "no": "distinct"}.get(i["same_claim"], ESCALATE),
-    outcomes={"merge-candidate": CONFIRM, "distinct": REVERSIBLE},
-)
-
-
-# ------------------------------------------------------------------ diagnostic scan uses (WO-088)
-# `line-anomaly`: one log-line template (code reduced the log first). `line-family`: for a template
-# judged abnormal or unsure, which anomaly family it falls in; the family names and one-line
-# descriptions are PARSED from references/anomaly-families.md at run time (`set_line_families`),
-# never typed here. Outcomes only ANNOTATE a reading order, so all are reversible.
-NO_FAMILY = "no-family"
-_FAMILIES_FILE = None            # set below; the default reference file, beside this script
-
-
-def parse_families(path) -> dict:
-    """{name: one-line description} from the numbered `## N. Title` headings of the reference file."""
-    import re
-    from pathlib import Path
-    text = Path(path).read_text(encoding="utf-8")
-    out: dict = {}
-    parts = re.split(r"(?m)^## (\d+)\.\s+(.+?)\s*$", text)
-    for k in range(1, len(parts) - 2, 3):
-        title, body = parts[k + 1], parts[k + 2]
-        short = re.sub(r"\([^)]*\)", "", title.lower()).replace("'", "")
-        name = re.sub(r"[^a-z0-9]+", "-", short).strip("-")[:60].strip("-")
-        bullet = re.search(r"(?m)^- (.+(?:\n  .+)*)", body)
-        hint = " ".join(bullet.group(1).split())[:140] if bullet else ""
-        out[name] = f"The line points at: {title.strip()}." + (f" For example: {hint}" if hint else "")
-    return out
-
-
-def set_line_families(criteria: dict) -> None:
-    """(Re)register `line-family` over the given {name: description} families."""
-    if not criteria:
-        raise RegistryError("line-family needs at least one family")
-    USES.pop("line-family", None)
-    crit = dict(criteria)
-    register(
-        "line-family",
-        questions=[
-            question("family", "choice",
-                     "Which anomaly family does the log line template point at?", crit),
-            question("fits_a_family", "noul",
-                     "The log line template fits one of the listed anomaly families.",
-                     {"true": "The template shows evidence that one of the families describes.",
-                      "false": "The template is a failure or oddity that none of the families "
-                               "describes."}),
-        ],
-        table=lambda i: ESCALATE if "unsure" in i.values() else
-        (i["family"] if i["fits_a_family"] == "yes" else NO_FAMILY),
-        outcomes={**{f: REVERSIBLE for f in crit}, NO_FAMILY: REVERSIBLE},
-    )
-
-
-register(
-    "line-anomaly",
-    questions=[question("abnormal", "noul",
-                        "The log line template is abnormal output for this system.",
-                        {"true": "The template reports a failure, a skipped or inconsistent "
-                                 "step, or something the recorded normal output does not "
-                                 "describe.",
-                         "false": "The template matches the normal output described in the "
-                                  "state."})],
-    table=lambda i: {"yes": "abnormal", "no": "normal"}.get(i["abnormal"], ESCALATE),
-    outcomes={"abnormal": REVERSIBLE, "normal": REVERSIBLE},
-)
-
-try:
-    from pathlib import Path as _P
-    _FAMILIES_FILE = _P(__file__).resolve().parent.parent / "references" / "anomaly-families.md"
-    set_line_families(parse_families(_FAMILIES_FILE))
-except OSError:
-    set_line_families({"other": "The template fits no family that could be read from the reference."})
 
 
 # ------------------------------------------------------------------ loose-ends uses (WO-093)
@@ -394,7 +188,7 @@ register(
 # `loose-end-state`: one item of `<home>/loose-ends.md`. Three nouls about the item text alone, read in order: an item that says it is done
 # is `closable` (confirm) whatever the other two say; otherwise one that asks the owner is `ask-operator`;
 # otherwise one that waits on a named event is `park`; all three no is `open`. `superseded` is not an outcome:
-# an item another order covers is found by `loose-end-join` or `duplicate`, which see the other order.
+# an item another order covers is found by `loose-end-join`, which sees the other order.
 def _loose_end_state_reads(i: dict) -> list:
     r = ["says_done"]
     if i["says_done"] == "no":

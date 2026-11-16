@@ -131,8 +131,6 @@ If you observe an anomaly but can't prove it from available artifacts, mark it
 `unconfirmed` and document precisely what evidence would prove or disprove it — this is
 still a useful deliverable.
 
-**Optional reading order.** When System One is on (`references/system-one.md`), `system_one.py scan <home> FILE...` groups a log's lines into templates and sorts them by anomaly family. The digest is a reading order, not a finding: it tells you which lines to open first, and the templates it set aside as normal are only as good as the vocabulary. A work-order's evidence is still the literal lines you read yourself; never cite the digest. Off or down, scan the logs the usual way.
-
 ## Phase 3 — Write work-orders
 
 For every evidenced anomaly (or strongly suspected with gap documented), emit one file

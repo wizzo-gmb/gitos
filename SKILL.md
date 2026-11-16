@@ -413,12 +413,14 @@ it with a one-line reason.
 
 ## System One (optional)
 
-A local decision model scripts may ask small typed questions (code rules, then local model, then the
-reasoning model, then the operator). Opt-in per repo: it needs the machine config
-`~/.claude/gitos-system-one/config.json` and `<home>/system-one.json` `{"enabled": true}`
-(`system_one.py repo on`); a repo that has not chosen is off. When on, a script may print a **System One digest**: read it, confirm every `confirm` outcome yourself by reading
-the item. Judgments come from the model, decisions from a table in code; a failed call
-is an error, never a "no". `references/system-one.md`.
+A local decision model that drains the loose-ends list and does nothing else. Down is a normal state (the GPU is in
+use): the drain waits, or the orchestrator drains by hand, and it is never raised to the operator as a problem. With no
+local model (not configured, off or down) the drain runs on a helper dispatched on the cheapest tier: `drain --export`,
+the helper answers the file, `drain --answers`.
+Opt-in per repo: it needs the machine config `~/.claude/gitos-system-one/config.json` and `<home>/system-one.json`
+`{"enabled": true}` (`system_one.py repo on`); a repo that has not chosen is off. Judgments come from the model,
+decisions from a table in code; a failed call is an error, never a "no"; the orchestrator confirms every `confirm`
+outcome by reading the item. `references/system-one.md`.
 
 ## Reference index (read on demand)
 

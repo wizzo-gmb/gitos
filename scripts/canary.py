@@ -2103,9 +2103,12 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
 # An optional local decision model (scripts/system_one.py). Optional in the same sense as
 # `federation`: no machine config, or a repo that opted out, means the category is ABSENT from the
 # report entirely. The logic lives in system_one.py and is IMPORTED here by path, not copied; a
-# machine that has a config but no readable system_one.py gets a VISIBLE skip. Report-only.
-#   endpoint-down     configured, repo not opted out, the health probe fails.
-#   registry-invalid  the question registry does not load (a table gap, a duplicate id, ...).
+# machine that has a config but no readable system_one.py gets a VISIBLE skip.
+# Only an engine defect gates: `registry-invalid` (the question registry does not load: a table gap, a
+# duplicate id, ...) counts into `total` and fails the exit code. `endpoint-down` (configured, repo not
+# opted out, the health probe fails, or the config is unusable) is ADVISORY: printed and present in
+# `--json`, flagged `"advisory": true`, never counted, never changing the exit code. Down is the normal
+# state (the operator's GPU is in use); the drain waits.
 OPTIONAL_CATEGORIES = OPTIONAL_CATEGORIES + ("system-one",)
 SYSTEM_ONE_TOOL = "system_one.py"
 
@@ -2139,12 +2142,13 @@ def check_system_one(home: Path, skill_dir: "Path | None") -> tuple[list[dict], 
         cfg = mod.load_config()
         ok, detail = mod.health(cfg["endpoint"], cfg)
         if not ok:
-            items.append({"kind": "endpoint-down",
-                          "finding": f"System One is configured but the endpoint does not answer "
-                                     f"({detail}) -> start the model server or fix the endpoint; "
-                                     f"callers fall through to the reasoning model meanwhile"})
+            items.append({"kind": "endpoint-down", "advisory": True,
+                          "finding": f"System One is down ({detail}); the drain waits until it is back, "
+                                     f"or the orchestrator drains by hand"})
     except Exception as e:
-        items.append({"kind": "endpoint-down", "finding": f"System One config unusable ({e})"})
+        items.append({"kind": "endpoint-down", "advisory": True,
+                      "finding": f"System One is down (config unusable: {e}); the drain waits until it is "
+                                 f"back, or the orchestrator drains by hand"})
     problems = mod.registry_problems()
     for msg in problems:
         items.append({"kind": "registry-invalid",
@@ -2338,7 +2342,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         if r[k]:
             checked.add(k)
     r["checked"] = sorted(checked)
-    r["total"] = sum(len(r[k]) for k in active)
+    r["total"] = sum(1 for k in active for it in r[k] if not (isinstance(it, dict) and it.get("advisory")))
     return r
 
 
@@ -2442,10 +2446,11 @@ def print_report(r: dict) -> None:
     total = 0
     for title, key in sections:
         items = r[key]
-        total += len(items)
+        gating = [it for it in items if not (isinstance(it, dict) and it.get("advisory"))]
+        total += len(gating)
         if key in r["checked"]:
-            flag = "OK" if not items else "!!"
-            print(f"[{flag}] {title}: {len(items)}")
+            flag = "OK" if not gating else "!!"
+            print(f"[{flag}] {title}: {len(gating)}")
             for it in items:
                 print(f"       - {json.dumps(it, ensure_ascii=False)}")
         elif not skips.get(key):

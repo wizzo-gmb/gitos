@@ -18,6 +18,32 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v50 — 2026-11-15
+breaking: yes
+
+**Migration.** None for the config. Anything that called `system_one.py triage`, `screen`, `cards`, `scan` or
+`brain-dupes` now does that reading itself; a standing rule that lists them as System One jobs should say
+"System One drains the loose-ends list only".
+
+- **System One drains the loose-ends list and does nothing else.** Removed the commands `triage`, `screen`,
+  `cards`, `scan` and `brain-dupes` and their nine uses; the registry (`REGISTRY_VERSION` 15) holds `probe` and
+  the four `loose-end-*` uses.
+- **Down never gates.** An unreachable System One endpoint is an advisory line in the canary (printed, in
+  `--json` with `"advisory": true`, not counted, exit code unchanged): down is the normal state while the GPU is
+  in use. A registry that does not load still gates.
+- **The drain without a local model.** When System One is not configured, off or down, `system_one.py drain <home>
+  --export FILE` writes the drain's questions (no model call), the orchestrator dispatches one helper on the cheapest
+  tier (Claude Code: `haiku`) with the brief in *The drain without a local model*, and `drain <home> --answers FILE`
+  checks every answer against its allowed set, applies the same tables and writes the same proposals. A stale export
+  refuses. `eval-drain --export/--answers` scores the route. Measured: 27% handed back and 15 of 16 states right on
+  a 22-item labelled set (Qwen3.5-9B: 45%, 8 of 12).
+- **The helper's model on any harness.** `system_one.py helper [ROOT] [--harness H]` prints the model to dispatch:
+  the repo's model-optimization light choice, else the pick recorded with `helper --set HARNESS MODEL` (key `helper`
+  in `system-one.json`), else the shipped default (Claude Code `haiku`, Codex `gpt-5.1-codex-mini`, untested). With
+  none, or an unavailable model, the orchestrator asks the operator once to pick from their models and records it.
+
+---
+
 ## v49 — 2026-11-15
 breaking: yes
 

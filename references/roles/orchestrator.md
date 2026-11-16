@@ -63,7 +63,10 @@ Bootstrap your state before doing anything:
    set 17"). Findings never block starting work; a red canary does block resolving any
    work-order (work-loop step 7). SSOT: SKILL.md → *Canary*. Then run
    `python ~/.claude/skills/gitos/scripts/system_one.py status --brief` and report its line if it
-   prints one (with no machine config it prints nothing: say nothing). Then run
+   prints one (with no machine config it prints nothing: say nothing). **System One drains the loose-ends
+   list and does nothing else. Down is a normal state (the GPU is in use); the drain waits, or the
+   orchestrator drains by hand. Never raise it to the operator as a problem.** Its line is reported once,
+   plain: no colour, no follow-up. Then run
    `python ~/.claude/skills/gitos/scripts/system_one.py drain status <repo-root>` and report its line
    (`drain: N pending (J join, B new-order, Q ask, P park, C close, R read)`) the way the intake count is
    reported; with no `<home>/drain/pending/` it prints nothing, say nothing. Then run
@@ -186,12 +189,6 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    list**; implementers report follow-ups in their notes, and this step moves them on with `→ L<n>`.
    At each checkpoint, re-read Parked and promote the items whose trigger has fired. The canary's
    `loose-ends` category checks Parked, the notes and the list.
-   *With System One on* (`references/system-one.md`): run `python <skill>/scripts/system_one.py triage
-   <home>` and read the digest (it covers Parked rows, duplicates and the loose ends, never the implementer
-   notes: adjudicate those by your own reading); read every `READ` item (`confirm` and `escalate`) yourself.
-   System One never routes into the brain: you alone decide and write brain pages, and only for a
-   fact that is not plain from the code.
-   Off or down, the digest is one line and this step is unchanged.
 6. **Commit.** Commit the verified work; record the sha. **A commit is scoped to one work-order, the
    same way an edit is** — so **stage by explicit path**. Staging is directory-shaped and work-orders
    are not: a bulk stage takes whatever a dispatched agent has in flight, and the disjoint-files gate
@@ -527,9 +524,7 @@ whom, the next three steps, pointers to the standing rules. Short (target under 
 pointer-only; the template is the engine's `assets/RESUME.md.tmpl`, laid by the scaffold. The
 canary reports a RESUME over 150 lines (`resume-too-long`) and a bullet under a rules heading that
 points at nothing (`resume-rules-section`).
-With System One on, also run `system_one.py triage <home>` at the checkpoint: read the digest and
-every `READ` item (`confirm` and `escalate`) yourself. Without it, the checkpoint is unchanged. **Drain the loose ends** at
-each checkpoint, for the whole list (*Draining the loose ends*).
+**Drain the loose ends** at each checkpoint, for the whole list (*Draining the loose ends*).
 
 **Rotation triggers — four are work-shaped and one is measured by a hook, because those are what you can measure.**
 
@@ -622,7 +617,7 @@ author the orders from them yourself** (the local model only groups, qualifies a
 decide and write every order), then dispose of each: `drain accept ID --work-order NNN` (`--parked P<n>` for a
 park, `--reason R` for a close; it drops the items from the list), `drain decline ID --reason R` (the items
 stay), or `drain defer ID` (nothing changes). Commit `<home>/drain/` with the arrival and the disposition.
-`system_one.py triage <home>` still prints the group as a digest with one `plan` line per item. Off or down, `loose_ends.py candidates` and your own reading, asking the same questions of the same table.
+Down, not configured, or off: the helper route (`references/system-one.md` -> *The drain without a local model*): `system_one.py drain <home> --export FILE`, run `system_one.py helper` and dispatch one helper on the model it prints with the brief there (exit 3 or an unavailable model: ask the operator once, with the harness's question UI, to pick from their harness's models and record it with `helper --set`; never guess or retry silently), then `system_one.py drain <home> --answers FILE`, and decide the proposals as above. You never answer the export yourself: if no helper can be dispatched, the drain waits (and down is still never raised to the operator). By hand (`loose_ends.py candidates` and your own reading, asking the same questions of the same table) is for a short list you are already reading.
 Decide each item. Apply. Commit. Report `loose ends: N before -> M after (K waiting on you)`.
 
 **Who decides.** You adjudicate and apply, on your own: join an open order (the drain proposes joins into
@@ -637,11 +632,6 @@ anything you are unsure of. An item that needs the operator's input gets
 `loose_ends.py wait L<n> --question <one sentence>` and stays on the list; at each checkpoint the waiting
 questions are asked again in one batch. Nothing is closed on silence, and nothing is done because it was
 suggested: a System One outcome is a suggestion, and `drop` is always your own act.
-
-## System One digests
-
-When a script prints a System One digest (`references/system-one.md`), read the digest rather than
-re-deriving it. Confirm every `confirm` outcome yourself by reading the item; the script only reports it.
 
 ## Out of scope
 

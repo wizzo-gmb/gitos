@@ -209,9 +209,8 @@ system_one.py setup                  find and check a local server; --write save
 system_one.py repo on|off|status     use it in this repo, or not
 system_one.py status --brief         one line: on, off, not chosen, or down
 system_one.py drain <home>           turn the loose ends into proposals (drain accept|decline|defer|status)
-system_one.py triage <home>          Parked rows whose trigger has fired, duplicate orders, loose ends
-system_one.py screen <home>          annotate pending federation proposals (local model only)
-system_one.py scan <home> LOG...     a reading order for log files
+system_one.py drain <home> --export F / --answers F   the same drain, answered by a cloud helper
+system_one.py helper                 which model the cloud helper runs on
 system_one.py uses-check             check every question type against a server after a model change
 ```
 
@@ -233,8 +232,14 @@ answers the same request shape works.
 Auto-start, serving other machines on your network, the Windows settings that matter when the GPU also drives
 your display, and measured speeds: **`references/system-one.md`** → *Machine setup*.
 
-**Without it, nothing changes.** No machine config means no question, no extra output and no network call. The
-loose-ends list still works; the orchestrator drains it itself.
+**Without a local model.** The drain still runs. `drain --export` writes its questions to a file, a small
+cloud helper answers them (Claude Code: Haiku; Codex: `gpt-5.1-codex-mini`; otherwise you are asked once to pick a
+model), and `drain --answers` checks each answer and writes the same proposals. On the labelled set, Haiku
+handed back 27% and got 15 of 16 settled items right. A local server that is down (say, while you use the GPU) is
+reported once, never as a problem, and never blocks a commit.
+
+**Without either, nothing changes.** No machine config and no helper means no extra output and no network call.
+The loose-ends list still works; the orchestrator drains it itself.
 
 ## Federation — optional, off by default
 

@@ -181,8 +181,6 @@ likely context compaction**, or roughly every N captured atoms — run a short p
 - **Reconcile.** Re-read the pages you touched. **Merge near-duplicates**: pick the
   canonical page, fold in the other's content, and replace the loser with a
   `see [[Canonical]]` redirect stub (or delete it after re-pointing inbound links).
-  With System One on, `system_one.py brain-dupes <home>` asks about each candidate pair and
-  flags `merge-candidate` for you to read and confirm; it merges nothing.
   Mark superseded content `superseded_by [[X]] (date)`. Fix broken `[[links]]`.
 - **Refresh** `wiki/index.md` and `.brainmeta.json`.
 

@@ -664,6 +664,7 @@ def _append(home: "Path | None", row: dict) -> bool:
     return True
 
 
+HELPER_MODEL = "helper"           # the call-log model of an answer that came from a dispatched helper (WO-101)
 _CACHE: dict = {}                 # log path -> {"pos", "head", "map"}: an incremental read of the log
 
 
@@ -688,7 +689,7 @@ def _cache_map(path: Path) -> dict:
         except ValueError:
             continue
         if (isinstance(r, dict) and r.get("kind") == "call" and r.get("sha")
-                and r.get("outcome") not in (None, "escalate", "error")
+                and r.get("outcome") not in (None, "escalate", "error") and r.get("model") != HELPER_MODEL
                 and isinstance(r.get("inputs"), dict) and r.get("pass") in (1, 2)):
             ent["map"][(r.get("use"), r.get("registry"), r.get("model"), r["sha"])] = r
     ent["pos"] += end
@@ -785,10 +786,9 @@ def log_summary(use: "str | None" = None, *, home=None) -> dict:
     return stats
 
 
-# ------------------------------------------------------------------------------------- ledger triage
-# WO-085. Code gathers the items and their facts, the registry's uses judge them, and a DIGEST is
-# printed. Nothing is written in the repo's home, and no output line can read as an `Adjudication`
-# heading: the orchestrator reads the digest and writes the block itself.
+# ------------------------------------------------------------------------------------- loose-ends items
+# Code gathers the loose-ends items and the candidate pairs; the registry's `loose-end-*` uses judge them.
+# The drain below is the only reader of the answers.
 MAX_STATE = 1500                  # characters per item sent to the model: small items are fast
 MAX_PAIRS = 40
 HUB_LIMIT = 4                     # a reference or path shared by more items than this is no signal
@@ -850,102 +850,11 @@ def _wo_listing(home: Path, c) -> list:
     return out
 
 
-def _parked_rows(home: Path, c) -> list:
-    """Open Parked rows: [{id, item, trigger, source, on}]. Closed rows (`-> WO-NNN`, `-> dropped`)
-    are skipped."""
-    idx = _read_text(home / "INDEX.md")
-    block = c.section_lines(idx, c.PARKED_HEADING) if idx else None
-    rows = []
-    for row in (c._table_rows(block) or []) if block is not None else []:
-        cells = [c.clean_cell(x) for x in row] + [""] * 5
-        if not c.PARKED_ID_RE.fullmatch(cells[0]):
-            continue
-        if re.search(r"(?:→|->)\s*(?:WO-\d{3}|dropped)", " ".join(row), re.IGNORECASE):
-            continue
-        rows.append({"id": cells[0], "item": cells[1], "trigger": cells[2], "source": cells[3],
-                     "on": cells[4]})
-    return rows
-
-
-def _git_subjects(root: Path, since: str) -> list:
-    import subprocess
-    cmd = ["git", "-C", str(root), "log", "--format=%s", "-n", "30"]
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", since or ""):
-        cmd.append(f"--since={since}")
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return [_cap(s, 140) for s in r.stdout.splitlines() if s.strip()] if r.returncode == 0 else []
-
-
-def _parked_items(home: Path, c) -> list:
-    rows = _parked_rows(home, c)
-    if not rows:
-        return []
-    root = home.parent
-    ver = (_read_text(root / "VERSION") or "").strip()
-    titles = {True: [], False: []}
-    for nnn, path, resolved in _wo_listing(home, c):
-        text = _read_text(path) or ""
-        titles[resolved].append(f"WO-{nnn} {_cap(_title(text, path.stem), 110)}")
-    items = []
-    for r in rows:
-        lines = [f"Parked row: {r['item']}", f"Restart trigger: {r['trigger']}",
-                 f"Parked on: {r['on']}", f"Current version: {ver or 'unknown'}"]
-        lines += ["Commits since then:"] + [f"- {s}" for s in _git_subjects(root, r["on"])[:15]]
-        lines += ["Open work-orders:"] + [f"- {t}" for t in titles[False][:20]]
-        lines += ["Recently resolved work-orders:"] + [f"- {t}" for t in titles[True][-12:]]
-        items.append({"group": "parked", "ref": r["id"], "text": f"{r['item']} (trigger: {r['trigger']})",
-                      "state": "\n".join(lines)})
-    return items
-
-
 def _signals(text: str, own: str) -> tuple:
     refs = set(_REF.findall(text)) | {own}
     paths = set(_PATH.findall(text))
     words = {w for w in _WORD.findall(text.lower()) if w not in _STOP}
     return refs, paths, words
-
-
-def _duplicate_items(home: Path, c, parked: list) -> list:
-    """Candidate pairs among open Parked rows and open work-orders, chosen by code: a shared
-    reference (an item's own id counts) or path (one shared by more than HUB_LIMIT items is
-    skipped) or word overlap."""
-    pool = []
-    for r in parked:
-        pool.append((r["ref"], r["text"]))
-    for nnn, path, resolved in _wo_listing(home, c):
-        if resolved:
-            continue
-        text = _read_text(path) or ""
-        scope = c.section_lines(text, "## Proposed fix scope") or []
-        pool.append((f"WO-{nnn}", _squash(_title(text, path.stem) + ". " + " ".join(scope))[:1200]))
-    sig = {ref: _signals(t, ref) for ref, t in pool}
-    count: dict = {}
-    for refs, paths, _w in sig.values():
-        for k in refs | paths:
-            count[k] = count.get(k, 0) + 1
-    scored = []
-    for i in range(len(pool)):
-        for j in range(i + 1, len(pool)):
-            (ra, ta), (rb, tb) = pool[i], pool[j]
-            fa, fb = sig[ra], sig[rb]
-            shared = {k for k in (fa[0] | fa[1]) & (fb[0] | fb[1]) if count[k] <= HUB_LIMIT}
-            wa, wb = fa[2], fb[2]
-            jac = len(wa & wb) / len(wa | wb) if len(wa) >= 5 and len(wb) >= 5 else 0.0
-            if shared or jac >= OVERLAP:
-                scored.append((len(shared), jac, ra, rb, ta, tb))
-    scored.sort(key=lambda s: (-s[0], -s[1], s[2], s[3]))
-    items = []
-    for _n, _j, ra, rb, ta, tb in scored[:MAX_PAIRS]:
-        items.append({"group": "duplicates", "ref": f"{ra}~{rb}", "text": f"A {ra}: {_cap(ta, 500)}\n"
-                      f"B {rb}: {_cap(tb, 500)}",
-                      "state": f"Item A ({ra}): {_cap(ta, 700)}\nItem B ({rb}): {_cap(tb, 700)}"})
-    return items
-
-
-_USE_OF = {"parked": "parked-trigger", "duplicates": "duplicate", "loose-ends": "loose-end-state"}
 
 
 def _loose_ends():
@@ -1011,11 +920,12 @@ def pick_orders(home, item_ref: str, item_text: str, options: list) -> list:
     return ranked
 
 
-def _loose_end_items(home: Path) -> tuple:
+def _loose_end_items(home: Path, pick: bool = True) -> tuple:
     """-> (items, new rows, open orders). Read from `<home>/loose-ends.md` with no flag. Each `new` item is
     asked `loose-end-state`; the (item, open order) join pairs (the item's best three open orders by BM25, in progress or not, plus the model's title pick)
     and the (item, item) bundle pairs are chosen by code (`loose_ends.candidates`). An item waiting on the
-    operator is asked nothing."""
+    operator is asked nothing. `pick=False` skips the title pick (it needs a model): the candidates then come
+    from references, paths and BM25 only."""
     le = _loose_ends()
     if not le.list_path(home).is_file():
         return [], [], []
@@ -1023,7 +933,7 @@ def _loose_end_items(home: Path) -> tuple:
     if not rows:
         return [], [], []
     cand = le.candidates(home, sm=sys.modules[__name__],
-                         pick=lambda ref, text, opts: pick_orders(home, ref, text, opts))
+                         pick=(lambda ref, text, opts: pick_orders(home, ref, text, opts)) if pick else None)
     items = [{"group": "loose-ends", "use": "loose-end-state", "ref": r["id"], "text": _cap(r["item"], 300),
               "state": _loose_state(r["id"], r["item"], r["source"], le.age_days(r["added"]))} for r in rows]
     for j in cand["join"]:
@@ -1104,82 +1014,6 @@ def _cause(r: dict, use: "str | None" = None) -> str:
         return "unsure: " + ", ".join(unsure)
     yes = [f"{k}={v}" for k, v in r["inputs"].items() if v == "yes"]
     return "conflict: " + (", ".join(yes) if yes else "no answer is yes")
-
-
-def triage(home, fresh: bool = False) -> dict:
-    """Gather, judge, return the digest data. Reads the home, writes nothing in it. Raises
-    `Unavailable` (so the caller prints one line and no partial output) when System One is off or a
-    call fails."""
-    home = Path(home)
-    _active_config(home)                                  # Off -> raises before any gathering
-    c = _canary()
-    parked = _parked_items(home, c)
-    loose, loose_rows, _orders = _loose_end_items(home)
-    as_dup = [{"ref": r["id"], "text": r["item"]} for r in loose_rows]
-    items = parked + _duplicate_items(home, c, parked + as_dup) + loose
-    results = []
-    for it in items:
-        use = it.get("use") or _USE_OF[it["group"]]
-        r = decide(use, it["ref"], it["state"], home=home, fresh=fresh)
-        results.append({"group": it["group"], "use": use, "ref": it["ref"], "outcome": r["outcome"],
-                        "label": r["outcome"], "confirm": r["confirm"], "pass": r["pass"],
-                        "inputs": r["inputs"], "text": it["text"], "cause": _cause(r, use),
-                        "cached": bool(r.get("cached"))})
-    counts = {"settled": 0, "confirm": 0, "escalate": 0}
-    for r in results:
-        r["review"] = r["confirm"] or r["outcome"] == "escalate"
-        counts["confirm" if r["confirm"] else "escalate" if r["review"] else "settled"] += 1
-    seen: set = set()
-    for r in results:                     # the best join of an item: its first `join` pair (best score first)
-        r["best"] = False
-        if r["use"] == "loose-end-join" and r["outcome"] == "join":
-            item = r["ref"].split("~")[0]
-            if item not in seen:
-                seen.add(item)
-                r["best"] = True
-    bundles = _bundle_groups(results)
-    return {"registry": _registry().REGISTRY_VERSION, "items": results, "counts": counts,
-            "bundles": bundles, "plan": _drain_plan(results, bundles)}
-
-
-def format_digest(d: dict) -> str:
-    """One line per settled item; full text only for `escalate` and `confirm` items. Every line
-    starts with a marker (`ok`, `READ`, `|`, `==`, `counts`), never with a markdown heading."""
-    out = [f"== system-one triage (registry v{d['registry']}): {len(d['items'])} items =="]
-    order = {"fired": 0, "waiting": 1}
-    for group in ("parked", "duplicates", "loose-ends"):
-        rows = [r for r in d["items"] if r["group"] == group]
-        if not rows:
-            continue
-        rows.sort(key=lambda r: (r["review"], order.get(r["outcome"], 2)))
-        if group == "loose-ends":
-            # each item's loose-end-state, then its best join; a bundle pair is rolled into a group below
-            rank = {"loose-end-state": 0, "loose-end-join": 1, "loose-end-bundle": 2}
-            rows = [r for r in rows if r["use"] == "loose-end-state" or r["review"]
-                    or (r["use"] == "loose-end-join" and r.get("best"))]
-            rows.sort(key=lambda r: (rank[r["use"]], r["ref"]))
-        out.append(f"== {group}: {len(rows)} ==")
-        for r in rows:
-            mark = "READ" if r["review"] else "ok  "
-            tag = " (confirm: report only, never applied)" if r["confirm"] else \
-                  f" ({r['cause']})" if r["cause"] else ""
-            how = f"pass {r['pass']}"
-            if r.get("cached"):
-                how += "] [cache"
-            out.append(f"{mark} {r['ref']}  {r['label']}{tag}  [{how}]")
-            if r["review"]:
-                for ln in r["text"].splitlines() or [""]:
-                    out.append(f"  | {ln}")
-                if r["inputs"]:
-                    out.append("  | answers: " + ", ".join(f"{k}={v}" for k, v in r["inputs"].items()))
-        if group == "loose-ends":
-            for g in d.get("bundles", []):
-                out.append(f"ok   bundle {' '.join(g)}  (one order could do these together)")
-            for p in d.get("plan", []):                 # WO-098: one suggested step per item; nothing applied
-                out.append(f"ok   plan {p['ref']}  {p['step']}")
-    c = d["counts"]
-    out.append(f"counts: settled {c['settled']}, confirm {c['confirm']}, escalate {c['escalate']}")
-    return "\n".join(out)
 
 
 # ------------------------------------------------------------------ the drain proposals (WO-098)
@@ -1303,14 +1137,19 @@ def drain(home, fresh: bool = False) -> dict:
     -> {"counts", "written", "removed", "skipped"}."""
     home = Path(home)
     cfg = _active_config(home)
-    c = _canary()
-    le = _loose_ends()
     items, loose_rows, orders = _loose_end_items(home)
     results = []
     for it in items:
         r = decide(it["use"], it["ref"], it["state"], home=home, fresh=fresh)
         results.append({"group": it["group"], "use": it["use"], "ref": it["ref"], "outcome": r["outcome"],
                         "text": it["text"], "cause": _cause(r, it["use"])})
+    return _drain_write(home, cfg.get("model", ""), loose_rows, orders, results)
+
+
+def _drain_write(home: Path, model: str, loose_rows: list, orders: list, results: list) -> dict:
+    """The proposals of the answered items: the same path for a server's answers and a helper's."""
+    c = _canary()
+    le = _loose_ends()
     bundles = _bundle_groups(results)
     plan = _drain_plan(results, bundles)
     cause = {r["ref"]: r["cause"] for r in results if r["use"] == "loose-end-state"}
@@ -1347,7 +1186,7 @@ def drain(home, fresh: bool = False) -> dict:
         old = _read_proposal(path) if path.is_file() else None
         ctx = _group_context(home, c, p["items"], rows, orders)
         created = old["created"] if old and old.get("created") else now
-        text = _proposal_file(p, created, now, cfg.get("model", ""), rows, ctx, titles)
+        text = _proposal_file(p, created, now, model, rows, ctx, titles)
         if old and re.sub(r"- updated: .*", "", old["text"]) == re.sub(r"- updated: .*", "", text):
             continue                                   # same proposal, same body: leave the file alone
         _write_text_atomic(path, text)
@@ -1361,6 +1200,128 @@ def drain(home, fresh: bool = False) -> dict:
     counts = {k: sum(1 for p in props if p["kind"] == k and p["id"] in keep) for k in DRAIN_KINDS}
     counts["pending"] = sum(counts.values())
     return {"counts": counts, "written": written, "removed": removed, "skipped": skipped}
+
+
+# ------------------------------------------------------------------ the drain without a local model (WO-101)
+# The same questions and tables, with the answers read from a file a dispatched helper wrote. Nothing here
+# calls a model or handles a key: `--export` writes the questions, `--answers` reads the words and applies
+# each use's table. The export and the answers belong to one list state, tied by a fingerprint.
+EXPORT_FORMAT = "gitos-drain-export"
+ANSWERS_FORMAT = "gitos-drain-answers"
+TITLE_PICK_NOTE = ("skipped: the title pick needs a model; join candidates come from references, paths and "
+                   "BM25 only")
+
+
+def _fingerprint(items: list) -> str:
+    """A sha256 (16 hex) over every item's ref, use and state text, in order: the list state of an export."""
+    raw = json.dumps([[it["ref"], it["use"], it["state"]] for it in items], ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _export_item(it: dict) -> dict:
+    reg = _registry()
+    allowed = {q["id"]: list(reg.input_domain(q)) for q in reg.USES[it["use"]]["questions"]}
+    qs = reg.request_questions(it["use"])
+    return {"ref": it["ref"], "use": it["use"], "state": it["state"],
+            "questions": {qid: {**body, "allowed": allowed[qid]} for qid, body in qs.items()}}
+
+
+def helper_export(items: list) -> dict:
+    """The export document: every item to be answered, its questions and the allowed answers."""
+    fp = _fingerprint(items)
+    return {"format": EXPORT_FORMAT, "version": 1, "registry": _registry().REGISTRY_VERSION,
+            "fingerprint": fp, "title_pick": TITLE_PICK_NOTE,
+            "answers_file": {"format": ANSWERS_FORMAT, "fingerprint": fp,
+                             "answers": {"<ref>": {"<question id>": "<one of its allowed answers>"}}},
+            "items": [_export_item(it) for it in items]}
+
+
+def _valid_answer(allowed: list, raw):
+    """The answer when it is one of the allowed words, else `unsure`."""
+    return raw if isinstance(raw, str) and raw in allowed else "unsure"
+
+
+def helper_apply(items: list, doc) -> dict:
+    """Apply each use's table to a helper's answers. `doc` is `{"fingerprint": F, "answers": {ref: {qid: word}}}`.
+    An answer that is missing, not a string or not allowed counts as `unsure` for that question (counted,
+    never an error). A document that is not of this list state raises ValueError before anything is applied.
+    -> {"outcomes": {ref: {"outcome", "inputs"}}, "defaulted": n, "unknown": [refs not in the list]}."""
+    if not isinstance(doc, dict) or not isinstance(doc.get("answers"), dict) \
+            or not isinstance(doc.get("fingerprint"), str):
+        raise ValueError("the answers file needs a `fingerprint` and an `answers` object: nothing was written, "
+                         "export again")
+    fp = _fingerprint(items)
+    if doc["fingerprint"] != fp:
+        raise ValueError(f"the answers belong to another list state (answers {doc['fingerprint']}, list now "
+                         f"{fp}): nothing was written, export again")
+    reg = _registry()
+    out, defaulted = {}, 0
+    for it in items:
+        u = reg.USES[it["use"]]
+        given = doc["answers"].get(it["ref"])
+        given = given if isinstance(given, dict) else {}
+        inputs = {}
+        for q in u["questions"]:
+            raw = given.get(q["id"])
+            v = _valid_answer(list(reg.input_domain(q)), raw)
+            if v != raw:
+                defaulted += 1
+            inputs[q["id"]] = v
+        out[it["ref"]] = {"outcome": u["table"](dict(inputs)), "inputs": inputs}
+    known = {it["ref"] for it in items}
+    return {"outcomes": out, "defaulted": defaulted, "unknown": sorted(k for k in doc["answers"] if k not in known)}
+
+
+def _helper_log(home: Path, items: list, applied: dict) -> None:
+    """One call-log row per applied item, model `helper`."""
+    reg = _registry()
+    for it in items:
+        o = applied["outcomes"][it["ref"]]
+        try:
+            _append(home, {"kind": "call", "t": _now(), "use": it["use"], "item": it["ref"],
+                           "registry": reg.REGISTRY_VERSION, "pass": 1, "p": {}, "outcome": o["outcome"],
+                           "model": HELPER_MODEL, "latency_ms": 0, "input_tokens": 0,
+                           "sha": _state_sha(it["state"]), "inputs": o["inputs"]})
+        except OSError:
+            pass                    # the log never breaks a decision
+
+
+def _write_export(path, doc: dict) -> None:
+    _write_text_atomic(Path(path), json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+
+
+def _read_answers(path) -> dict:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ValueError(f"cannot read the answers file: {e}")
+    except ValueError:
+        raise ValueError("the answers file is not valid JSON: nothing was written")
+
+
+def drain_export(home, path) -> dict:
+    """Write the export file for the loose-ends items the drain would ask. No model call; works with System
+    One off, unconfigured or down. -> {"items": n, "fingerprint": F}."""
+    items = _loose_end_items(Path(home), pick=False)[0]
+    doc = helper_export(items)
+    _write_export(path, doc)
+    return {"items": len(items), "fingerprint": doc["fingerprint"]}
+
+
+def drain_answers(home, doc) -> dict:
+    """The drain from a helper's answers: the proposals are written through `_drain_write`, as for a server.
+    -> `drain`'s result plus {"defaulted", "unknown"}. A stale or unreadable document raises ValueError
+    with nothing written."""
+    home = Path(home)
+    items, loose_rows, orders = _loose_end_items(home, pick=False)
+    applied = helper_apply(items, doc)
+    results = [{"group": it["group"], "use": it["use"], "ref": it["ref"],
+                "outcome": applied["outcomes"][it["ref"]]["outcome"], "text": it["text"],
+                "cause": _cause(applied["outcomes"][it["ref"]], it["use"])} for it in items]
+    d = _drain_write(home, HELPER_MODEL, loose_rows, orders, results)
+    _helper_log(home, items, applied)
+    d["defaulted"], d["unknown"] = applied["defaulted"], applied["unknown"]
+    return d
 
 
 def drain_status(home) -> "str | None":
@@ -1465,6 +1426,8 @@ def _drain_cli(args) -> int:
     priv.add_argument("--reason")
     priv.add_argument("--json", action="store_true")
     priv.add_argument("--fresh", action="store_true")
+    priv.add_argument("--export")
+    priv.add_argument("--answers")
     try:
         ns = priv.parse_intermixed_args(list(args.rest))
     except SystemExit:
@@ -1475,6 +1438,24 @@ def _drain_cli(args) -> int:
     rest = list(ns.rest)
     act = rest[0] if rest and rest[0] in ("accept", "decline", "defer", "status") else None
     try:
+        if ns.export or ns.answers:
+            if act is not None or len(rest) != 1 or (ns.export and ns.answers):
+                print("drain: usage: drain <home> --export FILE | drain <home> --answers FILE", file=sys.stderr)
+                return 2
+            home = _resolve_home(rest[0])
+            if ns.export:
+                e = drain_export(home, ns.export)
+                print(json.dumps(e) if args.json else
+                      f"drain: exported {e['items']} items (fingerprint {e['fingerprint']}) to {ns.export}")
+                return 0
+            d = drain_answers(home, _read_answers(ns.answers))
+            c = d["counts"]
+            print(json.dumps(d) if args.json else
+                  f"drain: {c['pending']} pending ({c['join']} join, {c['new-order']} new-order, {c['ask']} ask, "
+                  f"{c['park']} park, {c['close']} close, {c['read']} read); {len(d['written'])} written, "
+                  f"{len(d['removed'])} removed; {d['defaulted']} answers counted as unsure (missing or invalid)"
+                  + (f"; {len(d['unknown'])} unknown refs ignored" if d["unknown"] else ""))
+            return 0
         if act is None:
             if len(rest) != 1:
                 print("drain: usage: drain <home> | accept ID --work-order NNN [ROOT] | decline ID --reason R "
@@ -1522,258 +1503,10 @@ def _drain_cli(args) -> int:
         return 2
 
 
-# ------------------------------------------------------------------ intake and board (WO-086)
-# `screen_proposals` annotates pending proposals; `cards` groups board cards. Both only ANNOTATE:
-# the result carries registry option names and work-order numbers (from file names), never model
-# text, and nothing is written. A proposal body is foreign text: it goes to the model only as state
-# for a `local_only` call, and not into any value this function returns.
-RECENT_RESOLVED = 15              # resolved work-orders (newest first) that a proposal is compared to
-DUP_MIN_SHARED = 4                # shared meaningful words for a (proposal, work-order) candidate
-DUP_OVERLAP = 0.15
-DUP_PER_PROPOSAL = 3
-BODY_LINES = 12
-
-
-def _dup_pool(home: Path) -> list:
-    """[(nnn, text)] for open and recently resolved work-orders: title plus the first lines."""
-    c = _canary()
-    listing = _wo_listing(home, c)
-    resolved = [w for w in listing if w[2]][-RECENT_RESOLVED:]
-    pool = []
-    for nnn, path, _res in [w for w in listing if not w[2]] + resolved:
-        text = _read_text(path) or ""
-        lines = [ln for ln in text.splitlines()[1:] if ln.strip() and not ln.startswith(">")]
-        pool.append((nnn, _squash(_title(text, path.stem) + ". " + " ".join(lines[:BODY_LINES]))[:900]))
-    return pool
-
-
-def _dup_candidates(text: str, pool: list) -> list:
-    _r, _p, words = _signals(text, "")
-    scored = []
-    for nnn, wt in pool:
-        _r2, _p2, w2 = _signals(wt, "")
-        shared = words & w2
-        jac = len(shared) / len(words | w2) if words and w2 else 0.0
-        if len(shared) >= DUP_MIN_SHARED and jac >= DUP_OVERLAP:
-            scored.append((-jac, nnn, wt))
-    scored.sort()
-    return [(n, t) for _j, n, t in scored[:DUP_PER_PROPOSAL]]
-
-
-def screen_proposals(home, proposals: list) -> dict:
-    """proposals: [{"id", "title", "body"}] -> {id: {"area", "severity", "engine_change",
-    "duplicate_of"}}; each value is a registry option name or None (an unsure judgment stays None).
-    Every call is `local_only`: a non-local endpoint raises `Refused` before any request. Raises
-    `Unavailable` (Off, down, Refused) for the caller to fall back to the plain listing."""
-    home = Path(home)
-    _active_config(home)
-    pool = _dup_pool(home)
-    out = {}
-    for pr in proposals:
-        pid = pr["id"]
-        text = _cap(f"Proposal title: {pr['title']}\nProposal body: {pr['body']}", 1400)
-        def one(use):
-            r = decide(use, pid, text, home=home, local_only=True)
-            return None if r["outcome"] == "escalate" else r["outcome"]
-        dup = None
-        for nnn, wt in _dup_candidates(f"{pr['title']} {pr['body'][:1500]}", pool):
-            state = f"Item A (proposal): {_cap(pr['title'] + '. ' + pr['body'], 700)}\n" \
-                    f"Item B (WO-{nnn}): {_cap(wt, 700)}"
-            if decide("proposal-duplicate", f"{pid}~WO-{nnn}", state, home=home,
-                      local_only=True)["outcome"] == "likely-duplicate":
-                dup = f"WO-{nnn}"
-                break
-        out[pid] = {"area": one("proposal-area"), "severity": one("proposal-severity"),
-                    "engine_change": one("proposal-engine-change"), "duplicate_of": dup}
-    return out
-
-
-SCREEN_BODY_CHARS = 3000
-SCREEN_NEEDS_LOCAL = "screening needs a local model: nothing was sent and nothing is annotated"
-SCREEN_WO_REF = re.compile(r"WO-\d{3,}")
-
-
-def _federation():
-    """federation.py, imported by path. The dependency runs ONE WAY: this network-capable tool reads
-    the authorizing tool; federation.py never imports this file (it must stay incapable of reaching
-    a network)."""
-    mod = sys.modules.get("_gitos_federation_s1")
-    if mod is None:
-        path = Path(__file__).resolve().with_name("federation.py")
-        spec = importlib_util.spec_from_file_location("_gitos_federation_s1", path)
-        mod = importlib_util.module_from_spec(spec)
-        sys.modules["_gitos_federation_s1"] = mod
-        try:
-            spec.loader.exec_module(mod)
-        except BaseException:
-            sys.modules.pop("_gitos_federation_s1", None)
-            raise
-    return mod
-
-
-def screen_intake(home: Path, view: dict) -> None:
-    """**THE ONE PATH THAT READS A PROPOSAL BODY, AND ONLY TO SEND IT TO A LOCAL ENDPOINT.**
-
-    Annotates each pending entry of `view` (federation.list_intake's result) in place with `screen`,
-    a one-line annotation ASSEMBLED ONLY FROM THE REGISTRY'S OWN OPTION NAMES (an area, a severity
-    word, `engine-change`, `likely-duplicate-of WO-NNN`): no body text, no header value and no model
-    free text can reach it. An annotation is not a decision.
-
-    Off or down: nothing is added. A non-local endpoint: no body is read and no request is made,
-    and `screen_note` says so.
-    """
-    fed = _federation()
-    Engine = fed.Engine
-    pending = view.get("pending") or []
-    if not pending:
-        return
-    try:
-        cfg = _active_config(home)
-    except Unavailable:
-        return                                           # off or opted out
-    if endpoint_class(cfg["endpoint"], cfg) == "remote":
-        view[Engine("screen_note")] = Engine(SCREEN_NEEDS_LOCAL)
-        return
-    items = []
-    for p in pending:
-        pid = fed.emission_text(p["proposal_id"])
-        try:
-            body = fed.read_proposal_body(fed.proposal_path(fed.intake_dir(home), pid))
-        except (fed.FederationError, OSError):
-            continue
-        items.append({"id": pid, "title": fed.emission_text(p["title"]),
-                      "body": body[:SCREEN_BODY_CHARS]})
-    try:
-        got = screen_proposals(home, items)
-    except Refused:
-        view[Engine("screen_note")] = Engine(SCREEN_NEEDS_LOCAL)
-        return
-    except Unavailable:
-        return
-    for p in pending:
-        r = got.get(fed.emission_text(p["proposal_id"]))
-        if not r:
-            continue
-        parts = []
-        if r["area"]:
-            parts.append("area " + r["area"])
-        if r["severity"]:
-            parts.append("severity " + r["severity"])
-        if r["engine_change"]:
-            parts.append(r["engine_change"])
-        if r["duplicate_of"] and SCREEN_WO_REF.fullmatch(r["duplicate_of"]):
-            parts.append("likely-duplicate-of " + r["duplicate_of"])
-        if parts:
-            p[Engine("screen")] = Engine("; ".join(parts))
-
-
-def _screen_cli(args) -> int:
-    """The plain federation intake listing, then one `screen` line per annotated proposal."""
-    fed = _federation()
-    home = Path(args.home)
-    if (home / ".gitos").is_dir():
-        home = home / ".gitos"
-    view = fed.list_intake(home, registry=args.registry)
-    screen_intake(home, view)
-    pending = view.get("pending") or []
-    if args.json:
-        print(fed.emit_json(view))
-        return 0
-    fed._print_intake(fed.emit_human(view))
-    lines = [(fed.emission_text(p["proposal_id"])[:8], fed.emission_text(p["screen"]))
-             for p in pending if "screen" in p]
-    if "screen_note" in view:
-        print(f"  screen    {fed.emission_text(view['screen_note'])}")
-    if lines:
-        print("  screen    a local model's suggestion, in this engine's own words only. It is not a "
-              "decision: accept, decline and defer stay yours.")
-        for pid8, text in lines:
-            print(f"            screen  {pid8}  {text}")
-    return 0
-
-
-def _card_state(card: dict) -> str:
-    opts = card.get("options") or []
-    labels = [o if isinstance(o, str) else str(o.get("label") or o.get("title") or o.get("id") or "")
-              for o in opts]
-    return _cap(f"Card: {card.get('title', '')}. Why: {card.get('why', '')}. "
-                f"Options: {'; '.join(l for l in labels if l)}")
-
-
-def cards(home, items: list) -> dict:
-    """Suggested board group per card. It picks no option: the recommendation stays the
-    orchestrator's, and no option text is returned."""
-    _active_config(home)
-    rows = []
-    for n, card in enumerate(items):
-        cid = str(card.get("id") or f"card-{n + 1}") if isinstance(card, dict) else f"card-{n + 1}"
-        r = decide("card-group", cid, _card_state(card if isinstance(card, dict) else {}), home=home)
-        rows.append({"id": cid, "title": _squash(card.get("title", "")) if isinstance(card, dict) else "",
-                     "group": None if r["outcome"] == "escalate" else r["outcome"],
-                     "pass": r["pass"]})
-    return {"registry": _registry().REGISTRY_VERSION, "cards": rows}
-
-
-def format_cards(d: dict) -> str:
-    out = [f"== system-one cards (registry v{d['registry']}): {len(d['cards'])} cards =="]
-    for r in d["cards"]:
-        mark, what = ("ok  ", r["group"]) if r["group"] else ("READ", "unsure: no group suggested")
-        out.append(f"{mark} {r['id']}  {what}  [pass {r['pass']}]")
-        if not r["group"]:
-            out.append(f"  | {r['title']}")
-    out.append("note: groups only. A card's recommended option stays the orchestrator's choice; "
-               "this digest names none.")
-    return "\n".join(out)
-
-
-def _cards_cli(args) -> int:
-    home = Path(args.home)
-    if (home / ".gitos").is_dir():
-        home = home / ".gitos"
-    try:
-        items = json.loads(Path(args.items).read_text(encoding="utf-8"))
-        if isinstance(items, dict):
-            items = items.get("cards", items.get("items"))
-        if not isinstance(items, list):
-            raise ValueError("expected a JSON list of cards")
-    except (OSError, ValueError) as e:
-        print(f"cards: cannot read --items ({type(e).__name__})", file=sys.stderr)
-        return 2
-    try:
-        d = cards(home, items)
-    except Off:
-        print("system-one: off")
-        return 0
-    except Unavailable as e:
-        print(f"system-one: unavailable ({e})")
-        return 0
-    print(json.dumps(d) if args.json else format_cards(d))
-    return 0
-
-
-# ------------------------------------------------------------------ the brain and the lenses (WO-087)
-# `lenses` and `brain-dupes` read and print: nothing is written in the repo or the
-# global lens library. Code gathers and prefilters; the model answers one small question per
-# candidate; an unsure answer degrades to "maybe" / "READ", never to a silent drop.
+# ------------------------------------------------------------------ the lenses (WO-087)
+# `lenses` reads and prints: nothing is written in the repo or the global lens library, and no model is asked.
 GLOBAL_LENS_ENV = "GITOS_GLOBAL_LENS_DIR"
-MAX_BRAIN_PAIRS = 30
-TAG_HUB = 8                       # a tag on more pages than this is no signal
 _LENS_NEEDS = ("domain", "when-to-apply")
-
-
-def _brain_lint():
-    mod = sys.modules.get("_gitos_brain_lint_s1")
-    if mod is None:
-        path = Path(__file__).resolve().with_name("brain_lint.py")
-        spec = importlib_util.spec_from_file_location("_gitos_brain_lint_s1", path)
-        mod = importlib_util.module_from_spec(spec)
-        sys.modules["_gitos_brain_lint_s1"] = mod
-        try:
-            spec.loader.exec_module(mod)
-        except BaseException:
-            sys.modules.pop("_gitos_brain_lint_s1", None)
-            raise
-    return mod
 
 
 def _resolve_home(home) -> Path:
@@ -1891,93 +1624,18 @@ def format_lenses(d: dict) -> str:
     return "\n".join(out)
 
 
-def _brain_pages(home: Path) -> list:
-    bl, c = _brain_lint(), _canary()
-    pages = []
-    for ptype in bl.PAGE_TYPES:
-        d = home / "brain" / "wiki" / ptype
-        for f in sorted(d.glob("*.md")) if d.is_dir() else []:
-            p = bl.parse_page(f, ptype)
-            raw = _read_text(f) or ""
-            tags = (c.parse_frontmatter(raw) or {}).get("tags", "")
-            tagset = {t.strip().strip("\"'").lower() for t in tags.strip("[]").split(",") if t.strip()}
-            body = _squash(re.sub(r"^\s*#\s+.+$", "", p.body, count=1, flags=re.M).replace("#", " "))
-            pages.append({"ref": f"{ptype}/{p.slug}", "title": p.title, "tags": tagset,
-                          "ttok": bl.title_tokens(p.title) | bl.title_tokens(p.slug.replace("-", " ")),
-                          "links": p.wikilinks, "body": body})
-    return pages
-
-
-def _page_text(p: dict, n: int) -> str:
-    return f"{p['title']}. {_cap(p['body'], n)}"
-
-
-def brain_dupe_candidates(pages: list) -> list:
-    """Page pairs worth asking about, chosen by code: a title-token overlap (Jaccard 0.3 or more), or
-    two shared tags plus a shared title token, or three shared links. Tags on many pages are no signal."""
-    bl = _brain_lint()
-    count: dict = {}
-    for p in pages:
-        for t in p["tags"]:
-            count[t] = count.get(t, 0) + 1
-    out = []
-    for i in range(len(pages)):
-        for j in range(i + 1, len(pages)):
-            a, b = pages[i], pages[j]
-            tj = bl.jaccard(a["ttok"], b["ttok"])
-            tags = {t for t in a["tags"] & b["tags"] if count[t] <= TAG_HUB}
-            links = len(a["links"] & b["links"])
-            if tj >= 0.3 or (len(tags) >= 2 and a["ttok"] & b["ttok"]) or links >= 3:
-                out.append((-tj, -len(tags), -links, a["ref"], b["ref"], a, b))
-    out.sort(key=lambda r: r[:5])
-    return [(a, b) for *_k, a, b in out[:MAX_BRAIN_PAIRS]]
-
-
-def brain_dupes(home) -> dict:
-    home = Path(home)
-    _active_config(home)
-    rows = []
-    for a, b in brain_dupe_candidates(_brain_pages(home)):
-        state = f"Page A ({a['ref']}): {_page_text(a, 700)}\nPage B ({b['ref']}): {_page_text(b, 700)}"
-        r = decide("brain-duplicate", f"{a['ref']}~{b['ref']}", state, home=home)
-        rows.append({"a": a["ref"], "b": b["ref"], "outcome": r["outcome"], "confirm": r["confirm"],
-                     "pass": r["pass"], "text": f"A {a['ref']}: {_cap(_page_text(a, 300), 340)}\n"
-                                                f"B {b['ref']}: {_cap(_page_text(b, 300), 340)}"})
-    return {"registry": _registry().REGISTRY_VERSION, "pairs": rows}
-
-
-def format_brain_dupes(d: dict) -> str:
-    out = [f"== system-one brain-dupes (registry v{d['registry']}): {len(d['pairs'])} candidate pairs =="]
-    for r in d["pairs"]:
-        read = r["confirm"] or r["outcome"] == "escalate"
-        tag = " (confirm: report only, never merged)" if r["confirm"] else \
-              " (unsure: read both pages)" if read else ""
-        out.append(f"{'READ' if read else 'ok  '} {r['a']}~{r['b']}  {r['outcome']}{tag}  [pass {r['pass']}]")
-        if read:
-            out += [f"  | {ln}" for ln in r["text"].splitlines()]
-    out.append("note: candidates come from a code prefilter; nothing was merged or edited.")
-    return "\n".join(out)
-
-
-def _brain_cli(args) -> int:
+def _lenses_cli(args) -> int:
     home = _resolve_home(args.home)
     try:
-        if args.cmd == "lenses":
-            if bool(args.wo) == bool(args.text):
-                print("lenses: give exactly one of --wo and --text", file=sys.stderr)
-                return 2
-            try:
-                d = match_lenses(home, args.wo, args.text, args.global_dir)
-            except (OSError, ValueError) as e:
-                print(f"lenses: {e}", file=sys.stderr)
-                return 2
-            print(json.dumps(d) if args.json else format_lenses(d))
-            return 0
-        if not (home / "brain" / "wiki").is_dir():
-            print(f"{args.cmd}: no brain/wiki under {home}", file=sys.stderr)
+        if bool(args.wo) == bool(args.text):
+            print("lenses: give exactly one of --wo and --text", file=sys.stderr)
             return 2
-        d = brain_dupes(home)
-        print(json.dumps(d) if args.json else format_brain_dupes(d))
+        try:
+            d = match_lenses(home, args.wo, args.text, args.global_dir)
+        except (OSError, ValueError) as e:
+            print(f"lenses: {e}", file=sys.stderr)
+            return 2
+        print(json.dumps(d) if args.json else format_lenses(d))
         return 0
     except Off:
         print("system-one: off")
@@ -1985,216 +1643,6 @@ def _brain_cli(args) -> int:
     except Unavailable as e:
         print(f"system-one: unavailable ({e})")
         return 0
-
-
-# ------------------------------------------------------------------ diagnostic scan (WO-088)
-# `scan` reduces log files in CODE first (lines -> templates with counts and positions), sets aside the
-# templates the vocabulary file marks normal, then asks `line-anomaly` per remaining template and
-# `line-family` for the abnormal or unsure ones. The digest is a READING ORDER, never a finding: logs may
-# hold secrets, so every call is `local_only`. Writes nothing.
-FAMILIES_FILE = Path(__file__).resolve().parent.parent / "references" / "anomaly-families.md"
-DEFAULT_MAX_TEMPLATES = 40        # model calls (line-anomaly + line-family decisions) per scan
-SCAN_EXAMPLES = 3
-SCAN_TOP = 5
-_MASKS = (
-    (re.compile(r"\"[^\"\n]*\"|(?<!\w)'[^'\n]*'(?!\w)"), "<str>"),
-    (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "<uuid>"),
-    (re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?"), "<ts>"),
-    (re.compile(r"\b\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\b"), "<time>"),
-    (re.compile(r"\b\d{4}-\d{2}-\d{2}\b"), "<date>"),
-    (re.compile(r"\b0x[0-9a-fA-F]+\b"), "<hex>"),
-    (re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,}\b"), "<hex>"),
-    (re.compile(r"(?<![A-Za-z_])\d+(?:\.\d+)*"), "<n>"),
-)
-_ALERT = re.compile(r"\b(error|errors|fail|failed|failure|exception|traceback|fatal|critical|panic|"
-                    r"timeout|refused|denied|warn|warning)\b", re.I)
-_NORMAL_LINE = re.compile(r"^\s*(?:[-*+]\s*)?(?:normal|expected)(?:\s+line)?\s*:\s*(.+?)\s*$", re.I)
-
-
-def line_template(line: str) -> str:
-    """The line with strings, uuids, timestamps, hex ids and numbers masked, whitespace squashed."""
-    for rx, repl in _MASKS:
-        line = rx.sub(repl, line)
-    return _squash(line)
-
-
-_LEAD_TIME = re.compile(r"^(?:\[?(?:<ts>|<date>|<time>)\]?\s*)+")
-
-
-def _core(tpl: str) -> str:
-    """A template without its leading timestamp, so a vocabulary entry need not carry one."""
-    return _LEAD_TIME.sub("", tpl)
-
-
-def _vocab_normal(home: Path) -> tuple:
-    """-> (exact templates, prefix templates, description). The vocabulary marks a normal line with a
-    bullet `normal: <line>` (`expected:` also works); a trailing `*` makes it a prefix match. A
-    leading timestamp is ignored on both sides."""
-    text = _read_text(home / "log_vocabulary.md") or ""
-    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
-    exact, prefix, shown = set(), [], []
-    for ln in text.splitlines():
-        m = _NORMAL_LINE.match(ln)
-        if not m:
-            continue
-        entry = m.group(1).strip().strip("`").strip()
-        if not entry:
-            continue
-        shown.append(entry)
-        if entry.endswith("*"):
-            prefix.append(_core(line_template(entry[:-1])))
-        else:
-            exact.add(_core(line_template(entry)))
-    desc = _cap("; ".join(shown), 600) if shown else "no normal output is recorded in the vocabulary"
-    return exact, prefix, desc
-
-
-def _is_normal(tpl: str, exact: set, prefix: list) -> bool:
-    tpl = _core(tpl)
-    return tpl in exact or any(tpl.startswith(p) for p in prefix)
-
-
-def _reduce_logs(files: list) -> tuple:
-    """-> ({template: record}, line count). Reads each file once; blank lines are skipped."""
-    tpls: dict = {}
-    total = 0
-    for f in files:
-        with open(f, encoding="utf-8", errors="replace") as fh:
-            for no, raw in enumerate(fh, 1):
-                line = raw.rstrip("\r\n")
-                if not line.strip():
-                    continue
-                total += 1
-                t = line_template(line)
-                rec = tpls.get(t)
-                if rec is None:
-                    rec = tpls[t] = {"template": t, "count": 0, "first": f"{f}:{no}", "last": "",
-                                     "examples": [], "alert": bool(_ALERT.search(line)),
-                                     "order": len(tpls)}
-                rec["count"] += 1
-                rec["last"] = f"{f}:{no}"
-                if len(rec["examples"]) < SCAN_EXAMPLES:
-                    rec["examples"].append(line[:300])
-    return tpls, total
-
-
-def _scan_state(rec: dict, desc: str) -> str:
-    return (f"Log line template: {_cap(rec['template'], 300)}\nExample line: {_cap(rec['examples'][0], 300)}\n"
-            f"Normal output for this system: {desc}")
-
-
-def scan(home, files: list, max_templates: int = DEFAULT_MAX_TEMPLATES) -> dict:
-    """Reduce, set the vocabulary-normal aside, judge what is left within `max_templates` model calls.
-    Raises `Unavailable` (off, down, or a remote endpoint: nothing is sent) before any partial output."""
-    home = Path(home)
-    _active_config(home)
-    reg = _registry()
-    try:
-        reg.set_line_families(reg.parse_families(FAMILIES_FILE))
-    except OSError:
-        pass                                              # the registry keeps its fallback family
-    exact, prefix, desc = _vocab_normal(home)
-    tpls, total = _reduce_logs(files)
-    aside = [r for r in tpls.values() if _is_normal(r["template"], exact, prefix)]
-    rest = [r for r in tpls.values() if not _is_normal(r["template"], exact, prefix)]
-    rest.sort(key=lambda r: (not r["alert"], r["count"], r["order"]))
-    budget = max(1, int(max_templates))
-    calls = 0
-    judged_normal, not_judged = [], []
-    families: dict = {}
-    no_family, unsure = [], []
-    for r in rest:
-        if budget < 1:
-            not_judged.append(r)
-            continue
-        a = decide("line-anomaly", r["first"], _scan_state(r, desc), home=home, local_only=True)
-        budget -= 1
-        calls += 1
-        r["anomaly"] = a["outcome"]
-        if a["outcome"] == "normal":
-            judged_normal.append(r)
-            continue
-        if budget < 1:
-            r["note"] = "family not judged: --max-templates reached"
-            unsure.append(r)
-            continue
-        f = decide("line-family", r["first"], _scan_state(r, desc), home=home, local_only=True)
-        budget -= 1
-        calls += 1
-        if f["outcome"] == "escalate":
-            r["note"] = "unsure which family: read it"
-            unsure.append(r)
-        elif f["outcome"] == reg.NO_FAMILY:
-            if a["outcome"] == "abnormal":
-                no_family.append(r)
-            else:
-                r["note"] = "unsure whether abnormal, and no family fits"
-                unsure.append(r)
-        else:
-            if a["outcome"] == "escalate":
-                r["note"] = "unsure whether abnormal"
-            families.setdefault(f["outcome"], []).append(r)
-
-    def lines(rows):
-        return sum(r["count"] for r in rows)
-
-    def out(rows):
-        return [{k: r.get(k, "") for k in ("template", "count", "first", "last", "examples", "note")}
-                for r in rows]
-    return {"registry": reg.REGISTRY_VERSION, "files": [str(f) for f in files], "lines": total,
-            "templates": len(tpls), "calls": calls, "max_templates": max(1, int(max_templates)),
-            "vocabulary_normal": {"templates": len(aside), "lines": lines(aside)},
-            "judged_normal": {"templates": len(judged_normal), "lines": lines(judged_normal)},
-            "not_judged": {"templates": len(not_judged), "lines": lines(not_judged)},
-            "families": {n: {"templates": len(rs), "lines": lines(rs), "top": out(rs[:SCAN_TOP])}
-                         for n, rs in sorted(families.items())},
-            "no_family": {"templates": len(no_family), "lines": lines(no_family),
-                          "top": out(no_family[:SCAN_TOP])},
-            "unsure": {"templates": len(unsure), "lines": lines(unsure), "top": out(unsure[:SCAN_TOP])}}
-
-
-def format_scan(d: dict) -> str:
-    out = [f"== system-one scan (registry v{d['registry']}): {d['lines']} lines, {d['templates']} templates, "
-           f"{d['calls']} model calls ==",
-           f"set aside: vocabulary-normal {d['vocabulary_normal']['templates']} templates / "
-           f"{d['vocabulary_normal']['lines']} lines; judged normal {d['judged_normal']['templates']} / "
-           f"{d['judged_normal']['lines']}; not judged (--max-templates {d['max_templates']}) "
-           f"{d['not_judged']['templates']} / {d['not_judged']['lines']}"]
-
-    def block(title, g):
-        out.append(f"== {title}: {g['templates']} templates, {g['lines']} lines ==")
-        for r in g["top"]:
-            note = f"  ({r['note']})" if r.get("note") else ""
-            out.append(f"  {r['count']}x  {r['first']}  {r['template']}{note}")
-            out.append(f"  | e.g. {r['examples'][0]}")
-    for name, g in d["families"].items():
-        block(f"family {name}", g)
-    block("abnormal, no family", d["no_family"])
-    block("unsure", d["unsure"])
-    out.append("note: a reading order, not a finding. Read the literal lines yourself before citing them.")
-    return "\n".join(out)
-
-
-def _scan_cli(args) -> int:
-    home = Path(args.home)
-    if (home / ".gitos").is_dir():
-        home = home / ".gitos"
-    if args.max_templates < 1:
-        print("scan: --max-templates must be at least 1", file=sys.stderr)
-        return 2
-    try:
-        d = scan(home, args.files, args.max_templates)
-    except Off:
-        print("system-one: off")
-        return 0
-    except Unavailable as e:
-        print(f"system-one: unavailable ({e})")
-        return 0
-    except OSError as e:
-        print(f"scan: cannot read a log file ({type(e).__name__}: {e})", file=sys.stderr)
-        return 2
-    print(json.dumps(d) if args.json else format_scan(d))
-    return 0
 
 
 # ------------------------------------------------------------------------------------- scope (WO-089)
@@ -2404,6 +1852,116 @@ def _repo_cli(args) -> int:
     words = {"on": "on", "off": "off", "missing": "not chosen (off)", "malformed": "malformed (off)",
              "retired": "retired keys (off)"}
     print(f"system-one repo: {words[state]}" + (f" - {detail}" if detail else ""))
+    return 0
+
+
+# ------------------------------------------------------------------------------------- helper model
+HELPER_DEFAULTS = {"claude": "haiku", "codex": "gpt-5.1-codex-mini"}   # the only place either name appears in code
+HELPER_SOURCES = ("optimization", "recorded", "default")               # first match wins
+HELPER_KEY = "helper"             # `{"<harness>": "<model>"}` in <home>/system-one.json
+
+
+def _mo_mod():
+    """model_optimization.py, imported by path like the lenses module."""
+    mod = sys.modules.get("_gitos_mo_s1")
+    if mod is None:
+        path = Path(__file__).resolve().with_name("model_optimization.py")
+        spec = importlib_util.spec_from_file_location("_gitos_mo_s1", path)
+        mod = importlib_util.module_from_spec(spec)
+        sys.modules["_gitos_mo_s1"] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop("_gitos_mo_s1", None)
+            raise
+    return mod
+
+
+def detect_harness(environ=None) -> "str | None":
+    """`claude` when `CLAUDECODE` is set. No Codex session variable is established, so Codex is never
+    guessed: pass `--harness codex`."""
+    env = os.environ if environ is None else environ
+    return "claude" if env.get("CLAUDECODE") else None
+
+
+def _helper_optimization(home: Path, harness: str) -> "str | None":
+    try:
+        mo = _mo_mod()
+        cfg = mo.load_config(home)
+    except Exception:
+        return None
+    if cfg.get("enabled") is not True:
+        return None
+    mapping = cfg["harnesses"].get(harness)
+    if not mapping:
+        return None
+    return mapping["choices"][mapping["tiers"]["light"]]["model"]
+
+
+def _helper_recorded(home: Path, harness: str) -> "str | None":
+    try:
+        data = json.loads((home / OPTOUT_NAME).read_text(encoding="utf-8"))
+        model = data[HELPER_KEY][harness]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return model if isinstance(model, str) and model.strip() else None
+
+
+def helper_model(home, harness: "str | None") -> "tuple[str, str] | None":
+    """(model, source) for this repo's helper on `harness`, or None. Sources, first match wins:
+    the model-optimization light choice, the recorded pick, the shipped default."""
+    if not harness:
+        return None
+    home = Path(home)
+    finders = {"optimization": lambda: _helper_optimization(home, harness),
+               "recorded": lambda: _helper_recorded(home, harness),
+               "default": lambda: HELPER_DEFAULTS.get(harness)}
+    for src in HELPER_SOURCES:
+        model = finders[src]()
+        if model:
+            return model, {"optimization": "model-optimization light choice", "recorded": f"recorded in {OPTOUT_NAME}",
+                           "default": "shipped default"}[src]
+    return None
+
+
+def set_helper(home, harness: str, model: str) -> None:
+    """Record the helper model for `harness` in `<home>/system-one.json`, atomically, keeping every other key."""
+    home = Path(home)
+    state, detail = repo_choice(home)
+    if state == "malformed":
+        raise ValueError(f"system-one.json is malformed ({detail}): fix or delete it first")
+    if state == "retired":
+        raise ValueError(retired_line(detail.split(", ")))
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", harness or "") or not re.fullmatch(r"\S{1,100}", model or ""):
+        raise ValueError("helper --set takes a harness name and a model name without spaces")
+    raw: dict = {}
+    if (home / OPTOUT_NAME).is_file():
+        raw = json.loads((home / OPTOUT_NAME).read_text(encoding="utf-8"))
+    picks = raw.get(HELPER_KEY)
+    raw[HELPER_KEY] = {**(picks if isinstance(picks, dict) else {}), harness: model}
+    _write_json_atomic(home / OPTOUT_NAME, raw)
+
+
+def _helper_cli(args) -> int:
+    home = _repo_home(args.root)
+    if not home.is_dir():
+        print(f"helper: no home under {args.root}", file=sys.stderr)
+        return 2
+    if args.set:
+        try:
+            set_helper(home, args.set[0], args.set[1])
+        except (OSError, ValueError) as e:
+            print(f"helper: {e}", file=sys.stderr)
+            return 2
+        print(f"helper: recorded {args.set[1]} for {args.set[0]}")
+        return 0
+    harness = args.harness or detect_harness()
+    found = helper_model(home, harness)
+    if found is None:
+        print(f"helper: no model for harness '{harness or 'unknown'}'; ask the operator to pick one of their "
+              f"available models, then run helper --set {harness or '<harness>'} MODEL", file=sys.stderr)
+        return 3
+    print(f"helper: {found[0]} ({harness}; {found[1]})")
     return 0
 
 
@@ -2718,32 +2276,35 @@ def _drain_points(path: str) -> list:
     return pts
 
 
-def eval_drain(path: str, home) -> dict:
-    """Ask `loose-end-state` for each labelled item and `loose-end-join` for each (item, open order)
-    candidate, cache off, and compare with the labels. Hand-back is an `escalate` (a `closable` is
-    settled: its confirm is a separate step). Writes nothing in the home; raises `Unavailable` when off or
-    a call fails."""
-    pts = _drain_points(path)
-    home = Path(home)
-    _active_config(home)
-    rows = []
-    for p in pts:
-        r = decide("loose-end-state", p["id"], _loose_state(p["id"], _squash(p["text"]), p.get("source") or "unknown",
-                                                           p.get("age_days")), home=home, fresh=True)
-        rows.append({"id": p["id"], "expect_state": p["expect_state"], "outcome": r["outcome"],
-                     "handed_back": r["outcome"] == "escalate", "expect_join": p.get("expect_join"),
-                     "join": None})
+def _eval_state_items(pts: list) -> list:
+    return [{"group": "loose-ends", "use": "loose-end-state", "ref": p["id"], "text": _squash(p["text"]),
+             "state": _loose_state(p["id"], _squash(p["text"]), p.get("source") or "unknown", p.get("age_days"))}
+            for p in pts]
+
+
+def _eval_join_items(pts: list, home, pick: bool) -> list:
+    """Each (item, open order) pair once, as the drain chooses them: `_join_item` plus its `item` and `wo`."""
+    out, asked = [], set()
+    cand = _loose_ends().join_candidates(
+        home, [(p["id"], p["text"]) for p in pts], sm=sys.modules[__name__],
+        pick=(lambda ref, text, opts: pick_orders(home, ref, text, opts)) if pick else None)["join"]
+    for j in cand:
+        j2 = {**_join_item(j), "item": j["item"], "wo": j["wo"]}
+        if j2["ref"] not in asked:                       # each pair is asked once per run
+            asked.add(j2["ref"])
+            out.append(j2)
+    return out
+
+
+def _eval_report(pts: list, state_out: dict, join_out: list) -> dict:
+    """Score the answers against the labels. `state_out` {id: outcome}; `join_out` [(pair, outcome)]."""
+    rows = [{"id": p["id"], "expect_state": p["expect_state"], "outcome": state_out[p["id"]],
+             "handed_back": state_out[p["id"]] == "escalate", "expect_join": p.get("expect_join"),
+             "join": None} for p in pts]
     by = {r["id"]: r for r in rows}
-    asked: set = set()
-    for j in _loose_ends().join_candidates(home, [(p["id"], p["text"]) for p in pts], sm=sys.modules[__name__],
-                                           pick=lambda ref, text, opts: pick_orders(home, ref, text, opts))["join"]:
-        j2 = _join_item(j)
-        if j2["ref"] in asked:
-            continue                                     # each pair is asked once per run
-        asked.add(j2["ref"])
-        r = decide("loose-end-join", j2["ref"], j2["state"], home=home, fresh=True)
-        if r["outcome"] == "join" and by[j["item"]]["join"] is None:
-            by[j["item"]]["join"] = j["wo"]              # the best join of an item: its first `join` pair
+    for j2, outcome in join_out:
+        if outcome == "join" and by[j2["item"]]["join"] is None:
+            by[j2["item"]]["join"] = j2["wo"]            # the best join of an item: its first `join` pair
     settled = [r for r in rows if not r["handed_back"]]
     right = sum(1 for r in settled if r["outcome"] == r["expect_state"])
     said = [r for r in rows if r["join"]]
@@ -2762,6 +2323,46 @@ def eval_drain(path: str, home) -> dict:
             "points": rows}
 
 
+def eval_drain(path: str, home) -> dict:
+    """Ask `loose-end-state` for each labelled item and `loose-end-join` for each (item, open order)
+    candidate, cache off, and compare with the labels. Hand-back is an `escalate` (a `closable` is
+    settled: its confirm is a separate step). Writes nothing in the home; raises `Unavailable` when off or
+    a call fails."""
+    pts = _drain_points(path)
+    home = Path(home)
+    _active_config(home)
+    state_out = {it["ref"]: decide("loose-end-state", it["ref"], it["state"], home=home, fresh=True)["outcome"]
+                 for it in _eval_state_items(pts)}
+    join_out = [(j2, decide("loose-end-join", j2["ref"], j2["state"], home=home, fresh=True)["outcome"])
+                for j2 in _eval_join_items(pts, home, True)]
+    return _eval_report(pts, state_out, join_out)
+
+
+def eval_export(path: str, home, out_path) -> dict:
+    """The labelled set as an export file (see `helper_export`); the labels are not in it. No model call."""
+    pts = _drain_points(path)
+    items = _eval_state_items(pts) + _eval_join_items(pts, Path(home), False)
+    doc = helper_export(items)
+    _write_export(out_path, doc)
+    return {"items": len(items), "fingerprint": doc["fingerprint"]}
+
+
+def eval_answers(path: str, home, doc) -> dict:
+    """Score a helper's answers to `eval_export`'s file, exactly as `eval_drain` scores a server's. A stale
+    document raises ValueError. Calls are logged with model `helper`."""
+    pts = _drain_points(path)
+    home = Path(home)
+    states = _eval_state_items(pts)
+    joins = _eval_join_items(pts, home, False)
+    applied = helper_apply(states + joins, doc)
+    _helper_log(home, states + joins, applied)
+    out = applied["outcomes"]
+    d = _eval_report(pts, {it["ref"]: out[it["ref"]]["outcome"] for it in states},
+                     [(j2, out[j2["ref"]]["outcome"]) for j2 in joins])
+    d["defaulted"] = applied["defaulted"]
+    return d
+
+
 def format_drain_eval(d: dict) -> str:
     def pct(x):
         return "n/a" if x is None else f"{100 * x:.0f}%"
@@ -2775,6 +2376,19 @@ def format_drain_eval(d: dict) -> str:
 
 def _eval_drain_cli(args) -> int:
     try:
+        if args.export and args.answers:
+            print("eval-drain: --export and --answers are two steps; give one", file=sys.stderr)
+            return 2
+        if args.export:
+            e = eval_export(args.file, _resolve_home(args.home), args.export)
+            print(json.dumps(e) if args.json else
+                  f"eval-drain: exported {e['items']} items (fingerprint {e['fingerprint']}) to {args.export}")
+            return 0
+        if args.answers:
+            d = eval_answers(args.file, _resolve_home(args.home), _read_answers(args.answers))
+            print(json.dumps(d) if args.json else
+                  format_drain_eval(d) + f"\nanswers counted as unsure (missing or invalid): {d['defaulted']}")
+            return 0
         d = eval_drain(args.file, _resolve_home(args.home))
     except ValueError as e:
         print(f"eval-drain: {e}", file=sys.stderr)
@@ -2783,22 +2397,6 @@ def _eval_drain_cli(args) -> int:
         print(f"eval-drain: cannot read {args.file}: {e}", file=sys.stderr)
         return 2
     print(json.dumps(d) if args.json else format_drain_eval(d))
-    return 0
-
-
-def _triage_cli(args) -> int:
-    home = Path(args.home)
-    if (home / ".gitos").is_dir():
-        home = home / ".gitos"
-    try:
-        d = triage(home, fresh=args.fresh)
-    except Off:
-        print("system-one: off")
-        return 0
-    except Unavailable as e:
-        print(f"system-one: unavailable ({e})")
-        return 0
-    print(json.dumps(d) if args.json else format_digest(d))
     return 0
 
 
@@ -2816,6 +2414,11 @@ def main(argv: "list | None" = None) -> int:
     rg = sub.add_parser("repo", help="this repo's choice: on, off or status (<home>/system-one.json)")
     rg.add_argument("action", choices=("on", "off", "status"))
     rg.add_argument("rest", nargs="*", metavar="ROOT")
+    hp = sub.add_parser("helper", help="the drain helper's model for this repo and where it came from; "
+                                       "--set HARNESS MODEL records a pick (no model call)")
+    hp.add_argument("root", nargs="?", default=".", metavar="ROOT")
+    hp.add_argument("--harness", help="claude or codex (default: detected from the environment)")
+    hp.add_argument("--set", nargs=2, metavar=("HARNESS", "MODEL"), help="record the operator's pick")
     mg = sub.add_parser("migrate", help="list (or, with --write, remove) the retired keys of the machine "
                                         "config and the repo's system-one.json")
     mg.add_argument("root", nargs="?", default=".", metavar="ROOT")
@@ -2837,10 +2440,6 @@ def main(argv: "list | None" = None) -> int:
     lg.add_argument("--summary", action="store_true")
     lg.add_argument("--use")
     lg.add_argument("--json", action="store_true")
-    tg = sub.add_parser("triage", help="digest of ledger judgments (writes nothing in the home)")
-    tg.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
-    tg.add_argument("--json", action="store_true")
-    tg.add_argument("--fresh", action="store_true", help="ask every item again; skip the cache")
     dr = sub.add_parser("drain", help="ask the loose-ends group and write one proposal file each under "
                                       "<home>/drain/pending/ (the one command that writes in the home); "
                                       "also: accept ID | decline ID | defer ID | status")
@@ -2853,15 +2452,10 @@ def main(argv: "list | None" = None) -> int:
     ed.add_argument("file", help="JSONL: id, text, source, age_days, expect_state "
                                  "(closable|ask-operator|park|open), expect_join (WO-NNN or null)")
     ed.add_argument("--home", required=True, help="the .gitos directory or repo root whose open orders are the join candidates")
+    ed.add_argument("--export", metavar="OUT", help="write the questions of the labelled set to OUT for a helper "
+                                                    "(no model call; the title pick is skipped)")
+    ed.add_argument("--answers", metavar="IN", help="score a helper's answers file against the labels")
     ed.add_argument("--json", action="store_true")
-    cd = sub.add_parser("cards", help="suggest a board group per card (picks no option)")
-    cd.add_argument("--items", required=True, help="JSON list of cards: id, title, why, options")
-    cd.add_argument("--home", default=".", help="the .gitos directory or the repo root")
-    cd.add_argument("--json", action="store_true")
-    sc = sub.add_parser("screen", help="the intake listing plus a local model's annotation per proposal")
-    sc.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
-    sc.add_argument("--registry", default=None, help="the federation registry directory")
-    sc.add_argument("--json", action="store_true")
     ln = sub.add_parser("lenses", help="list the active lenses with their domain and when-to-apply (no model call, writes nothing)")
     ln.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
     ln.add_argument("--wo", help="a work-order number")
@@ -2869,15 +2463,6 @@ def main(argv: "list | None" = None) -> int:
     ln.add_argument("--global-dir", help=f"the global lens library (default: ${GLOBAL_LENS_ENV}, "
                                          f"else <skill>/agents)")
     ln.add_argument("--json", action="store_true")
-    bd = sub.add_parser("brain-dupes", help="near-duplicate brain page pairs with a verdict (writes nothing)")
-    bd.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
-    bd.add_argument("--json", action="store_true")
-    sc = sub.add_parser("scan", help="reading order for log files: templates grouped by anomaly family")
-    sc.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
-    sc.add_argument("files", nargs="+", help="log files to scan")
-    sc.add_argument("--max-templates", type=int, default=DEFAULT_MAX_TEMPLATES,
-                    help="model calls to spend on templates (default %(default)s)")
-    sc.add_argument("--json", action="store_true")
     sc = sub.add_parser("scope", help="advisory scope check of a work-order's diff (writes nothing)")
     sc.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
     sc.add_argument("wo", help="a work-order number")
@@ -2893,6 +2478,8 @@ def main(argv: "list | None" = None) -> int:
             return _status(args.json, args.brief)
         if args.cmd == "repo":
             return _repo_cli(args)
+        if args.cmd == "helper":
+            return _helper_cli(args)
         if args.cmd == "migrate":
             found = migrate(args.root, args.write)
             if found:
@@ -2925,20 +2512,12 @@ def main(argv: "list | None" = None) -> int:
                 if args.summary:
                     print(f"skipped lines (not valid JSON): {len(skipped)}")
             return 0
-        if args.cmd == "triage":
-            return _triage_cli(args)
         if args.cmd == "drain":
             return _drain_cli(args)
         if args.cmd == "eval-drain":
             return _eval_drain_cli(args)
-        if args.cmd == "scan":
-            return _scan_cli(args)
-        if args.cmd == "cards":
-            return _cards_cli(args)
-        if args.cmd == "screen":
-            return _screen_cli(args)
-        if args.cmd in ("lenses", "brain-dupes"):
-            return _brain_cli(args)
+        if args.cmd == "lenses":
+            return _lenses_cli(args)
         return _scope_cli(args)
     except Unavailable as e:
         print(f"unavailable: {e}", file=sys.stderr)

@@ -229,7 +229,7 @@ Direct the running orchestrator to:
   `python <SKILL_DIR>/scripts/system_one.py setup --detect` prints a line (then offer
   `system_one.py setup --write` first). With no machine config and no server found, this step does not
   exist: no question and no output. Ask with the harness's question UI: say in one sentence what it does
-  and that the repo's text goes to the configured endpoint; the default is no. Write the answer with
+  (it drains the loose-ends list and nothing else) and that the repo's text goes to the configured endpoint; the default is no. Write the answer with
   `system_one.py repo on|off <ROOT>`. A repo that already has a `system-one.json` is never asked again;
 - **remove retired System One keys** — run `python <SKILL_DIR>/scripts/system_one.py migrate <ROOT> --write`.
   It is the upgrade, so there is no question to ask: it removes the keys the engine no longer reads
