@@ -123,6 +123,14 @@ next log, confirm <X>".]
 ## Revisions (post-landing — the verify→revise loop)
 
 [Shared — *Shared sections* → Revisions.]
+
+## Carried loose ends (only when items were accepted into this order)
+
+[Shared — *Shared sections* → Carried loose ends.]
+
+## History (only once a slice has landed and been trimmed)
+
+[Shared — *Shared sections* → History.]
 ```
 
 ---
@@ -202,6 +210,10 @@ command. Include the home's gates verbatim, e.g.
 ## Revisions (post-landing — the verify→revise loop)
 
 [Shared — *Shared sections* → Revisions.]
+
+## History (only once a slice has landed and been trimmed)
+
+[Shared — *Shared sections* → History.]
 ```
 
 ---
@@ -228,6 +240,34 @@ independent.]
 
 [Related work — point at adjacent work-orders, brain pages, or session notes the implementer should
 also be aware of.]
+
+### Carried loose ends
+
+Written by `system_one.py drain accept ID --work-order NNN --slice NAME` (section `## Carried loose ends`, created
+when missing). One box per item, naming the slice that carries it (`--slice` is required on every accept into an order):
+
+    - [ ] L<n> (slice: <name>) <text>
+    - [x] L<n> (slice: <name>) <text> -> <sha>
+
+A slice is whatever names a unit of the order's work: a Proposed fix scope item, a Revision, or the repo's own
+slice name. The orchestrator closes each box when its slice lands (`-> <sha>`), or moves it: `-> L<n>` (back on the
+list, re-added there), `-> P<n>`, `-> WO-NNN`, `-> rejected: <why>`. An order over 400 lines or 60 KB takes no new
+items. The canary gates a resolved order with an open box (`carried-open`).
+
+### History
+
+An order that has landed slices keeps the finished ones out of the live file. The orchestrator moves a landed
+slice's scope text, implementer notes and adjudication to `<home>/work-orders/history/WO-NNN.md`, appended in
+landing order under a heading naming the slice and the merge sha, and leaves a pointer here:
+
+    ## History
+
+    - <slice> landed <sha>: history/WO-NNN.md#<anchor>
+
+The live order keeps its objective, acceptance, open slices and open carried boxes; the implementer reads it in
+full and the history only where a pointer sends them. A missing history file or anchor is a `dead-link`, a history
+file with no order of its number is `orphan-history`. The history file stays in `history/` when the order moves
+to `resolved/`.
 
 ### Implementer notes
 

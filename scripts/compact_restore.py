@@ -274,6 +274,15 @@ def freshness_lines(root, resume_path, text, cleared=False):
     return lines
 
 
+def background_rows(text):
+    """Data rows of the table under RESUME's `## Serving / running`. -> int (0 for old free text)."""
+    m = re.search(r"^##\s+Serving / running\s*$(.*?)(?=^##\s|^---\s*$|\Z)", text, re.M | re.S)
+    if not m:
+        return 0
+    rows = [l.strip() for l in m.group(1).splitlines() if l.strip().startswith("|")]
+    return len([r for r in rows[2:] if re.search(r"[^|\s-]", r)]) if len(rows) > 2 else 0
+
+
 def build_output(payload):
     """The text to print for a compact payload, or None for no output at all."""
     if not isinstance(payload, dict):
@@ -322,6 +331,10 @@ def build_output(payload):
                     "rotation trigger: checkpoint RESUME.md, tell the operator a fresh window "
                     "is ready, and stop (references/roles/orchestrator.md, Rotation triggers).")
 
+    rows = background_rows(resume_text) if resume_text is not None else 0
+    if rows:
+        tail.append(f"Background: {rows} row(s) in RESUME → Serving / running; check each is still "
+                    "wanted, stop it or re-record it.")
     parts = [marker]
     if resume_text is not None:
         fixed = len(marker) + sum(len(t) for t in tail) + 200

@@ -510,6 +510,8 @@ def main() -> int:
            home / "log_vocabulary.md", root)
     gitkeep(home / "work-orders" / "resolved")
     print("OK   work-orders/resolved/")
+    gitkeep(home / "work-orders" / "history")
+    print("OK   work-orders/history/")
 
     if not diagnostic_only:
         report(write_if_missing(home / "README.md",
@@ -833,7 +835,8 @@ def main() -> int:
                 print("     inception agent's next step (scaffold lays files; it never commits).")
 
     # ---- worktrees are never tracked (WO-077) -----------------------------
-    # Each implementer works in `.claude/worktrees/wo-NNN` (scripts/worktree.py). A path that is
+    # Each implementer works in `<parent>/<repo name>.worktrees/wo-NNN` (scripts/worktree.py); older
+    # worktrees and the harness's own isolation use `.claude/worktrees/`. A path that is
     # not ignored is one `git add -A` away from being recorded as a gitlink, so an EXISTING repo
     # gets the one line, commented, appended when it is missing (idempotent: ignored already ->
     # no write). A repo with no git has nothing to ignore into; a fresh `git init` above has

@@ -175,11 +175,11 @@ gate joins verify-before-commit). Scope is home state only — domain artifacts 
 data, logs) stay the diagnostic role's judgment territory.
 
 **Worktree lifecycle — `scripts/worktree.py`.** Every implementer that edits files works in its own
-worktree: `new NNN` makes `.claude/worktrees/wo-NNN` on branch `wo-NNN` from the current `HEAD`,
-`reap NNN` / `reap --merged` removes a merged, clean one (git's own refusals are the safety; never
-`--force`, `-D` or `unlock`), `status` classes each as in flight / reapable / abandoned / dirty. The
+worktree: `new NNN` makes `<parent>/<repo name>.worktrees/wo-NNN` (outside the repo tree) on branch `wo-NNN` from the current `HEAD`,
+`reap NNN` / `reap --merged` removes a merged, clean one (merged into HEAD, the default branch or a declared integration branch; git's own refusals are the safety; never
+`--force` or `unlock`), `status` classes each as in flight / reapable / abandoned / dirty. The
 canary reports `worktree-reapable` and `worktree-abandoned` leftovers; it never deletes.
-The `loose-ends` category (report-only) flags Parked rows with no trigger, resolved orders whose notes were never adjudicated, and a malformed, oversized or stale loose-ends list. That list (`<home>/loose-ends.md`, created by the first `scripts/loose_ends.py add`) holds small items that came up and were not acted on; "triage the loose ends" drains it, and nothing leaves it without the orchestrator's or the operator's decision.
+The `loose-ends` category (report-only) flags Parked rows with no trigger, resolved orders whose notes were never adjudicated, and a malformed, oversized or stale loose-ends list. That list (`<home>/loose-ends.md`, created by the first `scripts/loose_ends.py add`) is the inbox for small items that came up and were not acted on; "triage the loose ends" drains it, moving each suggested item to the pile (`<home>/drain/pending/`), and nothing leaves the list or the pile without the orchestrator's or the operator's decision. A pending suggestion undecided for 14 days, or more than 20 pending, is `drain-stale`. An item accepted into an order is a box in its `## Carried loose ends` (`drain accept ID --work-order NNN --slice NAME` writes it; a resolved order with an open box is `carried-open`).
 
 **The gate binds on *actionable* findings — category descoping.** The canary encodes the
 engine's own conventions as its defaults, and a healthy repo may legitimately differ. A

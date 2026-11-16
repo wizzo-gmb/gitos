@@ -152,8 +152,8 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    when-to-apply; it asks no model). The choice of model and effort is yours, by the standing rule in
    `references/model-optimization.md`.
    **Every implementer that edits files is dispatched into its own worktree, by default and without
-   being asked:** `python ~/.claude/skills/gitos/scripts/worktree.py new NNN` makes `.claude/worktrees/wo-NNN` on
-   branch `wo-NNN` from the current `HEAD` and prints the path to dispatch into. Your own state edits
+   being asked:** `python ~/.claude/skills/gitos/scripts/worktree.py new NNN` makes `<parent>/<repo name>.worktrees/wo-NNN` (outside
+   the repo tree) on branch `wo-NNN` from the current `HEAD` and prints the path to dispatch into. Your own state edits
    (INDEX, RESUME, brain, work orders) stay on the main checkout, and your cwd never enters a worktree.
    The built-in `isolation: "worktree"` is the alternative only for a repo whose settings set
    `worktree.baseRef: "head"`: its default base is the remote's default branch, which lacks the
@@ -161,6 +161,11 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    overlap surfaces at merge, so plan the merge order up front and resolve append-only conflicts (a
    gate list, a changelog) by keeping both sides. Parallel dispatch into ONE checkout keeps the
    disjoint-files rule.
+   A repo that dispatches its own way declares it in an optional `<home>/worktrees.json` (`root`, `roots`,
+   `branches`, `integration`, `archive`, every key optional): worktrees matching `roots` or `branches` are
+   managed like `wo-NNN` ones (detached checkouts too), work merged into an `integration` branch counts as
+   merged, and `archive` directories are copied to `<home>/worktree-archive/` before a reap. A reap also
+   unlinks any symlink or junction inside the worktree that points outside it, so it never deletes through one.
    → *Dispatch + verify.*
    *Gate:* no edit begins until the plan is approved and the scope bound is stated; **anything
    concurrent in one checkout touches disjoint files.**
@@ -202,6 +207,12 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    landing:** merge the `wo-NNN` branch, verify on the merged result, then run
    `worktree.py reap NNN` *before* step 7 resolves the order, so the canary run that closes resolution
    sees no leftover. Never stage a worktree path.
+   **Trim the order.** Once the slice is adjudicated, move its finished sections (scope text, implementer notes,
+   adjudication) to `<home>/work-orders/history/WO-NNN.md`, appended in landing order under a heading naming the
+   slice and the merge sha, and leave one line under the order's `## History`:
+   `- <slice> landed <sha>: history/WO-NNN.md#<anchor>`. The live order keeps its objective, acceptance, open
+   slices and open carried boxes. By hand, no command; an order the canary calls `work-order-oversized` is trimmed
+   or split. A resolved order moves to `resolved/`; its history file stays in `history/`.
    *Gate:* **nothing is committed before steps 4–5 pass** — no commit of an unverified or
    un-adjudicated landing — and **the staged set matches this work-order's scope.**
 7. **Update INDEX + maintain the brain.** Move the item open→resolved (with sha), and **record that
@@ -377,6 +388,9 @@ When you delegate implementation to agents:
   model entry in the WO; unknown execution settings stay unknown. The policy's SSOT
   is `references/model-optimization.md`; it leaves the scope and acceptance gates intact.
 - Each agent reads its work-order **in full** before coding.
+- **Name the boxes each slice takes.** If the order has a `## Carried loose ends` section, the dispatch brief lists
+  the open boxes (`L<n>`) of the slice being dispatched; they are part of that slice's scope, and the
+  adjudication of the landing ticks or moves each one (`references/work-order-template.md` -> *Carried loose ends*).
 - **State the scope bound at dispatch.** An implementer edits **only what its work-order's
   Proposed fix scope specifies**; treat any out-of-scope footprint in the landing as a
   **defect** (revert it; execute the change yourself from the implementer's *proposed*
@@ -384,6 +398,8 @@ When you delegate implementation to agents:
 - Parallel agents touch **disjoint files** — different sections of one file is not
   safe; pin them to non-overlapping files.
 - When a work-order lists Options, **pin** which one each agent uses.
+- **Background work has a time limit and an end.** Tell each implementer that every background command
+  gets a time limit and a known log, and that it stops what it started before handing back.
 - **Require the notes-back.** Tell each implementer to fill the work-order's **Implementer
   notes** section on completion (deviations / surprises / durable facts / process notes /
   follow-ups). It is the feedback channel, not optional — without it the orchestrator and
@@ -525,6 +541,10 @@ pointer-only; the template is the engine's `assets/RESUME.md.tmpl`, laid by the 
 canary reports a RESUME over 150 lines (`resume-too-long`) and a bullet under a rules heading that
 points at nothing (`resume-rules-section`).
 **Drain the loose ends** at each checkpoint, for the whole list (*Draining the loose ends*).
+**Sweep background work** at each checkpoint and before any `/clear`: watchers and wait loops are
+stopped; a test run or a server is stopped only after reading what it is doing; whatever stays running
+is a row in RESUME's *Serving / running* table. A worker's hand-back is not verified while it names a
+running process that has no row.
 
 **Rotation triggers — four are work-shaped and one is measured by a hook, because those are what you can measure.**
 
@@ -598,8 +618,9 @@ investigation rather than a fix.
 ## Draining the loose ends
 
 `<home>/loose-ends.md` holds the small things that came up and were not acted on. It exists so the
-current order stays on track, and it is only worth having if it is read. Its goal is a list that is empty
-except for items waiting on the operator. An item is one or two sentences; anything that needs evidence,
+current order stays on track, and it is only worth having if it is read. It is the **inbox**: only items not
+yet suggested. The drain moves each suggested item to the **pile** (`<home>/drain/pending/`), and from then
+on the pile is its one home, so the list gets clean. An item is one or two sentences; anything that needs evidence,
 a cause or a fix is a work order, and a session plan is a RESUME entry. Work is never dispatched from the
 list. A repo with no file has an empty list; the first `loose_ends.py add` creates it.
 
@@ -611,26 +632,49 @@ new work; (d) when the operator says "triage the loose ends" or runs `/gitos tri
 loose-ends group (each item's `loose-end-state`, its best join with an open order, the bundles) and writes
 **one file per proposal** under `<home>/drain/pending/<id>.md` (kinds `join`, `new-order`, `ask`, `park`,
 `close`, and `read` for an item the model was unsure about: it is never left out, so read it and decide what it is, then accept it with whichever of `--work-order`, `--parked`, `--reason` fits; the body shows each item in full with its Source, age and the context code gathered: Source order
-titles, paths, open orders sharing them; no model-written prose). A re-run updates the same ids; a proposal
-you declined is not proposed again; a `join` means "related open order: consider adding" (the item is about the same part of the product), and you decide whether it belongs in that order, its next slice, or elsewhere; one whose items left the list is removed. **Read each pending proposal,
+titles, paths, open orders sharing them; no model-written prose). Writing a proposal removes its items from the list in the same run (a crash in between leaves an item in both places, never in neither, and the next run drops the duplicate from the list). A run never deletes a pending proposal; only `accept`, `decline` and `withdraw` do, and a re-run updates the same ids. A `join` means "related open order: consider adding" (the item is about the same part of the product), and you decide whether it belongs in that order, its next slice, or elsewhere. **Read each pending proposal,
 author the orders from them yourself** (the local model only groups, qualifies and passes context on; you
-decide and write every order), then dispose of each: `drain accept ID --work-order NNN` (`--parked P<n>` for a
-park, `--reason R` for a close; it drops the items from the list), `drain decline ID --reason R` (the items
-stay), or `drain defer ID` (nothing changes). Commit `<home>/drain/` with the arrival and the disposition.
+decide and write every order), then dispose of each: `drain accept ID --work-order NNN [--slice NAME]` (every accept into an order needs the slice; `--parked P<n>` for a
+park, `--reason R` for a close; nothing is left to drop, the items already left the list), `drain decline ID
+--reason R --route WO-NNN|P<n>|brain:<page>|closed:<why>` (you routed the items by hand) or `drain decline ID
+--reason R` (the items return to the list as `declined: <reason>`, which the drain never suggests again; decide
+them by hand with `loose_ends.py drop`), `drain withdraw ID` (the items return to the list as `new` and are asked
+again) or `drain defer ID` (nothing changes). Commit `<home>/drain/` with the arrival and the disposition.
 Down, not configured, or off: the helper route (`references/system-one.md` -> *The drain without a local model*): `system_one.py drain <home> --export FILE`, run `system_one.py helper` and dispatch one helper on the model it prints with the brief there (exit 3 or an unavailable model: ask the operator once, with the harness's question UI, to pick from their harness's models and record it with `helper --set`; never guess or retry silently), then `system_one.py drain <home> --answers FILE`, and decide the proposals as above. You never answer the export yourself: if no helper can be dispatched, the drain waits (and down is still never raised to the operator). By hand (`loose_ends.py candidates` and your own reading, asking the same questions of the same table) is for a short list you are already reading.
-Decide each item. Apply. Commit. Report `loose ends: N before -> M after (K waiting on you)`.
+Decide each item. Apply. Commit. Report the line `loose_ends.py status --brief` prints: `loose ends: inbox N · pile M (K for you) · carried C open`.
 
-**Who decides.** You adjudicate and apply, on your own: join an open order (the drain proposes joins into
-any open order; a proposal whose header says `target in progress: <why>` means a worktree exists or the
-notes are started, so decide whether the item waits for the next slice, and never change a running slice's
-scope). For an order not in progress, write the item into that order's `## Proposed fix scope` and its
-verification, so its adjudication checks it, then `loose_ends.py drop L<n> --to WO-NNN`; bundle items into one new order; Park with a named trigger
+**The join test.** An item joins an open order only when all four hold: (a) it is in files the named slice
+already changes; (b) that slice is planned or in flight; (c) it changes neither the slice's scope nor what counts
+as done; (d) the order is under the size limit (400 lines or 60 KB). Code checks (d) and that a slice is named:
+`drain accept ID --work-order NNN --slice NAME` (the slice is required on every accept into an order, a new order's being its first unit of work) refuses an order over the limit and an accept without `--slice`, and
+the drain offers only orders under the limit (an item whose only candidates are over it comes back as a
+`new-order` suggestion, bundled with related items; `drain status` lists those together, so the operator approves
+them in one batch). (a) to (c) are yours: an item that fails any of them is a new order, a Parked row or the list,
+never a join. A slice is whatever names a unit of the order's work: a Proposed fix scope item, a Revision, or the
+repo's own slice name.
+
+**Carried items are boxes.** `accept ... --slice` writes each item into the order's `## Carried loose ends`
+section as `- [ ] L<n> (slice: <name>) <text>`. A box is closed as `- [x] L<n> (slice: <name>) <text> -> <sha>`
+when the slice carrying it lands, or moved: `-> L<n>` (back on the list, re-added there), `-> P<n>`, `-> WO-NNN`,
+`-> rejected: <why>`. Name the boxes each slice takes in its dispatch brief; at adjudication tick or move every
+box of the landed slice (a resolved order with an open box is a `carried-open` finding and gates). The canary
+also reports `carried-stale` (an open box older than 14 days, dated by its accept record) and
+`work-order-oversized` (move landed slices to `history/WO-NNN.md`, or split it).
+
+**Who decides.** You adjudicate and apply, on your own: join an open order by the test above (a proposal whose
+header says `target in progress: <why>` means a worktree exists or the notes are started, so decide whether the
+item waits for the next slice, and never change a running slice's scope), then `drain accept` writes the boxes;
+for an order that is not in progress you may instead write the item into that order's `## Proposed fix scope`
+and its verification, so its adjudication checks it, then `loose_ends.py drop L<n> --to WO-NNN`; bundle items into one new order; Park with a named trigger
 (`drop --to P<n>`); move a lasting fact to the brain (`drop --to brain:<page>`). **The operator
 approves**, in one batch with the harness's question UI and never one by one mid-work: every close
 (`closed:<reason>`), superseded item and fold; anything about money, security or what users see;
-anything you are unsure of. An item that needs the operator's input gets
-`loose_ends.py wait L<n> --question <one sentence>` and stays on the list; at each checkpoint the waiting
-questions are asked again in one batch. Nothing is closed on silence, and nothing is done because it was
+anything you are unsure of. **An ask is a pile state**: an `ask` proposal stays in `drain/pending/` until the
+operator answers. You raise it from the pile yourself, at each checkpoint, in one batch (every pending `ask` is the
+`K for you` of the status line), then accept it with the routing the answer gave (`--work-order NNN`, `--parked
+P<n>` or `--reason R`) or decline it. There is no `waiting` state and no `wait` command; `system_one.py migrate
+--write` turned the old rows into asks. The canary reports `drain-stale` when a pending proposal has been undecided
+longer than 14 days or more than 20 are pending: decide them before new work. Nothing is closed on silence, and nothing is done because it was
 suggested: a System One outcome is a suggestion, and `drop` is always your own act.
 
 ## Out of scope

@@ -196,9 +196,12 @@ it never goes stale and nobody has to read it row by row.
 It turns every loose end into exactly one proposal: join a related open order, a new order for a group of
 related items, park it until an event, ask you, close it, or "read it" when the model is unsure. Each proposal
 carries the items' own text and context gathered by code (the orders they came from, the files they mention,
-open orders touching the same files). The orchestrator reads the proposals, writes the orders itself, and
-accepts, declines with a reason, or defers each one. A declined group is not proposed again. Nothing leaves the
-list without that decision, and closes wait for your confirmation.
+open orders touching the same files). A proposed item moves off the list into the drain pile, so the list only
+ever holds what has not been looked at yet. The orchestrator decides each proposal from the pile: it writes the
+order and accepts, declines with a reason, or defers. Questions for you are raised from the pile, and closes wait
+for your confirmation. An item accepted into an order becomes a checkbox there (`- [ ] L<n>`), named to the slice
+of work that carries it, and the order cannot be resolved while a box is open. Items join only small orders; a
+large one gets a new, single-theme order instead.
 
 System One only does work the main model is not already doing. Decisions made while reading an order, such as
 routing implementer notes, what goes into the brain, which lenses apply, or reviewing a diff, stay with the

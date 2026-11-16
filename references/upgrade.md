@@ -231,11 +231,16 @@ Direct the running orchestrator to:
   exist: no question and no output. Ask with the harness's question UI: say in one sentence what it does
   (it drains the loose-ends list and nothing else) and that the repo's text goes to the configured endpoint; the default is no. Write the answer with
   `system_one.py repo on|off <ROOT>`. A repo that already has a `system-one.json` is never asked again;
-- **remove retired System One keys** — run `python <SKILL_DIR>/scripts/system_one.py migrate <ROOT> --write`.
-  It is the upgrade, so there is no question to ask: it removes the keys the engine no longer reads
+- **migrate System One data** — run `python <SKILL_DIR>/scripts/system_one.py migrate <ROOT> --write`.
+  It is the upgrade, so there is no question to ask. It removes the keys the engine no longer reads
   (`RETIRED_KEYS` in `system_one.py`) from the machine config and from the repo's `system-one.json`, keeping
-  every other key, and prints nothing when there is nothing to remove. Report what it removed in one line;
-  with no output, say nothing. Until it has run, System One reports itself down with the retired keys named;
+  every other key; and it turns each loose end whose State is `waiting: user — <question>` into an `ask`
+  suggestion in `<home>/drain/pending/` that carries the question, removing the row from `loose-ends.md` (the
+  list's states are now `new` and `declined: <reason>`; an `ask` is raised from the pile). It also renames a hand-made carried-loose-ends section of an open
+  order to `## Carried loose ends`, but only where every line of it already parses as a box
+  (`- [ ] L<n> (slice: <name>) <text>`); any other line is printed by file and line, left alone, and is the
+  orchestrator's to rewrite as a box (nothing is guessed). It prints nothing when
+  there is nothing to do. Report what it did in one line; with no output, say nothing. Until it has run, System One reports itself down with the retired keys named;
 - **offer federation — the tool computes the ask; you ask it.** Federation lets independent gitos
   instances **on one machine** reach each other, so work that belongs to a sibling repo can go
   there instead of crossing the gap by copy-paste. Run:
@@ -324,7 +329,7 @@ step is the fix. Claude Code only, and `disableAllHooks` switches it off.
 Run `python <SKILL_DIR>/scripts/worktree.py status <repo-root>` (read-only). Reap the reapable
 leftovers it lists with `reap --merged` (git's own refusals stay the safety: nothing unmerged or
 dirty is removed), and raise any abandoned one to the operator, who merges it or removes it by hand.
-Scaffold has already made sure `.claude/worktrees/` is in `.gitignore`.
+Scaffold has already made sure `.claude/worktrees/` is in `.gitignore` (new worktrees live outside the repo tree; older ones under that path are still found and reaped).
 
 **4k. Parked section.**
 If `<home>/INDEX.md` has no `## Parked` heading, run `python <SKILL_DIR>/scripts/scaffold.py <root>
@@ -349,6 +354,11 @@ and only after the operator answered). Then run the drain (`references/roles/orc
 the loose ends*). Sections of implementer notes inside a legacy register are not rows: say so, and
 adjudicate them by hand in the same pass (facts to the brain, follow-ups with `loose_ends.py add`).
 
+**4m. History folder.**
+Scaffold lays `<home>/work-orders/history/` (with a `.gitkeep`, like `resolved/`) where landed slices of a long
+order are moved; run `python <SKILL_DIR>/scripts/scaffold.py <root> --git skip` if it is missing. No order is
+rewritten: trimming is the orchestrator's, as slices land.
+
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
 `<home>/brain/.brainmeta.json` (`engine_version` field) for a repo with a brain, else
@@ -362,8 +372,8 @@ from→to versions, which directives were adopted, and any pointers re-pointed. 
 **7. Report.**
 Show the `git diff` of what changed (the re-pointed pointers, the stamp, the ADR, any
 `<home>/tools/` copy that was newly copied **or refreshed** — name each refreshed tool and
-say the prior bytes are in git). The folder layout is unchanged — confirm that explicitly in
-the report.
+say the prior bytes are in git). The folder layout is unchanged apart from the empty
+`work-orders/history/` — confirm that explicitly in the report.
 
 ## What it never does
 

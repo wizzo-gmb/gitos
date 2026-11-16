@@ -11,19 +11,25 @@ resume file. Work is never dispatched from the list (an item is first dropped `-
 
 `ID` is `L<n>`, never reused (the next id lives in `<!-- next: L<n> -->` under the table).
 `Source` is `WO-NNN`, `P<n>`, `chat`, `proposal:<id>` or `import:<old id>`. `State` is `new` or
-`waiting: user — <the question>`. An item that is routed or closed is REMOVED; git keeps the history.
+`declined: <reason>` (a suggestion the orchestrator declined without routing it; the drain never suggests
+it again and the orchestrator decides it by hand with `drop`). An item that is routed or closed is
+REMOVED; git keeps the history.
+
+The list is the inbox: only items not yet suggested. When the drain suggests an item it writes the pile file
+(`<home>/drain/pending/<id>.md`) and removes the item from the list in the same run; from then on the pile is
+its one home, until `accept`, `decline` or `withdraw` (`system_one.py drain ...`). An ask for the operator is a
+pile state too: the orchestrator raises it from the pile.
 
     loose_ends.py add        [--root R] --source S --item TEXT
-    loose_ends.py wait       [--root R] L<n> --question Q
     loose_ends.py drop       [--root R] L<n> --to WO-NNN | P<n> | brain:<page> | closed:<reason>
     loose_ends.py list       [--root R] [--json]
-    loose_ends.py status     [--brief] [ROOT]
+    loose_ends.py status     [--brief] [ROOT]     (inbox, pile, and the boxes carried in open orders)
     loose_ends.py candidates [--root R] [--json]     (code only, no model)
     loose_ends.py import     [--root R] FILE
     loose_ends.py legacy     pending | decline FILE [--root R] [--json]
 
 Only the orchestrator writes the list. Every write is atomic and keeps every other row and line
-byte for byte. No file means an empty list (nothing is written by wait, drop, list, status, candidates);
+byte for byte. No file means an empty list (nothing is written by drop, list, status, candidates);
 `add` (and `import`, `legacy decline`) lays the file from the template on first use. A legacy register is
 asked about once: the answer is a `<!-- legacy: <path> imported|declined -->` line in the list header.
 """
@@ -58,7 +64,7 @@ BM25_K1, BM25_B = 1.2, 0.75       # the word part of the join score
 PICK_OPTIONS = 26                 # open orders offered to the title pick (the best by BM25)
 PICK_TOP = 2                      # orders the pick adds to an item's candidates
 JOIN_MIN_COVER = 0.0              # share of the item's words an order must hold when nothing is shared; none
-WAIT_RE = re.compile(r"waiting:\s*user\s*(?:—|–|--|-)\s*(\S.*)")
+DECLINED_RE = re.compile(r"declined:\s*(\S.*)")
 DEST_RE = re.compile(r"(?:WO-(\d{3,})|P(\d+)|brain:(\S.*)|closed:(\S.*))")
 DONE_CELL_RE = re.compile(r"^[\s*_`~>\-]*(?:done|fixed|closed|merged|superseded|resolved)\b", re.IGNORECASE)
 UNESC_PIPE = re.compile(r"(?<!\\)\|")
@@ -276,27 +282,6 @@ def _find(p: dict, lid: str) -> dict:
     raise LooseEndsError(f"no loose end {lid}")
 
 
-def wait(home, lid: str, question: str) -> bool:
-    q = " ".join(str(question).split())
-    if not q:
-        raise LooseEndsError("--question is empty: say what the operator has to answer")
-    if not list_path(home).is_file():
-        return False                                   # no file is an empty list: nothing to do
-    p = parse(_text_or_template(home))
-    r = _find(p, lid)
-    lines = list(p["lines"])
-    ln = lines[r["line"]]
-    body = ln.rstrip("\r\n")
-    tail = ln[len(body):]
-    pieces = UNESC_PIPE.split(body)
-    if len(pieces) < 6:
-        raise LooseEndsError(f"{lid} is not a five-column row: fix it first")
-    pieces[5] = f" waiting: user — {_esc(q)} "
-    lines[r["line"]] = "|".join(pieces) + tail
-    _write(home, "".join(lines))
-    return True
-
-
 def _wo_open(home: Path, nnn: str) -> bool:
     by, _ = _canary()._wo_files(Path(home) / "work-orders")
     return bool(by.get(nnn))
@@ -311,7 +296,8 @@ def _parked_exists(home: Path, pid: str) -> bool:
     return any(re.match(rf"^\s*\|\s*{re.escape(pid)}\s*\|", ln) for ln in block)
 
 
-def drop(home, lid: str, dest: str) -> "str | None":
+def check_dest(home, dest: str) -> str:
+    """The destination `drop` and a routed decline accept, normalised; a LooseEndsError when it is not one."""
     d = " ".join(str(dest).split())
     m = DEST_RE.fullmatch(d)
     if not m:
@@ -326,6 +312,11 @@ def drop(home, lid: str, dest: str) -> "str | None":
         raise LooseEndsError("closed: needs a reason of at least a few words (what makes it done or moot)")
     if brain and not brain.strip():
         raise LooseEndsError("brain: needs a page name")
+    return d
+
+
+def drop(home, lid: str, dest: str) -> "str | None":
+    d = check_dest(home, dest)
     if not list_path(home).is_file():
         return None                                    # no file is an empty list: nothing to drop
     p = parse(_text_or_template(home))
@@ -334,6 +325,68 @@ def drop(home, lid: str, dest: str) -> "str | None":
     del lines[r["line"]]
     _write(home, "".join(lines))
     return f"{r['id']} -> {d}"
+
+
+def remove_rows(home, ids) -> list:
+    """Remove the rows with these ids in one atomic write (no destination: the items live on in the pile).
+    -> the ids removed. No file, or none of them on the list, writes nothing."""
+    want = {i.strip() for i in ids}
+    if not list_path(home).is_file() or not want:
+        return []
+    p = parse(_text_or_template(home))
+    gone = [r for r in p["rows"] if r["id"] in want]
+    if not gone:
+        return []
+    lines = [ln for k, ln in enumerate(p["lines"]) if k not in {r["line"] for r in gone}]
+    _write(home, "".join(lines))
+    return [r["id"] for r in gone]
+
+
+def restore_rows(home, rows: list, state: str = STATE_NEW) -> list:
+    """Put rows back on the list with their own id, Added date, Source and text; State `state`. `rows` are
+    (id, added, source, item); an empty Added is today, an id already on the list is left as it is.
+    -> the ids put back. Ids are never reused, so the next-id comment only ever moves up."""
+    text = _text_or_template(home)
+    p = parse(text)
+    if p["table"] is None:
+        raise LooseEndsError(f"{NAME} has no `| ID | Added | Source | Item | State |` table: fix it first")
+    have = {r["id"] for r in p["rows"]}
+    todo = [r for r in rows if r[0] not in have]
+    if not todo:
+        return []
+    lines, eol = list(p["lines"]), _eol(text)
+    add = [f"| {lid} | {added or today().isoformat()} | {src} | {_esc(item)} | {_esc(state)} |{eol}"
+           for lid, added, src, item in todo]
+    at = p["end"]
+    if at > 0 and not lines[at - 1].endswith(("\n", "\r")):
+        lines[at - 1] += eol
+    lines[at:at] = add
+    nid = max([_next_id(p)] + [int(r[0][1:]) + 1 for r in todo if ID_RE.fullmatch(r[0])])
+    comment = f"<!-- next: L{nid} -->"
+    if p["next_line"] is not None:
+        k = p["next_line"] + len(add)
+        lines[k] = NEXT_RE.sub(comment, lines[k], count=1)
+    else:
+        k = at + len(add)
+        lines[k:k] = [eol, comment + eol]
+    _write(home, "".join(lines))
+    return [r[0] for r in todo]
+
+
+def pile_counts(home) -> tuple:
+    """(suggestions pending in the pile, those that wait for the operator = pending `ask`)."""
+    d = Path(home) / "drain" / "pending"
+    n = k = 0
+    for f in sorted(d.glob("*.md")) if d.is_dir() else []:
+        try:
+            text = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        m = re.search(r"(?m)^- kind: (\S+)\s*$", text)
+        if m:
+            n += 1
+            k += m.group(1) == "ask"
+    return n, k
 
 
 def _fmt(r: dict, now=None) -> str:
@@ -348,24 +401,27 @@ def rows_of(home) -> list:
     return [] if p is None else p["rows"]
 
 
-def waiting_question(state: str) -> "str | None":
-    m = WAIT_RE.fullmatch(state.strip())
-    return m.group(1).strip() if m else None
+def carried_open(home) -> int:
+    """Open boxes (`- [ ] L<n> (slice: ..) ..`) in the open work orders."""
+    c = _canary()
+    d = Path(home) / "work-orders"
+    n = 0
+    for names in c._wo_files(d)[0].values():
+        try:
+            n += len(c.open_boxes((d / names[0]).read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError):
+            continue
+    return n
 
 
 def brief(home, now=None) -> "str | None":
-    """One line, or None when there is no file."""
+    """One line, or None when there is no list file, no pile and no carried box."""
     p = load(home)
-    if p is None:
+    n, k = pile_counts(home)
+    carried = carried_open(home)
+    if p is None and not n and not carried:
         return None
-    rows = p["rows"]
-    if not rows:
-        return "loose ends: empty"
-    waiting = sum(1 for r in rows if waiting_question(r["state"]))
-    new = len(rows) - waiting
-    ages = [a for a in (age_days(r["added"], now) for r in rows) if a is not None]
-    old = f" (oldest {max(ages)}d)" if ages else ""
-    return f"loose ends: {new} new, {waiting} waiting on you{old}"
+    return f"loose ends: inbox {len(p['rows']) if p else 0} · pile {n} ({k} for you) · carried {carried} open"
 
 
 # ------------------------------------------------------------------ candidates (code only, no model)
@@ -402,7 +458,7 @@ def _open_orders(home: Path) -> list:
         lead = " ".join(scope) if any(x.strip() for x in scope) else body
         out.append({"nnn": nnn, "ref": f"WO-{nnn}", "file": names[0], "title": title, "body": body,
                     "text": " ".join((title + ". " + (sev + ". " if sev else "") + lead).split())[:1200],
-                    "has_notes": has_notes})
+                    "has_notes": has_notes, "over": c.wo_oversize(text)})
     return out
 
 
@@ -472,7 +528,8 @@ def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = 
     An order is in progress ("dispatched") when a worktree exists for it or its Implementer notes have
     content; that is information on the order and on each pair, never a filter.
     -> {"join": [{item, wo, shared, score, picked, dispatched, wo_title, wo_text, item_text}], "orders":
-    [every open order, each with "dispatched": why | None]}."""
+    [every open order, each with "dispatched": why | None and "over": why the order is over the size limit | None]}.
+    An order over the size limit (`canary.wo_oversize`) is never offered as a candidate."""
     sm = sm or _system_one()
     home = Path(home)
     items = list(dict.fromkeys((ref, text) for ref, text in items))
@@ -480,7 +537,7 @@ def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = 
     wts = _worktree_nnns(home)
     for o in orders:
         o["dispatched"] = ("worktree" if o["nnn"] in wts else "notes started" if o["has_notes"] else None)
-    live = orders
+    live = [o for o in orders if not o["over"]]          # an order over the size limit takes no new items
     pool = [(ref, text) for ref, text in items] + [(o["ref"], o["body"] or o["text"]) for o in live]
     sig, count = _signal_table(pool, sm)
     docs = [_tokens(o["title"], sm) + _tokens(o["body"] or o["text"], sm) for o in live]
@@ -701,15 +758,12 @@ def main(argv=None) -> int:
     s = cmd("add", "append a new item; prints its id")
     s.add_argument("--source", required=True)
     s.add_argument("--item", required=True)
-    s = cmd("wait", "mark an item as waiting on the operator, with the question")
-    s.add_argument("id")
-    s.add_argument("--question", required=True)
     s = cmd("drop", "remove an item that was routed or closed")
     s.add_argument("id")
     s.add_argument("--to", required=True, help="WO-NNN | P<n> | brain:<page> | closed:<reason>")
     s = cmd("list", "print the list")
     s.add_argument("--json", action="store_true")
-    s = cmd("status", "one line: counts and the oldest age")
+    s = cmd("status", "one line: the inbox, the pile, and what waits for you")
     s.add_argument("--brief", action="store_true")
     s.add_argument("root_pos", nargs="?", default=None)
     s = cmd("candidates", "open work orders each new item could join, and items that could be bundled")
@@ -725,16 +779,13 @@ def main(argv=None) -> int:
     try:
         if a.cmd == "add":
             print(add(home, a.source, a.item))
-        elif a.cmd == "wait":
-            print(f"{a.id} waiting on you" if wait(home, a.id, a.question)
-                  else "loose ends: empty (no list file), nothing to do")
         elif a.cmd == "drop":
             print(drop(home, a.id, a.to) or "loose ends: empty (no list file), nothing to do")
         elif a.cmd == "list":
             rows = rows_of(home)
             if a.json:
                 print(json.dumps([{**{k: v for k, v in r.items() if k not in ("line", "ncells")},
-                                   "age_days": age_days(r["added"]), "question": waiting_question(r["state"])}
+                                   "age_days": age_days(r["added"])}
                                   for r in rows], indent=2, ensure_ascii=False))
             else:
                 print("\n".join(_fmt(r) for r in rows) if rows else "loose ends: empty")

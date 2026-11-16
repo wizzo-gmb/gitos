@@ -156,7 +156,7 @@ best 26 by BM25 when there are more), asked once per item and again with the opt
 averaged (a choice leans to the first option); its top two orders join the candidates, unique. There is **no minimum
 score**, then `loose-end-join` (the noul) decides, up to 60 pairs a run, taken best first across the items, each pair
 once; `loose_ends.py join_candidates(home,
-[(ref, text)])` serves any item text, on the list or not, to `drain` and `eval-drain`. An item waiting on the operator is
+[(ref, text)])` serves any item text, on the list or not, to `drain` and `eval-drain`. A `declined:` row is
 asked nothing. Bundle pairs are joined by code into connected groups, and code builds **one suggested next step per
 item**: `close (confirm)`, `ask the operator`, `park (trigger: ...)` come from the state; otherwise `related open order:
 consider adding WO-NNN` (kind `join`) beats `bundle with L<a>, L<b> -> new order`, which beats `open` alone (`read it`).
@@ -169,16 +169,30 @@ shape of the federation intake: the id is the first 12 hex characters of a sha25
 item ids and (for a join) the target order, so a re-run updates the same file (and leaves it alone when the body is
 unchanged). Kinds: `join` (items to one open order), `new-order` (a bundle group, or one open item with no join),
 `read` (an unsure item), `park` (with the trigger words found in the item), `ask` (the item as the question), `close` (confirm). An item the model
-could not settle (`escalate`) becomes its own `read` proposal (one item, with the answers that were unsure), so it never vanishes; `accept` takes the same `--work-order` / `--parked` / `--reason` forms once the orchestrator has decided what it is. Each file has a header (id, kind, items, target, created, updated, model)
+could not settle (`escalate`) becomes its own `read` proposal (one item, with the answers that were unsure), so it never vanishes; `accept` takes the same `--work-order NNN --slice NAME` / `--parked` / `--reason` forms once the orchestrator has decided what it is. Each file has a header (id, kind, items, target, created, updated, model)
 and the items in full with Source and age, plus context gathered by code: the Source orders and their titles, paths and
 backticked names found, open orders that share those paths, the oldest item's age. No sentence is model-written. A
-fingerprint declined before (`drain/declined/<id>.md`) is not proposed again; a pending file the run no longer produces
-(its items left the list, or the answers regrouped them) is removed. A join proposal means "related to this open order": the orchestrator decides whether the items belong in that order, its next slice, or elsewhere. A join proposal whose target is in progress (a worktree exists, or its Implementer notes are started) says so in its header and body: `target in progress: <why>`; it is the same kind, and the orchestrator decides whether the item waits for the next slice, without changing a running slice's scope. `drain accept ID --work-order NNN [ROOT]` refuses
+fingerprint declined before (`drain/declined/<id>.md`) is not proposed again.
+
+**The pile is the one home of a suggested item.** A run writes the pile file first and only then removes the
+proposal's items from `loose-ends.md`; a crash between the two leaves an item in both places, never in neither,
+and the next run drops from the list every `new` row that a pending file carries (and asks nothing of it). The
+list holds only items not yet suggested. A run never deletes a pending file: only `accept`, `decline` and
+`withdraw` do. Each file also records every item's Added date, so an item that goes back on the list keeps its id,
+age and Source. A join proposal means "related to this open order": the orchestrator decides whether the items belong in that order, its next slice, or elsewhere. A join proposal whose target is in progress (a worktree exists, or its Implementer notes are started) says so in its header and body: `target in progress: <why>`; it is the same kind, and the orchestrator decides whether the item waits for the next slice, without changing a running slice's scope. `drain accept ID --work-order NNN --slice NAME [ROOT]` (every accept into an order names the slice that carries the items, and writes them into the order as `## Carried loose ends` boxes; an order over 400 lines or 60 KB is refused) refuses
 unless `work-orders/` holds an open WO-NNN (a resolved order, or a join whose target is resolved, is refused
-with one line before anything changes), drops the items still on the list with `loose_ends.py drop --to WO-NNN`, and
-moves the file to `drain/accepted/` with `accepted: WO-NNN, <date>` (a `park` takes `--parked P<n>`, a `close` takes
-`--reason`, an `ask` only moves). `drain decline ID --reason R` refuses without a reason, moves the file to
-`drain/declined/` and leaves the items. `drain defer ID` changes nothing. `drain status [ROOT]` prints
+with one line before anything changes) and moves the file to `drain/accepted/` with `accepted: WO-NNN, <date>`
+(a `park` takes `--parked P<n>`, a `close` takes `--reason`; a `read` and an `ask` take any one of the three, and run
+the same path as the kind that form names, whichever it is). Nothing is left to drop from the list. `drain decline
+ID --reason R` refuses without a reason and moves the file to `drain/declined/`: with `--route
+WO-NNN|P<n>|brain:<page>|closed:<why>` (checked like `loose_ends.py drop`) the orchestrator routed the items by hand;
+without it the items go back on the list with State `declined: <reason>`, which the drain never suggests again (the
+orchestrator decides them by hand with `loose_ends.py drop`). `drain withdraw ID` puts the items back on the list as
+`new` and removes the file, so the next drain asks them again. `drain defer ID` changes nothing. An `ask` stays in
+`pending/` until the operator answers; the orchestrator raises it from the pile, then accepts it with the routing the
+answer gave or declines it. There is no `waiting: user` state and no `loose_ends.py wait`: `system_one.py migrate
+--write` (run by `/gitos upgrade`) turns each old `waiting: user — Q` row into an `ask` proposal that carries Q and
+removes the row. `drain status [ROOT]` prints
 `drain: N pending (J join, B new-order, Q ask, P park, C close, R read)`, or nothing with no pending folder. Bodies are
 shown in full: they are built from the repo's own list and code, so none of the federation intake's foreign-text
 handling applies. The orchestrator reports the status line at first action and authors every order itself.
@@ -195,7 +209,7 @@ and recall (an item's join is its first `join` pair). It writes nothing in the h
 When System One is not configured, is off for the repo, or is down, the same drain runs on a helper's answers, so a
 repo with no local model gets the same saving. Code does everything but the reading: it builds the items and the
 candidate pairs, writes the questions to a file, validates the answers, applies each use's table and writes the
-proposals through the same path as the server route (same kinds, ids, decline memory, pending-file cleanup and
+proposals through the same path as the server route (same kinds, ids, decline memory, the pile and
 `drain status`). **Nothing here calls a model or handles a key**: the helper is dispatched by the harness.
 
 **Route.** System One on and up: `system_one.py drain <home>` (the server route). Otherwise: export, run `system_one.py helper [ROOT]`

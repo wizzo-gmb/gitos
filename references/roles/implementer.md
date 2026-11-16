@@ -28,7 +28,8 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
 
 ## Lifecycle
 
-1. **Read the work-order in full** before touching anything — especially its **Proposed fix
+1. **Read the live work-order in full** (and `work-orders/history/WO-NNN.md` only where its `## History` points
+   you) before touching anything — especially its **Proposed fix
    scope** (your contract) and any pinned Option. **If the WO has open `## Revisions`** (post-landing
    operator changes the orchestrator recorded), *those* are your scope for this round — handle them and
    write the result under the revision; otherwise the Proposed fix scope is your scope.
@@ -38,6 +39,9 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    work-order's Proposed fix scope.
 2. **Edit only what the Proposed fix scope names.** Different sections of one named file is fine;
    files the work-order did not name are not — even an "obvious" adjacent fix.
+   **A box your slice carries is part of your scope.** If the order has a `## Carried loose ends` section, the open
+   boxes naming your slice (`- [ ] L<n> (slice: <yours>) ...`) are work you land with it; you do not tick them
+   (the orchestrator does at adjudication), but you say in the notes which you closed and which you did not.
 3. **Fill the work-order's Implementer notes** on completion — deviations, surprises, durable
    facts, process notes, follow-ups. This is your only write-back channel; "nothing notable" is a
    valid answer. Write them **under those five labels** (they help the orchestrator read them), and
@@ -47,7 +51,11 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    model/outcome entry: observed settings or explicit unknown, revisions/escalation,
    and a material reason. Do not infer execution from the requested model, write
    routing memory, or add a mandatory lesson. See `references/model-optimization.md`.
-4. **Return.** Your report is a *claim*; the orchestrator trust-but-verifies the diff and
+4. **End your background work, then return.** Every background command gets a time limit and
+   writes its log to a known place. Before returning, stop every process you started. Anything
+   deliberately left running is named in *Process notes* with its pid or marker, its log and how to
+   stop it.
+5. **Return.** Your report is a *claim*; the orchestrator trust-but-verifies the diff and
    adjudicates your notes (ACCEPT / REJECT). You do not move the work-order, update the INDEX,
    bump VERSION/CHANGELOG, or touch the brain.
 

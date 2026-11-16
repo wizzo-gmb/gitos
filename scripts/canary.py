@@ -20,7 +20,8 @@ cover:
   - live session resume     (<home>/RESUME.md: sitting behind the durable state it points at, and
                              — the one worth more than freshness — holding a STANDING RULE
                              instead of a pointer to one, which the next checkpoint would destroy)
-  - lingering worktrees     (a merged, clean `wo-NNN` / `worktree-*` worktree or branch still
+  - lingering worktrees     (a merged, clean `wo-NNN` / `worktree-*` / declared (`worktrees.json`)
+                             worktree or branch still
                              present = `worktree-reapable`; unmerged work whose work order is
                              resolved or missing = `worktree-abandoned`. Classified by
                              worktree.py; the canary never deletes anything)
@@ -820,6 +821,53 @@ def check_lens_layer(layer_dir: Path, layer: str) -> list[dict]:
             items.append({"kind": "applies-to-scalar", "layer": layer, "file": f.name,
                           "finding": f"{layer} agents/{f.name}: applies-to '{at}' is scalar -> "
                                      f"use list form [{at}] (or 'any')"})
+    return items
+
+
+HISTORY_DIR = "work-orders/history"
+HISTORY_PTR_RE = re.compile(r"history/(WO-\d{3}\.md)(?:#([A-Za-z0-9_-]+))?")
+
+
+def _heading_slug(h: str) -> str:
+    """The anchor a markdown heading gets: lower-cased, punctuation dropped, spaces to hyphens."""
+    return re.sub(r"\s", "-", re.sub(r"[^\w\s-]", "", h.strip().lower()))
+
+
+def check_history(home: Path) -> list[dict]:
+    """The `## History` pointers of every order (open and resolved) must reach a history file and its anchor
+    (`dead-link`), and every file in `work-orders/history/` must have an order of its number (`orphan-history`)."""
+    items: list[dict] = []
+    hdir = home / HISTORY_DIR
+    have: set = set()
+    for sub in ("work-orders", "work-orders/resolved"):
+        d = home / sub
+        for nnn, names in _wo_files(d)[0].items():
+            have.add(nnn)
+            lines = (_read(d / names[0]) or "").splitlines()
+            h = next((i for i, ln in enumerate(lines) if ln.strip() == "## History"), None)
+            if h is None:
+                continue
+            end = next((i for i in range(h + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+            for ln in lines[h + 1:end]:
+                for m in HISTORY_PTR_RE.finditer(re.sub(r"`[^`]*`", "", ln)):
+                    rel = f"{sub}/{names[0]}"
+                    f = hdir / m.group(1)
+                    if not f.is_file():
+                        items.append({"kind": "dead-link", "file": rel, "link": f"history/{m.group(1)}",
+                                      "finding": f"{rel} -> history/{m.group(1)} does not exist "
+                                                 "-> restore the history file or fix the pointer"})
+                    elif m.group(2) and m.group(2) not in {_heading_slug(x.lstrip("#")) for x in
+                                                           (_read(f) or "").splitlines() if x.startswith("#")}:
+                        items.append({"kind": "dead-link", "file": rel, "link": f"history/{m.group(1)}#{m.group(2)}",
+                                      "finding": f"{rel} -> history/{m.group(1)}#{m.group(2)}: no such heading "
+                                                 "-> fix the anchor or the history heading"})
+    if hdir.is_dir():
+        for f in sorted(hdir.glob("*.md")):
+            m = re.fullmatch(r"WO-(\d{3})\.md", f.name)
+            if not m or m.group(1) not in have:
+                items.append({"kind": "orphan-history", "file": f"{HISTORY_DIR}/{f.name}",
+                              "finding": f"{HISTORY_DIR}/{f.name} has no work-order of that number "
+                                         "-> restore the order or move the file out"})
     return items
 
 
@@ -1891,7 +1939,10 @@ LOOSE_STALE_COUNT = 20               # more `new` items than this is stale
 LOOSE_HEADER = ["id", "added", "source", "item", "state"]
 LOOSE_ID_RE = re.compile(r"L\d+")
 LOOSE_NEXT_RE = re.compile(r"<!--\s*next:\s*L\d+\s*-->")
-LOOSE_WAIT_RE = re.compile(r"waiting:\s*user\s*(?:—|–|--|-)\s*(\S.*)")
+LOOSE_DECLINED_RE = re.compile(r"declined:\s*\S.*")
+LOOSE_PILE_DIR = ("drain", "pending")  # the pile: one file per suggestion, each carries `- created: <iso>`
+LOOSE_PILE_CREATED_RE = re.compile(r"(?m)^- created: (\d{4}-\d\d-\d\d)")
+LOOSE_PILE_NAME_RE = re.compile(r"[0-9a-f]{12}\.md")
 _LOOSE_PIPE = re.compile(r"(?<!\\)\|")
 
 
@@ -1924,25 +1975,37 @@ def parse_loose_list(text: str) -> dict:
     return out
 
 
-def loose_list_waiting(home: Path, today: "date | None" = None) -> "tuple[int, int] | None":
-    """(waiting-on-the-operator count, age in days of the oldest of them), or None when there are none."""
-    text = _read(home / LOOSE_LIST_NAME)
-    if text is None:
-        return None
+def check_drain_pile(home: Path, today: "date | None" = None) -> list[dict]:
+    """`drain-stale` when a pending suggestion in `<home>/drain/pending/` has been undecided longer than
+    LOOSE_STALE_DAYS, or more than LOOSE_STALE_COUNT are pending. One finding for the pile."""
+    d = home.joinpath(*LOOSE_PILE_DIR)
+    if not d.is_dir():
+        return []
     today = today or date.today()
-    ages = []
-    for r in parse_loose_list(text)["rows"]:
-        if LOOSE_WAIT_RE.fullmatch(r[4]):
+    ages: list[tuple[int, str]] = []
+    n = 0
+    for f in sorted(d.glob("*.md")):
+        if not LOOSE_PILE_NAME_RE.fullmatch(f.name):
+            continue
+        n += 1
+        m = LOOSE_PILE_CREATED_RE.search(_read(f) or "")
+        if m:
             try:
-                ages.append(max(0, (today - date.fromisoformat(r[1])).days))
+                ages.append((max(0, (today - date.fromisoformat(m.group(1))).days), f.stem))
             except ValueError:
-                ages.append(0)
-    return (len(ages), max(ages)) if ages else None
+                pass
+    old = max(ages) if ages else None
+    if (old is not None and old[0] > LOOSE_STALE_DAYS) or n > LOOSE_STALE_COUNT:
+        oldest = f", oldest {old[1]} at {old[0]} days" if old else ""
+        return [{"kind": "drain-stale",
+                 "finding": f"{n} pending drain suggestion(s){oldest} (limits: {LOOSE_STALE_DAYS} days, "
+                            f"{LOOSE_STALE_COUNT} suggestions) -> decide them: `system_one.py drain accept | "
+                            "decline | withdraw ID`; an ask is raised to the operator from the pile"}]
+    return []
 
 
 def check_loose_list(home: Path, today: "date | None" = None) -> list[dict]:
-    """Findings for `<home>/loose-ends.md` (nothing when the file does not exist). A `waiting: user`
-    item is never a finding: the report prints one info line for those."""
+    """Findings for `<home>/loose-ends.md` (nothing when the file does not exist)."""
     text = _read(home / LOOSE_LIST_NAME)
     if text is None:
         return []
@@ -1973,11 +2036,12 @@ def check_loose_list(home: Path, today: "date | None" = None) -> list[dict]:
             age = None
             items.append({"kind": "loose-ends-malformed", "id": name,
                           "finding": f"loose end {name} has no valid Added date (want YYYY-MM-DD) -> fix the row"})
-        if state != "new" and not LOOSE_WAIT_RE.fullmatch(state):
+        if state != "new" and not LOOSE_DECLINED_RE.fullmatch(state):
             items.append({"kind": "loose-ends-malformed", "id": name,
                           "finding": f"loose end {name} has State {state!r}: it is `new` or "
-                                     "`waiting: user — <the question>` (an empty question is malformed) "
-                                     "-> fix the State; a routed or closed item is removed from the list"})
+                                     "`declined: <reason>` (a `waiting: user` row is turned into an ask in the "
+                                     "pile by `system_one.py migrate --write`) -> fix the State; a routed or "
+                                     "closed item is removed from the list"})
         elif state == "new" and age is not None:
             new_ages.append((age, name))
         if len(item) > LOOSE_ITEM_MAX:
@@ -1999,6 +2063,139 @@ def check_loose_list(home: Path, today: "date | None" = None) -> list[dict]:
     return items
 
 
+# Carried loose ends (WO-106): an item accepted into an order is a box in one section the tools find,
+#   `- [ ] L<n> (slice: <name>) <text>`      open
+#   `- [x] L<n> (slice: <name>) <text> -> <sha>`   closed when the slice carrying it landed; or moved:
+#   `-> L<n>` (back on the list), `-> P<n>`, `-> WO-NNN`, `-> rejected: <why>`.
+# This is the one place the grammar lives; system_one.py (which writes boxes) and loose_ends.py (which counts
+# them) import it from here. An order over the size limit cannot be read in full: the limit is one pair.
+CARRIED_HEADING = "## Carried loose ends"
+CARRIED_LEGACY_RE = re.compile(r"^##\s+(?:taken from the loose[- ]ends\b.*|carried (?:over\b.*|loose ends?\b.*)"
+                               r"|loose ends? carried\b.*)$", re.IGNORECASE)
+WO_MAX_LINES = 400                   # an order longer than this (or WO_MAX_BYTES, whichever trips first) is oversized
+WO_MAX_BYTES = 60 * 1024
+BOX_RE = re.compile(r"^- \[( |x)\] (L\d+) \(slice: ([^()\n]*\S)\) (\S.*)$")
+BOX_DEST_RE = re.compile(r"^(.*?\S)\s+->\s+((?:[0-9a-f]{7,40}|L\d+|P\d+|WO-\d{3,}|rejected:\s*\S.*))$")
+
+
+def wo_oversize(text: str) -> "str | None":
+    """Why an order is over the size limit, or None."""
+    lines, size = len(text.splitlines()), len(text.encode("utf-8"))
+    if lines > WO_MAX_LINES or size > WO_MAX_BYTES:
+        return f"{lines} lines, {size // 1024} KB; limit {WO_MAX_LINES} lines or {WO_MAX_BYTES // 1024} KB"
+    return None
+
+
+def box_line(lid: str, slice_name: str, text: str) -> str:
+    """The open box for a carried item."""
+    return f"- [ ] {lid} (slice: {slice_name}) {' '.join(str(text).split())}"
+
+
+def parse_box(line: str) -> "dict | None":
+    """{id, slice, text, done, dest} for a box line, None when the line is not a box (a closed box needs a destination)."""
+    m = BOX_RE.match(line.rstrip())
+    if not m:
+        return None
+    done, rest = m.group(1) == "x", m.group(4)
+    dest = None
+    if done:
+        d = BOX_DEST_RE.match(rest)
+        if not d:
+            return None
+        rest, dest = d.group(1), d.group(2)
+    return {"id": m.group(2), "slice": m.group(3), "text": rest, "done": done, "dest": dest}
+
+
+def parse_carried(text: str, legacy: bool = False) -> dict:
+    """The carried-loose-ends section of an order: {"heading": index or None, "end": index after the section,
+    "last": index of its last content line, "boxes": [box + "line"], "bad": [(line number, line)]}. Blank lines and
+    HTML comments are skipped; any other line that is not a box is `bad`. `legacy`: also find a hand-made
+    heading (CARRIED_LEGACY_RE) when the exact one is absent."""
+    lines = text.splitlines()
+    h = next((i for i, ln in enumerate(lines) if ln.strip() == CARRIED_HEADING), None)
+    if h is None and legacy:
+        h = next((i for i, ln in enumerate(lines) if CARRIED_LEGACY_RE.match(ln.strip())), None)
+    out: dict = {"heading": h, "end": None, "last": None, "boxes": [], "bad": []}
+    if h is None:
+        return out
+    end = next((i for i in range(h + 1, len(lines)) if lines[i].strip().startswith("## ")), len(lines))
+    out["end"], out["last"] = end, h
+    for i in range(h + 1, end):
+        s = lines[i].strip()
+        if not s:
+            continue
+        out["last"] = i
+        if s.startswith("<!--"):
+            continue
+        b = parse_box(lines[i])
+        if b:
+            out["boxes"].append({**b, "line": i + 1})
+        else:
+            out["bad"].append((i + 1, lines[i]))
+    return out
+
+
+def open_boxes(text: str) -> list:
+    return [b for b in parse_carried(text)["boxes"] if not b["done"]]
+
+
+def _accept_dates(home: Path) -> dict:
+    """{(NNN, L<n>): the day an accept record in `drain/accepted/` put the item in that order}."""
+    out: dict = {}
+    d = home / "drain" / "accepted"
+    for f in sorted(d.glob("*.md")) if d.is_dir() else []:
+        text = _read(f) or ""
+        im = re.search(r"(?m)^- items: (.*)$", text)
+        am = re.search(r"(?m)^accepted: WO-(\d{3,}), (\d{4}-\d\d-\d\d)\s*$", text)
+        if not (im and am):
+            continue
+        try:
+            when = date.fromisoformat(am.group(2))
+        except ValueError:
+            continue
+        for lid in (x.strip() for x in im.group(1).split(",")):
+            k = (am.group(1), lid)
+            out[k] = min(out.get(k, when), when)
+    return out
+
+
+def check_carried(home: Path, today: "date | None" = None) -> list[dict]:
+    """`carried-open` (gating): a resolved order with an open box. `carried-stale` (advisory): an open box in an
+    open order whose accept record is older than LOOSE_STALE_DAYS. `work-order-oversized` (advisory): an open
+    order over the size limit."""
+    today = today or date.today()
+    items: list[dict] = []
+    dates = _accept_dates(home)
+    for sub, resolved in (("work-orders", False), ("work-orders/resolved", True)):
+        d = home / sub
+        for nnn, names in sorted(_wo_files(d)[0].items()):
+            text = _read(d / names[0])
+            if not text:
+                continue
+            boxes = open_boxes(text)
+            if resolved and boxes:
+                ids = ", ".join(b["id"] for b in boxes)
+                items.append({"kind": "carried-open", "wo": f"WO-{nnn}", "file": names[0],
+                              "finding": f"WO-{nnn} is resolved with {len(boxes)} open carried loose end(s) ({ids}) "
+                                         "-> tick each (-> <sha>) or move it (-> L<n> / P<n> / WO-NNN / "
+                                         "rejected: <why>)"})
+            if resolved:
+                continue
+            old = [(b["id"], (today - dates[(nnn, b["id"])]).days) for b in boxes if (nnn, b["id"]) in dates]
+            old = [(i, n) for i, n in old if n > LOOSE_STALE_DAYS]
+            if old:
+                items.append({"kind": "carried-stale", "advisory": True, "wo": f"WO-{nnn}", "file": names[0],
+                              "finding": f"WO-{nnn} carries open loose end(s) older than {LOOSE_STALE_DAYS} days: "
+                                         + ", ".join(f"{i} ({n} days)" for i, n in old)
+                                         + " -> land the slice, or move them"})
+            over = wo_oversize(text)
+            if over:
+                items.append({"kind": "work-order-oversized", "advisory": True, "wo": f"WO-{nnn}", "file": names[0],
+                              "finding": f"WO-{nnn} is over the size limit ({over}) -> move landed slices to "
+                                         f"history/WO-{nnn}.md, or split the order"})
+    return items
+
+
 def _wo_path(home: Path, nnn: str) -> "Path | None":
     """The work-order file for NNN, in the open dir or resolved/, else None."""
     for d in (home / "work-orders", home / "work-orders" / "resolved"):
@@ -2013,7 +2210,7 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
     idx_text = _read(home / "INDEX.md")
     if idx_text is None:
         return [], "no INDEX.md"
-    items: list[dict] = check_loose_list(home, today)
+    items: list[dict] = check_loose_list(home, today) + check_drain_pile(home, today) + check_carried(home, today)
     wo_dirs = (home / "work-orders", home / "work-orders" / "resolved")
     exist: set[str] = set()
     for d in wo_dirs:
@@ -2188,6 +2385,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         r["ledger"].extend(check_ledger(home))
         r["ledger"].extend(landed_unresolved(home))
         r["links"].extend(check_links(home))
+        r["links"].extend(check_history(home))
         checked.update(("ledger", "links"))
     else:
         skip("ledger", "no INDEX.md and no work-orders/")
@@ -2461,9 +2659,6 @@ def print_report(r: dict) -> None:
             sub = s["check"].split(":", 1)
             label = f"{title} [{sub[1]}]" if len(sub) > 1 else title
             print(f"[--] {label}: skipped ({s['reason']})")
-    waiting = loose_list_waiting(Path(r["home"]))
-    if waiting:
-        print(f"[--] loose ends: {waiting[0]} waiting on you, oldest {waiting[1]}d")
     info = dispatch_distribution(Path(r["home"]), Path(r["skill_dir"]) if r["skill_dir"] else None)
     if info:
         print(info)

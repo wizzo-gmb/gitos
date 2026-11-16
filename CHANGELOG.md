@@ -18,6 +18,44 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v51 — 2026-11-15
+breaking: yes
+
+**Migration.** `/gitos upgrade` runs `system_one.py migrate --write`: each `waiting: user — Q` loose end becomes an
+`ask` suggestion in the drain pile and leaves the list, and a hand-made carried section whose lines already parse
+as boxes is renamed `## Carried loose ends` (other lines are printed as `path:line` to rewrite by hand). Upgrade also
+lays `work-orders/history/`. Worktrees made by `worktree.py new` now go outside the repo tree; existing ones under
+`.claude/worktrees/` are still found and reaped.
+
+- **A suggested loose end lives in the drain pile only.** A drain suggestion takes its items off the list, so the
+  list holds only unsuggested items; a drain never deletes a pending suggestion. `drain withdraw` puts items back;
+  `decline` either routes by hand (`--route`) or returns them as `declined: <reason>`, never suggested again. Asks
+  for the operator are a pile state; `waiting: user` and `loose_ends.py wait` are removed. The canary reports a
+  stale or overfull pile (`drain-stale`). A `read` accepted with `--work-order` now records the order (it was
+  recorded as "asked the operator" and left its items on the list).
+- **An item accepted into an order is a box there.** `drain accept --work-order NNN --slice NAME` writes
+  `- [ ] L<n> (slice: NAME) <text>` under `## Carried loose ends`; `--slice` is required on every accept into an
+  order. The adjudication ticks (`-> <sha>`) or moves each box. An order with an open box cannot resolve
+  (`carried-open`); an old open box is reported (`carried-stale`).
+- **Joins only into small orders.** An item joins an open order only when it is in files the named slice already
+  changes, the slice is planned or in flight, it changes neither the slice's scope nor what counts as done, and the
+  order is under 400 lines or 60 KB. Code checks the slice and the size; over-limit orders are not join candidates
+  and the item becomes a new-order suggestion; `work-order-oversized` is reported.
+- **Trim orders as slices land.** Landed slices move to `work-orders/history/WO-NNN.md`; the live order keeps
+  `## History` pointers, which the canary checks. Implementers read the history only where pointed.
+- **Background work has an owner and an end.** Implementers time-limit and log background commands and stop them
+  before hand-back; the orchestrator sweeps at each checkpoint and before `/clear`; RESUME's *Serving / running* is a
+  table (what, order, pid or marker, log, ends when, how to stop), and the compact hook prints a Background line for
+  its rows.
+- **Worktrees in a declared layout.** An optional `<home>/worktrees.json` (roots, branches, integration branches,
+  archive folders) makes a repo's own worktrees, detached checkouts included, visible to `worktree.py status`,
+  `reap` and the canary. Merged means reachable from HEAD, the default branch or an integration branch. Before any
+  removal, links inside the worktree that point outside it are unlinked (Git for Windows deletes through a
+  junction); declared notes folders are archived first.
+- Status line: `loose ends: inbox N · pile M (K for you) · carried C open`.
+
+---
+
 ## v50 — 2026-11-15
 breaking: yes
 
