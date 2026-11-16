@@ -18,6 +18,39 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v49 — 2026-11-15
+breaking: yes
+
+**Migration.** `/gitos upgrade` runs `system_one.py migrate --write`, which removes the retired System One config
+keys (`group`, `questions_per_request`, `assists`) from the machine config and the repo's `system-one.json`. Until
+then System One reports `down (config has retired keys: ...; run /gitos upgrade)`. A machine that served Decider
+Flash switches to `assets/system-one/serve_general.py` with Qwen3.5-9B (*Machine setup*).
+
+- **System One works the loose-ends drain, and only out-of-pass work.** A decision the orchestrator makes while
+  reading (note routing, what enters the brain, complexity, lens choice, per-hunk scope) is no longer given to a
+  local model: a second reader only adds work. Removed: the note-routing uses and notes `eval`, `complexity`, the
+  model half of `scope` (the code rule on named paths stays), `brain-target`, `brain-fits`, `row-state` and
+  `triage --register`, `final` and `replay`, and the canary's `notes-unlabelled` and `high-override`. Lens matching
+  stays with the orchestrator; `system_one.py lenses` lists the active set without a model call.
+- **Drain proposals, federation-style.** `system_one.py drain` turns every loose end into exactly one proposal under
+  `<home>/drain/pending/`: join a related open order (in progress or not), a new order for a group of related
+  items, park, ask the operator, close, or read (the model was unsure). Each carries the items' full text and
+  code-gathered context; no model-written prose. `drain accept ID --work-order NNN` only after the orchestrator has
+  written the order; `drain decline ID --reason` (a declined group is not proposed again); `drain defer`;
+  `drain status` is reported at first action.
+- **The drain's questions:** `loose-end-state` (done; needs the operator; waits on an event), `loose-end-join`
+  (same part of the product as an open order), `loose-end-bundle`, duplicates; candidates are ranked by shared
+  references and paths, then BM25, plus a model pick among the open orders' titles. `system_one.py eval-drain`
+  scores a labelled set.
+- **A general model serves System One:** `assets/system-one/serve_general.py` (Qwen3.5-9B, BF16, alone on the card)
+  answers yes/no from the yes and no token probabilities and choices from option-letter probabilities, thinking
+  off. The servers never hide a dead GPU: a sticky CUDA error answers 500 and exits for systemd to restart, an
+  out-of-memory error keeps serving, `/health` runs a real decision and `status` reads it.
+- Settled answers are cached; the call log is written under a lock; `system_one.py uses-check` checks every use
+  against a server after a model change.
+
+---
+
 ## v48 — 2026-11-14
 breaking: no
 

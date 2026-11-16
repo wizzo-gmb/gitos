@@ -22,9 +22,7 @@ PUBLIC API (everything a use needs; later work-orders extend the registry, not t
     decide(use, item, state, second_state=None, *, home=None, local_only=False) -> result
         result = {"outcome", "confirm", "pass": 1|2, "inputs": {...}}   (outcome may be "escalate")
     require_reversible(result)                   raises ConfirmRequired on a `confirm` outcome
-    record_final(use, item, final, by, *, home=None)    by = "accepted" | "overridden"
     log_summary(use=None, *, home=None) -> {use: stats}
-    high_override(home=None, last=50, limit=0.30) -> [(use, rate)]
     registry_problems() -> [str]
     scrub(state) -> state
 
@@ -33,8 +31,8 @@ allowed, or `local_only`), `ConfirmRequired`. All but `ConfirmRequired` are `Una
 one `except system_one.Unavailable` is the whole fall-through.
 
 ADDING A USE = one `register(...)` entry in the registry plus a CLI subcommand in the calling
-script that builds the state, calls `decide`, applies only `reversible` outcomes (guard with
-`require_reversible`), and calls `record_final` once the outcome is accepted or overridden.
+script that builds the state, calls `decide` and applies only `reversible` outcomes (guard with
+`require_reversible`).
 
 ANSWER SHAPES, both normalized by `normalize_answer`:
   * TypeSafe (OpenAPI `SystemOneResponse`): `{"model", "answers": {id: {"type": "noul", "noul": 0.98}
@@ -51,6 +49,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import ipaddress
+import contextlib
 import json
 import os
 import re
@@ -64,14 +63,14 @@ from datetime import datetime, timezone
 from importlib import util as importlib_util
 from pathlib import Path
 
+RETIRED_KEYS = ("group", "questions_per_request", "assists")   # config keys no longer read; `migrate` removes them
 CONFIG_NAME = "config.json"
 OPTOUT_NAME = "system-one.json"
 FEDERATION_NAME = "federation.json"
 HEALTH_TIMEOUT_S = 2.0
 RETRIES = 3
 BACKOFF_S = 0.25                  # doubled per retry; a test sets it to 0
-DEFAULTS = {"timeout_s": 20, "thresholds": {"yes": 0.7, "no": 0.3}, "group": "single",
-            "workers": 4, "keep_examples": True, "allow_remote": False, "trusted_hosts": []}
+DEFAULTS = {"timeout_s": 20, "thresholds": {"yes": 0.7, "no": 0.3}, "workers": 4, "keep_examples": True, "allow_remote": False, "trusted_hosts": []}
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _DIGITS = re.compile(r"\d{7,}")
 
@@ -86,6 +85,10 @@ class Off(Unavailable):
 
 class Refused(Unavailable):
     """The endpoint is not allowed for this call (remote without `allow_remote`, or `local_only`)."""
+
+
+class RetiredKeys(Unavailable):
+    """The machine config or the repo's system-one.json carries a key this engine no longer reads."""
 
 
 class ConfirmRequired(Exception):
@@ -144,18 +147,24 @@ def load_config() -> "dict | None":
         raise Unavailable(f"config unreadable ({type(e).__name__})")
     if not isinstance(raw, dict) or not isinstance(raw.get("endpoint"), str) or not raw["endpoint"]:
         raise Unavailable("config needs an `endpoint` string")
+    retired = [k for k in RETIRED_KEYS if k in raw]
+    if retired:
+        raise RetiredKeys(retired_line(retired))
     cfg = {**DEFAULTS, **raw}
     cfg["thresholds"] = {**DEFAULTS["thresholds"],
                          **(raw.get("thresholds") if isinstance(raw.get("thresholds"), dict) else {})}
-    if cfg["group"] not in ("single", "joint"):
-        raise Unavailable("config `group` must be `single` or `joint`")
     sec = cfg.get("second")
     if sec is not None and not (isinstance(sec, dict) and isinstance(sec.get("endpoint"), str)):
         raise Unavailable("config `second` needs an `endpoint` string")
     return cfg
 
 
+def retired_line(names) -> str:
+    return f"config has retired keys: {', '.join(names)}; run /gitos upgrade"
+
+
 REPO_REASONS = {
+    "retired": "this repo's system-one.json has retired keys; run /gitos upgrade",
     "missing": "this repo has not chosen (run upgrade or `system_one.py repo on`)",
     "off": "this repo turned System One off",
     "malformed": "this repo's system-one.json is malformed",
@@ -163,7 +172,7 @@ REPO_REASONS = {
 
 
 def repo_choice(home: "Path | None") -> "tuple[str, str]":
-    """This repo's own choice, `<home>/system-one.json`: (`on` | `off` | `missing` | `malformed`, detail).
+    """This repo's own choice, `<home>/system-one.json`: (`on` | `off` | `missing` | `malformed` | `retired`, detail).
     Only a literal `enabled: true` is on; a missing file is `missing` (not chosen, so off)."""
     if home is None:
         return "on", ""
@@ -176,6 +185,9 @@ def repo_choice(home: "Path | None") -> "tuple[str, str]":
         return "malformed", f"unreadable ({type(e).__name__})"
     if not isinstance(data, dict):
         return "malformed", "not a JSON object"
+    retired = [k for k in RETIRED_KEYS if k in data]
+    if retired:
+        return "retired", ", ".join(retired)
     if "enabled" not in data:
         return "missing", "no `enabled` key"
     en = data.get("enabled")
@@ -186,17 +198,14 @@ def repo_choice(home: "Path | None") -> "tuple[str, str]":
     return "malformed", "`enabled` must be true or false"
 
 
-def opted_out(home: "Path | None") -> bool:
-    """True when this repo is not on (not chosen, off, or malformed). No repo home: not opted out."""
-    return repo_choice(home)[0] != "on"
-
-
 def _active_config(home) -> dict:
     """The config for a call. Raises Off when there is none or this repo is not on."""
     cfg = load_config()
     if cfg is None:
         raise Off("System One is not configured on this machine")
-    state, _ = repo_choice(_home(home))
+    state, detail = repo_choice(_home(home))
+    if state == "retired":
+        raise RetiredKeys(retired_line(detail.split(", ")))
     if state != "on":
         raise Off(REPO_REASONS[state])
     return cfg
@@ -307,10 +316,29 @@ def _headers(cfg: dict) -> dict:
 
 
 def health(endpoint: str, cfg: dict) -> "tuple[bool, str]":
-    """Probe `<origin>/v1/models` within 2 s. Any HTTP answer below 500 means the server is up."""
+    """Probe `<origin>/health` within 2 s (WO-096: a server runs a real decision there, so a dead GPU is
+    seen). A 503 or a `model-failed` status is down with the reason `model-failed`; another 5xx is down.
+    A server with no `/health` (404) falls back to `/v1/models`: any answer below 500 means it is up."""
     sp = urllib.parse.urlsplit(endpoint)
-    url = f"{sp.scheme}://{sp.netloc}/v1/models"
-    req = urllib.request.Request(url, headers=_headers(cfg), method="GET")
+    origin = f"{sp.scheme}://{sp.netloc}"
+    try:
+        req = urllib.request.Request(origin + "/health", headers=_headers(cfg), method="GET")
+        with urllib.request.urlopen(req, timeout=HEALTH_TIMEOUT_S) as resp:
+            try:
+                body = json.loads(resp.read(1 << 16).decode("utf-8"))
+            except ValueError:
+                body = None
+            if isinstance(body, dict) and body.get("status") == "model-failed":
+                return False, "model-failed"
+            return True, "ok"
+    except urllib.error.HTTPError as e:
+        if e.code == 503:
+            return False, "model-failed"
+        if e.code != 404:
+            return (e.code < 500), f"HTTP {e.code}"
+    except Exception as e:
+        return False, _clean(type(e).__name__, cfg)
+    req = urllib.request.Request(origin + "/v1/models", headers=_headers(cfg), method="GET")
     try:
         with urllib.request.urlopen(req, timeout=HEALTH_TIMEOUT_S):
             return True, "ok"
@@ -412,14 +440,20 @@ def normalize_response(data, ids: list) -> dict:
 
 
 def _model_ask(endpoint: str, model: str, cfg: dict, state, questions: dict,
-               local_only: bool) -> "tuple[dict, int]":
-    """Ask one model all `questions` per the group setting. -> (normalized answers, tokens)."""
+               local_only: bool, meta: "dict | None" = None) -> "tuple[dict, int]":
+    """Ask one model all `questions`: each question is its own request with the same state, sent
+    concurrently (at most one thread per question). `meta["requests"]` counts the requests made.
+    -> (normalized answers, tokens). Any one failed request raises `Unavailable`."""
     state = _prepare(endpoint, cfg, state, local_only)
     ids = list(questions)
-    if cfg["group"] == "joint" or len(ids) == 1:
+    if len(ids) == 1:
+        if meta is not None:
+            meta["requests"] = meta.get("requests", 0) + 1
         data, tok = _post(endpoint, cfg, model, state, questions)
         return normalize_response(data, ids), tok
-    workers = max(1, int(cfg["workers"]))
+    if meta is not None:
+        meta["requests"] = meta.get("requests", 0) + len(ids)
+    workers = max(1, min(int(cfg["workers"]), len(ids)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {i: ex.submit(_post, endpoint, cfg, model, state, {i: questions[i]}) for i in ids}
         out, total = {}, 0
@@ -483,18 +517,30 @@ def _result(reg, use: dict, outcome: str, inputs: dict, n: int) -> dict:
             "pass": n, "inputs": inputs}
 
 
-def decide(use: str, item, state, second_state=None, *, home=None, local_only: bool = False) -> dict:
+def decide(use: str, item, state, second_state=None, *, home=None, local_only: bool = False,
+           fresh: bool = False) -> dict:
     """Run a use's questions, apply its table, and on any unsure input run ONE second pass.
 
     Pass 2 re-asks only the unsure questions: the primary model with `second_state` (when given)
     and the configured `second` model (with `second_state`, else `state`). When two answers settle
     differently the input stays unsure. Anything still unsure escalates. Never more than two passes.
+
+    WO-094: before a request, an earlier settled `call` row of this repo's log with the same use,
+    registry, model and state text (its `sha`) is returned as it was logged, with `cached: True`; no
+    request is made and no row is written. `fresh=True` skips that. An earlier `escalate` or `error`
+    row is never reused.
     """
     reg = _registry()
     u = reg.USES[use]
     cfg = _active_config(home)
     th = cfg["thresholds"]
     qs = reg.request_questions(use)
+    if not fresh:
+        hit = _cache_lookup(_home(home), cfg, use, reg.REGISTRY_VERSION, state)
+        if hit is not None:
+            res = _result(reg, u, hit["outcome"], hit["inputs"], hit["pass"])
+            res["cached"] = True
+            return res
     t0 = time.monotonic()
     meta = {"p": {}, "tokens": 0, "models": [cfg.get("model", "")]}
     h = _home(home)
@@ -504,11 +550,12 @@ def decide(use: str, item, state, second_state=None, *, home=None, local_only: b
         return result
 
     try:
-        answers, tok = _model_ask(cfg["endpoint"], cfg.get("model", ""), cfg, state, qs, local_only)
+        answers, tok = _model_ask(cfg["endpoint"], cfg.get("model", ""), cfg, state, qs, local_only,
+                                  meta)
         meta["tokens"] += tok
         meta["p"] = {i: a["p"] for i, a in answers.items()}
         inputs = _inputs(u, answers, th)
-        unsure = [i for i, v in inputs.items() if v == "unsure"]
+        unsure = [i for i in u["reads"](dict(inputs)) if inputs[i] == "unsure"]
         if not unsure:
             return finish(_result(reg, u, u["table"](dict(inputs)), inputs, 1))
         sec = cfg.get("second")
@@ -518,13 +565,14 @@ def decide(use: str, item, state, second_state=None, *, home=None, local_only: b
         asked = []                      # list of (answers) from the second pass
         if second_state is not None:
             a, tok = _model_ask(cfg["endpoint"], cfg.get("model", ""), cfg, second_state, sub,
-                                local_only)
+                                local_only, meta)
             asked.append(a)
             meta["tokens"] += tok
         if sec is not None:
             scfg = {**cfg, "model": sec.get("model", "")}
             a, tok = _model_ask(sec["endpoint"], sec.get("model", ""), scfg,
-                                second_state if second_state is not None else state, sub, local_only)
+                                second_state if second_state is not None else state, sub, local_only,
+                                meta)
             asked.append(a)
             meta["tokens"] += tok
             meta["models"].append(sec.get("model", ""))
@@ -535,7 +583,7 @@ def decide(use: str, item, state, second_state=None, *, home=None, local_only: b
         for i in unsure:
             vals = {s[i] for s in settled}
             merged[i] = vals.pop() if len(vals) == 1 else "unsure"
-        if "unsure" in merged.values():
+        if any(merged[i] == "unsure" for i in u["reads"](dict(merged))):
             return finish(_result(reg, u, reg.ESCALATE, merged, 2))
         return finish(_result(reg, u, u["table"](dict(merged)), merged, 2))
     except Unavailable as e:
@@ -553,11 +601,118 @@ def require_reversible(result: dict) -> None:
 
 
 # ------------------------------------------------------------------------------------- the log
-def _append(home: "Path | None", row: dict) -> None:
+LOCK_WAIT_S = 2.0
+
+
+@contextlib.contextmanager
+def _log_lock(path: Path):
+    """An exclusive lock on `<log>.lock` (msvcrt on Windows, else fcntl), waited for at most
+    LOCK_WAIT_S. Yields True when held, False when it could not be taken in time."""
+    lock = path.with_name(path.name + ".lock")
+    fd = os.open(str(lock), os.O_RDWR | os.O_CREAT, 0o644)
+    held = False
+    try:
+        deadline = time.monotonic() + LOCK_WAIT_S
+        while True:
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.005)
+        yield held
+    finally:
+        if held:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        os.close(fd)
+
+
+def _append(home: "Path | None", row: dict) -> bool:
+    """Append one JSON line. One process at a time (`_log_lock`), the whole line in one `os.write`
+    to an `O_APPEND` descriptor. -> False when the lock could not be taken in time (not written)."""
     path = log_path(home)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+    with _log_lock(path) as held:
+        if not held:
+            return False
+        fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0),
+                     0o644)
+        try:
+            view = memoryview(line)
+            while view:
+                view = view[os.write(fd, view):]
+        finally:
+            os.close(fd)
+    return True
+
+
+_CACHE: dict = {}                 # log path -> {"pos", "head", "map"}: an incremental read of the log
+
+
+def _cache_map(path: Path) -> dict:
+    """{(use, registry, model, sha): latest settled call row} of the log at `path`, read
+    incrementally (only complete lines past the last position)."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as f:
+            head = f.read(64)
+            ent = _CACHE.get(str(path))
+            if ent is None or size < ent["pos"] or ent["head"] != head:
+                ent = _CACHE[str(path)] = {"pos": 0, "head": head, "map": {}}
+            f.seek(ent["pos"])
+            data = f.read()
+    except OSError:
+        return {}
+    end = data.rfind(b"\n") + 1
+    for raw in data[:end].splitlines():
+        try:
+            r = json.loads(raw.decode("utf-8"))
+        except ValueError:
+            continue
+        if (isinstance(r, dict) and r.get("kind") == "call" and r.get("sha")
+                and r.get("outcome") not in (None, "escalate", "error")
+                and isinstance(r.get("inputs"), dict) and r.get("pass") in (1, 2)):
+            ent["map"][(r.get("use"), r.get("registry"), r.get("model"), r["sha"])] = r
+    ent["pos"] += end
+    return ent["map"]
+
+
+def _state_sha(state) -> str:
+    text = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _cache_lookup(h, cfg: dict, use: str, registry, state) -> "dict | None":
+    path = log_path(h)
+    if not path.is_file():
+        return None
+    sha = _state_sha(state)
+    primary, sec = cfg.get("model", ""), cfg.get("second")
+    models = [primary] + ([primary + "+" + sec.get("model", "")] if sec else [])
+    table = _cache_map(path)
+    for m in models:
+        row = table.get((use, registry, m, sha))
+        if row is not None:
+            return row
+    return None
 
 
 def _now() -> str:
@@ -568,7 +723,11 @@ def _log_call(home, cfg, use, item, result, meta, state, latency_ms) -> None:
     row = {"kind": "call", "t": _now(), "use": use, "item": str(item),
            "registry": _registry().REGISTRY_VERSION, "pass": result["pass"],
            "p": meta["p"], "outcome": result["outcome"], "model": "+".join(meta["models"]),
-           "latency_ms": latency_ms, "input_tokens": meta["tokens"]}
+           "latency_ms": latency_ms, "input_tokens": meta["tokens"], "sha": _state_sha(state)}
+    if result.get("inputs"):
+        row["inputs"] = result["inputs"]
+    if meta.get("requests"):
+        row["requests"] = meta["requests"]
     if "p2" in meta:
         row["p2"] = meta["p2"]
     if "error" in meta:
@@ -578,28 +737,26 @@ def _log_call(home, cfg, use, item, result, meta, state, latency_ms) -> None:
     try:
         _append(home, row)
     except OSError:
-        pass                    # the log never breaks a decision
+        pass                    # the log never breaks a decision (a busy lock skips the write too)
 
 
-def record_final(use: str, item, final: str, by: str, *, home=None) -> None:
-    """Record what was finally done with an item: `by` is `accepted` or `overridden`. Together
-    with the call row it is a labelled example. Writes nothing when System One is off."""
-    if by not in ("accepted", "overridden"):
-        raise ValueError("`by` must be `accepted` or `overridden`")
-    _active_config(home)
-    _append(_home(home), {"kind": "final", "t": _now(), "use": use, "item": str(item),
-                          "final": final, "by": by})
-
-
-def log_rows(home=None) -> list:
+def log_rows(home=None, skipped: "list | None" = None) -> list:
+    """Every valid row. Lines that are not valid JSON are skipped; `skipped`, a list, gets one entry
+    per skipped line."""
     path = log_path(_home(home))
     rows = []
     if path.is_file():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                rows.append(json.loads(line))
-            except ValueError:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
                 continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                row = None
+            if isinstance(row, dict):
+                rows.append(row)
+            elif skipped is not None:
+                skipped.append(line)
     return rows
 
 
@@ -608,15 +765,10 @@ def log_summary(use: "str | None" = None, *, home=None) -> dict:
     lat: dict = {}
     for r in log_rows(home):
         u = r.get("use")
-        if use and u != use:
-            continue
+        if r.get("kind") != "call" or (use and u != use):
+            continue                # only decisions count; `check` rows (uses-check) are not
         s = stats.setdefault(u, {"calls": 0, "settled_pass1": 0, "settled_pass2": 0,
-                                 "escalated": 0, "errors": 0, "accepted": 0, "overridden": 0,
-                                 "median_latency_ms": None})
-        if r.get("kind") == "final":
-            if r.get("by") in ("accepted", "overridden"):
-                s[r["by"]] += 1
-            continue
+                                 "escalated": 0, "errors": 0, "median_latency_ms": None})
         s["calls"] += 1
         if r.get("outcome") == "error":
             s["errors"] += 1
@@ -633,56 +785,6 @@ def log_summary(use: "str | None" = None, *, home=None) -> dict:
     return stats
 
 
-def high_override(home=None, last: int = 50, limit: float = 0.30) -> list:
-    """Uses whose last `last` finalized rows are overridden more than `limit`: [(use, rate)].
-    A use with fewer than `last` finals is not judged."""
-    finals: dict = {}
-    for r in log_rows(home):
-        if r.get("kind") == "final" and r.get("by") in ("accepted", "overridden"):
-            finals.setdefault(r.get("use"), []).append(r["by"])
-    out = []
-    for u, bys in finals.items():
-        if len(bys) >= last:
-            window = bys[-last:]
-            rate = window.count("overridden") / last
-            if rate > limit:
-                out.append((u, rate))
-    return out
-
-
-def replay(use: str, endpoint: "str | None" = None, *, home=None) -> dict:
-    """Re-ask logged examples that have a final outcome (pass 1 only) and count agreement."""
-    reg = _registry()
-    u = reg.USES[use]
-    cfg = _active_config(home)
-    if endpoint:
-        cfg = {**cfg, "endpoint": endpoint, "second": None}
-    calls, finals = {}, {}
-    for r in log_rows(home):
-        if r.get("use") != use:
-            continue
-        if r.get("kind") == "call" and "state" in r and r.get("outcome") != "error":
-            calls[r["item"]] = r
-        elif r.get("kind") == "final":
-            finals[r["item"]] = r
-    qs = reg.request_questions(use)
-    n = agree = errors = 0
-    for item, fin in finals.items():
-        if item not in calls:
-            continue
-        n += 1
-        try:
-            ans, _ = _model_ask(cfg["endpoint"], cfg.get("model", ""), cfg, calls[item]["state"], qs,
-                                False)
-        except Unavailable:
-            errors += 1
-            continue
-        inputs = _inputs(u, ans, cfg["thresholds"])
-        out = reg.ESCALATE if "unsure" in inputs.values() else u["table"](dict(inputs))
-        agree += out == fin["final"]
-    return {"use": use, "examples": n, "agree": agree, "errors": errors}
-
-
 # ------------------------------------------------------------------------------------- ledger triage
 # WO-085. Code gathers the items and their facts, the registry's uses judge them, and a DIGEST is
 # printed. Nothing is written in the repo's home, and no output line can read as an `Adjudication`
@@ -697,7 +799,6 @@ _WORD = re.compile(r"[a-z][a-z0-9_-]{3,}")
 _STOP = frozenset("that this with from have been will they them then than when which what where "
                   "would could should about into only also each every their there these those "
                   "work order note notes item items file files".split())
-_BULLET = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
 
 
 def _canary():
@@ -747,141 +848,6 @@ def _wo_listing(home: Path, c) -> list:
         for nnn, names in sorted(c._wo_files(d)[0].items()):
             out.append((nnn, d / names[0], resolved))
     return out
-
-
-def _in_scope_resolved(home: Path, c) -> set:
-    """Resolved work-orders the canary's `notes-unadjudicated` check covers: those whose INDEX
-    row names an engine version at or past the habit (older ones are exempt, so are not triaged)."""
-    idx = _read_text(home / "INDEX.md")
-    block = c.section_lines(idx, c.RESOLVED_HEADING) if idx else None
-    out = set()
-    for row in (c._table_rows(block) or []) if block is not None else []:
-        nnn = c.clean_cell(row[0]) if row else ""
-        vers = [int(v) for v in c.VERSION_IN_CELL_RE.findall(row[2])] if len(row) > 2 else []
-        if c.NNN_RE.fullmatch(nnn) and vers and max(vers) >= c.LOOSE_ENDS_FROM_VERSION:
-            out.add(nnn)
-    return out
-
-
-def _note_items(home: Path, c) -> list:
-    """One item per bullet of an Implementer notes section that has no Adjudication block, for
-    every open work-order and every resolved one the canary's adjudication check covers."""
-    items = []
-    covered = _in_scope_resolved(home, c)
-    for nnn, path, res in _wo_listing(home, c):
-        if res and nnn not in covered:
-            continue
-        text = _read_text(path)
-        notes = c.section_lines(text, c.NOTES_HEADING) if text else None
-        if not notes or any(c.ADJUDICATION_HEADING_RE.match(ln.strip()) for ln in notes):
-            continue
-        title, cur, bullets = _title(text, path.stem), None, []
-        for ln in notes:
-            s = ln.strip()
-            if not s or s.startswith(("#", "<!--")) or c.NOTE_PLACEHOLDER_RE.match(s):
-                cur = None if not s else cur
-                continue
-            if _BULLET.match(s):
-                cur = [_BULLET.sub("", s)]
-                bullets.append(cur)
-            elif cur is not None:
-                cur.append(s)
-            else:
-                cur = [s]
-                bullets.append(cur)
-        bullets = [_squash(" ".join(b)) for b in bullets]
-        bullets = [b for b in bullets if len(b) > 11 and not c.NOTE_NONE_RE.match(b)]
-        for k, b in enumerate(bullets, 1):
-            label, body = _split_label(b)
-            kind = _label_kind(label)
-            for j, point in enumerate(_split_points(body), 1):
-                head = f"This point was written under the heading: {label}\n" if label else ""
-                items.append({"group": "notes", "ref": f"WO-{nnn}#{k}.{j}", "text": point,
-                              "label": label, "kind": kind,
-                              "state": _cap(f"Work-order: WO-{nnn} {title}\n{head}Point: {point}")})
-    return items
-
-
-_BOLD_LABEL = re.compile(r"^(?:\*\*|__)\s*([^*_]{2,40}?)\s*[.:\-–—]*\s*(?:\*\*|__)\s*"
-                         r"[.:\-–—]*\s*")
-_PLAIN_LABEL = re.compile(r"^(deviations?|surprises?|durable facts?|process notes?|follow-?ups?|"
-                          r"follow ups?)\s*[.:\-–—]+\s*", re.IGNORECASE)
-_LABEL_KINDS = (("deviation", "deviation"), ("durable fact", "durable"), ("follow", "followup"),
-                ("process", "process"))
-_ENUM = re.compile(r"(?:(?<=\s)|^)(?:\(\d+\)|\([a-z]\))(?=\s)|(?<=[.!?;]\s)\d+[.)](?=\s)")
-_SENT_END = re.compile(r"[.!?][\"')\]]*\s+(?=[A-Z0-9\[*\0])")
-MIN_POINT_WORDS = 4
-
-
-def _split_label(text: str) -> tuple:
-    """(label, rest): a leading bold label, or a known label word followed by punctuation."""
-    m = _BOLD_LABEL.match(text) or _PLAIN_LABEL.match(text)
-    if not m:
-        return "", text
-    return _squash(m.group(1)).rstrip(".:"), text[m.end():].strip()
-
-
-def _label_kind(label: str) -> str:
-    low = label.lower()
-    for key, kind in _LABEL_KINDS:
-        if key in low:
-            return kind
-    return "other"
-
-
-def _mask(s: str, parens: bool) -> str:
-    """`s` with code spans (and, when `parens`, parenthesised text) blanked to NULs, same length."""
-    out, depth, code = list(s), 0, False
-    for i, ch in enumerate(s):
-        if ch == "`":
-            code = not code
-            out[i] = "\0"
-            continue
-        if code:
-            out[i] = "\0"
-            continue
-        if parens:
-            if ch == "(":
-                depth += 1
-            if depth > 0:
-                out[i] = "\0"
-            if ch == ")" and depth > 0:
-                depth -= 1
-    return "".join(out)
-
-
-def _split_points(text: str) -> list:
-    """A labelled bullet is several points. Split at enumerators ((1), (a), `1.` at a sentence
-    start; two or more of them), else at sentence ends, keeping code spans and parentheses whole.
-    A point under MIN_POINT_WORDS words joins its neighbour."""
-    text = _squash(text)
-    enums = list(_ENUM.finditer(_mask(text, False)))
-    if len(enums) >= 2:
-        cuts = [(0, 0)] + [(m.start(), m.end()) for m in enums]
-        ends = [m.start() for m in enums] + [len(text)]
-        pieces = [text[cuts[i][1]:ends[i]] for i in range(len(cuts))]
-    else:
-        masked, pieces, last = _mask(text, True), [], 0
-        for m in _SENT_END.finditer(masked):
-            pieces.append(text[last:m.start() + 1])
-            last = m.end()
-        pieces.append(text[last:])
-    pieces = [p.strip(" ;") for p in pieces if p.strip(" ;")]
-    out: list = []
-    carry = ""
-    for p in pieces:
-        p = (carry + " " + p).strip()
-        carry = ""
-        if len(p.split()) < MIN_POINT_WORDS:
-            if out:
-                out[-1] += " " + p
-            else:
-                carry = p
-        else:
-            out.append(p)
-    if carry:
-        out.append(carry)
-    return out or [text]
 
 
 def _parked_rows(home: Path, c) -> list:
@@ -935,21 +901,6 @@ def _parked_items(home: Path, c) -> list:
     return items
 
 
-def _register_items(path: str, c) -> list:
-    text = _read_text(Path(path))
-    if text is None:
-        raise OSError(f"cannot read register file {path}")
-    items = []
-    for row in c._table_rows(text.splitlines()) or []:
-        cells = [c.clean_cell(x) for x in row]
-        if not cells or not cells[0]:
-            continue
-        body = _cap(" | ".join(cells[1:]) if len(cells) > 1 else cells[0])
-        items.append({"group": "register", "ref": cells[0], "text": body,
-                      "state": _cap(f"Register row {cells[0]}: {body}")})
-    return items
-
-
 def _signals(text: str, own: str) -> tuple:
     refs = set(_REF.findall(text)) | {own}
     paths = set(_PATH.findall(text))
@@ -994,8 +945,7 @@ def _duplicate_items(home: Path, c, parked: list) -> list:
     return items
 
 
-_USE_OF = {"notes": "note-route", "parked": "parked-trigger", "duplicates": "duplicate",
-           "register": "row-state", "loose-ends": "row-state"}
+_USE_OF = {"parked": "parked-trigger", "duplicates": "duplicate", "loose-ends": "loose-end-state"}
 
 
 def _loose_ends():
@@ -1014,30 +964,76 @@ def _loose_ends():
     return mod
 
 
+def _loose_state(ref: str, item: str, source: str, age: "int | None") -> str:
+    """What `loose-end-state` is asked: the item's text, its Source and its age in days."""
+    when = f"{age} days old" if age is not None else "age unknown"
+    return _cap(f"Loose end {ref} (from {source}, {when}): {item}")
+
+
+def _join_item(j: dict) -> dict:
+    return {"group": "loose-ends", "use": "loose-end-join", "ref": f"{j['item']}~{j['wo']}",
+            "text": f"A {j['wo']}: {_cap(j['wo_text'], 500)}\nB {j['item']}: {_cap(j['item_text'], 300)}",
+            "state": f"Work-order A ({j['wo']}): {_cap(j['wo_text'], 900)}\n"
+                     f"Item B ({j['item']}): {_cap(j['item_text'], 300)}"}
+
+
+def pick_orders(home, item_ref: str, item_text: str, options: list) -> list:
+    """The model's title pick: which open orders are about the same part of the product as the item. One `choice`
+    question over the orders' titles (named by WO id, at most 26); asked twice, the second time with the options
+    in reverse order, and the probabilities per order averaged (a choice leans to the option listed first).
+    -> [(order ref, probability)], best first. A server that does not answer a choice gives []."""
+    reg = _registry()
+    cfg = _active_config(home)
+    q = reg.USES["loose-end-pick"]["questions"][0]
+    state = _cap(f"Item {item_ref}: {item_text}", 500)
+    names = [r for r, _t in options]
+    sums = {n: 0.0 for n in names}
+    meta = {"p": {}, "tokens": 0, "models": [cfg.get("model", "")]}
+    t0 = time.monotonic()
+    passes = 0
+    for opts in (options, list(reversed(options))):
+        qs = {"order": {"type": "choice", "instructions": q["instructions"],
+                        "criteria": {r: _cap(t, 200) for r, t in opts}}}
+        answers, tok = _model_ask(cfg["endpoint"], cfg.get("model", ""), cfg, state, qs, False, meta)
+        meta["tokens"] += tok
+        a = answers["order"]
+        if a["type"] != "choice":
+            return []
+        probs = a["probabilities"] or {a["value"]: a["p"]}
+        for n in names:
+            sums[n] += float(probs.get(n, 0.0))
+        passes += 1
+    ranked = sorted(((n, v / passes) for n, v in sums.items()), key=lambda x: (-x[1], x[0]))
+    meta["p"] = {"order": ranked[0][1]} if ranked else {}
+    _log_call(_home(home), cfg, "loose-end-pick", item_ref,
+              {"outcome": ranked[0][0] if ranked else "escalate", "pass": 2, "inputs": {"order": ranked[0][0]} if ranked else {}},
+              meta, state, int((time.monotonic() - t0) * 1000))
+    return ranked
+
+
 def _loose_end_items(home: Path) -> tuple:
-    """-> (items, new rows). Read from `<home>/loose-ends.md` with no flag. Each `new` item is asked
-    `row-state`; the (item, open order) join pairs and the (item, item) bundle pairs are chosen by
-    code (`loose_ends.candidates`). An item waiting on the operator is asked nothing."""
+    """-> (items, new rows, open orders). Read from `<home>/loose-ends.md` with no flag. Each `new` item is
+    asked `loose-end-state`; the (item, open order) join pairs (the item's best three open orders by BM25, in progress or not, plus the model's title pick)
+    and the (item, item) bundle pairs are chosen by code (`loose_ends.candidates`). An item waiting on the
+    operator is asked nothing."""
     le = _loose_ends()
     if not le.list_path(home).is_file():
-        return [], []
+        return [], [], []
     rows = [r for r in le.rows_of(home) if r["state"].strip() == le.STATE_NEW and le.ID_RE.fullmatch(r["id"])]
     if not rows:
-        return [], []
-    cand = le.candidates(home, sm=sys.modules[__name__])
-    items = [{"group": "loose-ends", "use": "row-state", "ref": r["id"], "text": _cap(r["item"], 300),
-              "state": _cap(f"Loose end {r['id']} (from {r['source']}): {r['item']}")} for r in rows]
+        return [], [], []
+    cand = le.candidates(home, sm=sys.modules[__name__],
+                         pick=lambda ref, text, opts: pick_orders(home, ref, text, opts))
+    items = [{"group": "loose-ends", "use": "loose-end-state", "ref": r["id"], "text": _cap(r["item"], 300),
+              "state": _loose_state(r["id"], r["item"], r["source"], le.age_days(r["added"]))} for r in rows]
     for j in cand["join"]:
-        items.append({"group": "loose-ends", "use": "loose-end-join", "ref": f"{j['item']}~{j['wo']}",
-                      "text": f"A {j['wo']}: {_cap(j['wo_text'], 500)}\nB {j['item']}: {_cap(j['item_text'], 300)}",
-                      "state": f"Work-order A ({j['wo']}): {_cap(j['wo_text'], 900)}\n"
-                               f"Item B ({j['item']}): {_cap(j['item_text'], 300)}"})
+        items.append(_join_item(j))
     for b in cand["bundle"]:
         items.append({"group": "loose-ends", "use": "loose-end-bundle", "ref": f"{b['a']}~{b['b']}",
                       "text": f"A {b['a']}: {_cap(b['a_text'], 300)}\nB {b['b']}: {_cap(b['b_text'], 300)}",
                       "state": f"Item A ({b['a']}): {_cap(b['a_text'], 400)}\n"
                                f"Item B ({b['b']}): {_cap(b['b_text'], 400)}"})
-    return items, rows
+    return items, rows, cand["orders"]
 
 
 def _bundle_groups(results: list) -> list:
@@ -1059,87 +1055,79 @@ def _bundle_groups(results: list) -> list:
     return sorted((sorted(g, key=lambda t: int(t[1:])) for g in groups.values()), key=lambda g: int(g[0][1:]))
 
 
-_REJECT_DONE = "reject: done in this order"
+_TRIGGER = re.compile(r"\b(?:after|once|until|when|waits? (?:for|on)|following)\b[^.;]{3,70}", re.I)
 
 
-def _refine_follow_up(r: dict, it: dict, home) -> tuple:
-    """A `follow-up` outcome: ask `note-trigger` for a Parked row or the loose-ends list."""
-    t = decide("note-trigger", it["ref"], it["state"], home=home)
-    r = {**r, "inputs": {**r["inputs"], **t["inputs"]}, "pass": max(r["pass"], t["pass"])}
-    return r, {"parked": "follow-up (Parked row)", "loose-end": "follow-up (loose end)"
-               }.get(t["outcome"], "follow-up (Parked or loose end: read it)")
+def _drain_plan(results: list, bundles: list) -> list:
+    """One suggested next step per loose end, built by code from the answers: [{ref, step}]. A step the
+    item's own state settles (`close`, `ask`, `park`) comes first; otherwise a `join` answer beats a
+    bundle group, and a bundle beats `open` alone (an item still unsettled is `read it`). Nothing is
+    applied."""
+    best: dict = {}
+    for r in results:
+        if r["use"] == "loose-end-join" and r["outcome"] == "join":
+            item, wo = r["ref"].split("~")
+            best.setdefault(item, wo)
+    plan = []
+    for r in results:
+        if r["use"] != "loose-end-state":
+            continue
+        ref, out = r["ref"], r["outcome"]
+        group = next((g for g in bundles if ref in g), None)
+        kind, wo = "read", None
+        if out == "closable":
+            step, kind = "close (confirm)", "close"
+        elif out == "ask-operator":
+            step, kind = "ask the operator", "ask"
+        elif out == "park":
+            m = _TRIGGER.search(r["text"])
+            trig = _squash(m.group(0)) if m else "name the event"
+            step, kind = f"park (trigger: {trig})", "park"
+        elif ref in best:
+            step, kind, wo = f"related open order: consider adding {best[ref]}", "join", best[ref]
+        elif group:
+            step, kind = "bundle with " + ", ".join(x for x in group if x != ref) + " -> new order", "bundle"
+        else:
+            step, kind = "read it", ("open" if out == "open" else "read")
+        plan.append({"ref": ref, "step": step, "kind": kind, "wo": wo})
+    return sorted(plan, key=lambda p: int(p["ref"][1:]))
 
 
-def _judge_note(it: dict, home) -> tuple:
-    """-> (use, result, digest label). The point's heading routes by rule where it is unambiguous
-    (no model request); otherwise the questions the heading leaves open are asked."""
-    kind, ref, state = it["kind"], it["ref"], it["state"]
-    if kind == "deviation":
-        return "label-rule", {"outcome": "deviation", "confirm": False, "pass": 0, "inputs": {},
-                              "rule": True}, "deviation: accept or revert (label rule)"
-    if kind == "durable":
-        return "label-rule", {"outcome": "brain", "confirm": False, "pass": 0, "inputs": {},
-                              "rule": True}, "brain (label rule)"
-    if kind == "followup":
-        r = decide("followup-point", ref, state, home=home)
-        return "followup-point", r, {"parked": "follow-up (Parked row)",
-                                     "loose-end": "follow-up (loose end)",
-                                     "reject": _REJECT_DONE}.get(r["outcome"], r["outcome"])
-    if kind == "process":
-        r = decide("process-point", ref, state, home=home)
-        if r["outcome"] == "follow-up":
-            r, label = _refine_follow_up(r, it, home)
-            return "process-point", r, label
-        return "process-point", r, ("reject: process note, no action" if r["outcome"] == "reject"
-                                    else r["outcome"])
-    r = decide("note-route", ref, state, home=home)
-    if r["outcome"] == "follow-up":
-        r, label = _refine_follow_up(r, it, home)
-        return "note-route", r, label
-    return "note-route", r, _REJECT_DONE if r["outcome"] == "reject" else r["outcome"]
-
-
-def _cause(r: dict) -> str:
+def _cause(r: dict, use: "str | None" = None) -> str:
     """Why an item escalated: the unsure questions, or the answers that conflict."""
     if r["outcome"] != "escalate":
         return ""
-    unsure = [k for k, v in r["inputs"].items() if v == "unsure"]
+    reg = _registry()
+    reads = reg.USES[use]["reads"](dict(r["inputs"])) if use in reg.USES and         set(r["inputs"]) == {q["id"] for q in reg.USES[use]["questions"]} else list(r["inputs"])
+    unsure = [k for k in reads if r["inputs"].get(k) == "unsure"]
     if unsure:
         return "unsure: " + ", ".join(unsure)
     yes = [f"{k}={v}" for k, v in r["inputs"].items() if v == "yes"]
     return "conflict: " + (", ".join(yes) if yes else "no answer is yes")
 
 
-def triage(home, register: "str | None" = None) -> dict:
+def triage(home, fresh: bool = False) -> dict:
     """Gather, judge, return the digest data. Reads the home, writes nothing in it. Raises
     `Unavailable` (so the caller prints one line and no partial output) when System One is off or a
     call fails."""
     home = Path(home)
     _active_config(home)                                  # Off -> raises before any gathering
     c = _canary()
-    items = _note_items(home, c)
     parked = _parked_items(home, c)
-    loose, loose_rows = _loose_end_items(home)
+    loose, loose_rows, _orders = _loose_end_items(home)
     as_dup = [{"ref": r["id"], "text": r["item"]} for r in loose_rows]
-    items += parked + _duplicate_items(home, c, parked + as_dup)
-    items += loose
-    if register:
-        items += _register_items(register, c)
+    items = parked + _duplicate_items(home, c, parked + as_dup) + loose
     results = []
     for it in items:
-        if it["group"] == "notes":
-            use, r, label = _judge_note(it, home)
-        else:
-            use = it.get("use") or _USE_OF[it["group"]]
-            r = decide(use, it["ref"], it["state"], home=home)
-            label = r["outcome"]
+        use = it.get("use") or _USE_OF[it["group"]]
+        r = decide(use, it["ref"], it["state"], home=home, fresh=fresh)
         results.append({"group": it["group"], "use": use, "ref": it["ref"], "outcome": r["outcome"],
-                        "label": label, "confirm": r["confirm"], "pass": r["pass"],
-                        "inputs": r["inputs"], "text": it["text"],
-                        "rule": bool(r.get("rule")), "cause": _cause(r)})
+                        "label": r["outcome"], "confirm": r["confirm"], "pass": r["pass"],
+                        "inputs": r["inputs"], "text": it["text"], "cause": _cause(r, use),
+                        "cached": bool(r.get("cached"))})
     counts = {"settled": 0, "confirm": 0, "escalate": 0}
     for r in results:
-        r["review"] = r["confirm"] or r["outcome"] in ("escalate", "deviation")
+        r["review"] = r["confirm"] or r["outcome"] == "escalate"
         counts["confirm" if r["confirm"] else "escalate" if r["review"] else "settled"] += 1
     seen: set = set()
     for r in results:                     # the best join of an item: its first `join` pair (best score first)
@@ -1149,15 +1137,9 @@ def triage(home, register: "str | None" = None) -> dict:
             if item not in seen:
                 seen.add(item)
                 r["best"] = True
+    bundles = _bundle_groups(results)
     return {"registry": _registry().REGISTRY_VERSION, "items": results, "counts": counts,
-            "bundles": _bundle_groups(results)}
-
-
-def _flags(r: dict) -> str:
-    names = {"money_or_safety": "safety", "user_visible": "user-visible", "severe": "severe",
-             "several_items": "several"}
-    on = [n for k, n in names.items() if r["inputs"].get(k) == "yes"]
-    return f" [{', '.join(on)}]" if on else ""
+            "bundles": bundles, "plan": _drain_plan(results, bundles)}
 
 
 def format_digest(d: dict) -> str:
@@ -1165,15 +1147,15 @@ def format_digest(d: dict) -> str:
     starts with a marker (`ok`, `READ`, `|`, `==`, `counts`), never with a markdown heading."""
     out = [f"== system-one triage (registry v{d['registry']}): {len(d['items'])} items =="]
     order = {"fired": 0, "waiting": 1}
-    for group in ("notes", "parked", "duplicates", "register", "loose-ends"):
+    for group in ("parked", "duplicates", "loose-ends"):
         rows = [r for r in d["items"] if r["group"] == group]
         if not rows:
             continue
         rows.sort(key=lambda r: (r["review"], order.get(r["outcome"], 2)))
         if group == "loose-ends":
-            # each item's row-state, then its best join; a bundle pair is rolled into a group below
-            rank = {"row-state": 0, "loose-end-join": 1, "loose-end-bundle": 2}
-            rows = [r for r in rows if r["use"] == "row-state" or r["review"]
+            # each item's loose-end-state, then its best join; a bundle pair is rolled into a group below
+            rank = {"loose-end-state": 0, "loose-end-join": 1, "loose-end-bundle": 2}
+            rows = [r for r in rows if r["use"] == "loose-end-state" or r["review"]
                     or (r["use"] == "loose-end-join" and r.get("best"))]
             rows.sort(key=lambda r: (rank[r["use"]], r["ref"]))
         out.append(f"== {group}: {len(rows)} ==")
@@ -1181,8 +1163,10 @@ def format_digest(d: dict) -> str:
             mark = "READ" if r["review"] else "ok  "
             tag = " (confirm: report only, never applied)" if r["confirm"] else \
                   f" ({r['cause']})" if r["cause"] else ""
-            how = "rule" if r.get("rule") else f"pass {r['pass']}"
-            out.append(f"{mark} {r['ref']}  {r['label']}{tag}{_flags(r)}  [{how}]")
+            how = f"pass {r['pass']}"
+            if r.get("cached"):
+                how += "] [cache"
+            out.append(f"{mark} {r['ref']}  {r['label']}{tag}  [{how}]")
             if r["review"]:
                 for ln in r["text"].splitlines() or [""]:
                     out.append(f"  | {ln}")
@@ -1191,9 +1175,351 @@ def format_digest(d: dict) -> str:
         if group == "loose-ends":
             for g in d.get("bundles", []):
                 out.append(f"ok   bundle {' '.join(g)}  (one order could do these together)")
+            for p in d.get("plan", []):                 # WO-098: one suggested step per item; nothing applied
+                out.append(f"ok   plan {p['ref']}  {p['step']}")
     c = d["counts"]
     out.append(f"counts: settled {c['settled']}, confirm {c['confirm']}, escalate {c['escalate']}")
     return "\n".join(out)
+
+
+# ------------------------------------------------------------------ the drain proposals (WO-098)
+# `drain` is the one System One command that writes in the home: one file per proposal under
+# `<home>/drain/pending/`, with a federation-shaped lifecycle (accept by authoring a native order, decline
+# with a reason, defer). The proposals are built from our own list and code, so each body is shown in full.
+# No sentence is model-written: each is an item's own text or built by code from the answers.
+DRAIN_DIR = "drain"
+DRAIN_KINDS = ("join", "new-order", "ask", "park", "close", "read")
+_TICKS = re.compile(r"`([^`\n]{2,60})`")
+_DRAIN_ID = re.compile(r"[0-9a-f]{12}")
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    import tempfile
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".s1-", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def drain_id(kind: str, items: list, wo: "str | None" = None) -> str:
+    """A fingerprint of the proposal: its kind, its sorted item ids, and the target order for a join."""
+    key = "|".join([kind, ",".join(sorted(items))] + ([wo] if kind == "join" and wo else []))
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+
+
+def _group_context(home: Path, c, ids: list, rows: dict, orders: list) -> list:
+    """Context gathered by code: the Source orders and their titles, paths and backticked names found in
+    the items, open orders sharing those paths, the oldest item's age."""
+    titles = {nnn: _title(_read_text(path) or "", path.stem) for nnn, path, _res in _wo_listing(home, c)}
+    srcs, paths, names = [], [], []
+    for ref in ids:
+        r = rows[ref]
+        for w in _REF.findall(r["source"] + " " + r["text"]):
+            if w.startswith("WO-") and w not in srcs:
+                srcs.append(w)
+        paths += [x for x in _PATH.findall(r["text"]) if x not in paths]
+        names += [x for x in _TICKS.findall(r["text"]) if x not in names]
+    out = []
+    if srcs:
+        out.append("Source orders: " + "; ".join(f"{w} ({titles.get(w[3:], 'no such order')})" for w in srcs))
+    if paths:
+        out.append("Paths: " + ", ".join(f"`{x}`" for x in paths))
+    if names:
+        out.append("Names: " + ", ".join(f"`{x}`" for x in names))
+    sharing = [o["ref"] for o in orders if any(x in o["text"] for x in paths)]
+    if sharing:
+        out.append("Open orders that share these paths: " + ", ".join(sharing))
+    ages = [rows[r]["age"] for r in ids if rows[r]["age"] is not None]
+    if ages:
+        out.append(f"Oldest item: {max(ages)} days")
+    return out
+
+
+def _proposal_body(p: dict, rows: dict, ctx: list, titles: dict) -> list:
+    out = ["", "## Items", ""]
+    for ref in p["items"]:
+        r = rows[ref]
+        age = f"{r['age']} days old" if r["age"] is not None else "age unknown"
+        out.append(f"- {ref} (Source: {r['source']}; {age}): {r['text']}")
+    if p["kind"] == "join":
+        out += ["", "## Target", "", "- related open order: consider adding",
+                f"- {p['wo']}: {titles.get(p['wo'], '')}"]
+        if p.get("in_progress"):
+            out.append(f"- target in progress: {p['in_progress']}")
+    if p["kind"] == "park":
+        out += ["", "## Trigger words found", "", f"- {p['trigger']}"]
+    if p["kind"] == "read":
+        out += ["", "## Unsure answers", "", f"- {p.get('cause') or 'the answers conflict'}"]
+    if ctx:
+        out += ["", "## Context", ""] + [f"- {x}" for x in ctx]
+    return out
+
+
+def _proposal_file(p: dict, created: str, updated: str, model: str, rows, ctx, titles) -> str:
+    head = ["# Drain proposal " + p["id"], "", f"- id: {p['id']}", f"- kind: {p['kind']}",
+            f"- items: {', '.join(p['items'])}"]
+    if p["kind"] == "join":
+        head.append(f"- target: {p['wo']}")
+        if p.get("in_progress"):
+            head.append(f"- target in progress: {p['in_progress']}")
+    head += [f"- created: {created}", f"- updated: {updated}", f"- model: {model}"]
+    return "\n".join(head + _proposal_body(p, rows, ctx, titles)) + "\n"
+
+
+def _read_proposal(path: Path) -> "dict | None":
+    text = _read_text(path)
+    if text is None:
+        return None
+    meta = {}
+    for ln in text.splitlines():
+        m = re.match(r"- (id|kind|items|target|created|updated|model): (.*)$", ln)
+        if m and m.group(1) not in meta:
+            meta[m.group(1)] = m.group(2).strip()
+    if not meta.get("id") or not meta.get("kind"):
+        return None
+    meta["item_list"] = [x.strip() for x in meta.get("items", "").split(",") if x.strip()]
+    meta["text"] = text
+    return meta
+
+
+def _drain_dirs(home: Path) -> dict:
+    return {k: Path(home) / DRAIN_DIR / k for k in ("pending", "accepted", "declined")}
+
+
+def drain(home, fresh: bool = False) -> dict:
+    """Ask the loose-ends group (state, joins, bundles) and write one file per proposal under
+    `<home>/drain/pending/`. A proposal declined before (same fingerprint) is not proposed again; a
+    pending file this run no longer produces (its items left the list, or the answers regrouped them) is
+    removed. Raises `Unavailable` (nothing written) when System One is off or a call fails.
+    -> {"counts", "written", "removed", "skipped"}."""
+    home = Path(home)
+    cfg = _active_config(home)
+    c = _canary()
+    le = _loose_ends()
+    items, loose_rows, orders = _loose_end_items(home)
+    results = []
+    for it in items:
+        r = decide(it["use"], it["ref"], it["state"], home=home, fresh=fresh)
+        results.append({"group": it["group"], "use": it["use"], "ref": it["ref"], "outcome": r["outcome"],
+                        "text": it["text"], "cause": _cause(r, it["use"])})
+    bundles = _bundle_groups(results)
+    plan = _drain_plan(results, bundles)
+    cause = {r["ref"]: r["cause"] for r in results if r["use"] == "loose-end-state"}
+    rows = {r["id"]: {"text": _squash(r["item"]), "source": r["source"], "age": le.age_days(r["added"])}
+            for r in loose_rows}
+    titles = {o["ref"]: o["title"] for o in orders}
+    progress = {o["ref"]: {"worktree": "a worktree exists", "notes started": "its Implementer notes are started"
+                           }.get(o["dispatched"], "") for o in orders}
+    props: list = []
+    for wo in sorted({p["wo"] for p in plan if p["kind"] == "join"}):
+        props.append({"kind": "join", "items": [p["ref"] for p in plan if p["kind"] == "join" and p["wo"] == wo],
+                      "wo": wo, "in_progress": progress.get(wo) or ""})
+    for g in bundles:
+        mem = [x for x in g if any(p["ref"] == x and p["kind"] == "bundle" for p in plan)]
+        if mem:
+            props.append({"kind": "new-order", "items": mem})
+    for p in plan:
+        if p["kind"] == "open":
+            props.append({"kind": "new-order", "items": [p["ref"]]})
+        elif p["kind"] in ("ask", "park", "close", "read"):     # an unsure item never vanishes: it is a `read`
+            props.append({"kind": p["kind"], "items": [p["ref"]], "cause": cause.get(p["ref"], ""),
+                          "trigger": (p["step"][len("park (trigger: "):-1] if p["kind"] == "park" else "")})
+    dirs = _drain_dirs(home)
+    now = _now()
+    written, skipped, keep = [], [], set()
+    for p in props:
+        p["items"] = sorted(p["items"], key=lambda t: int(t[1:]))
+        p["id"] = drain_id(p["kind"], p["items"], p.get("wo"))
+        if (dirs["declined"] / f"{p['id']}.md").is_file():
+            skipped.append(p["id"])
+            continue
+        keep.add(p["id"])
+        path = dirs["pending"] / f"{p['id']}.md"
+        old = _read_proposal(path) if path.is_file() else None
+        ctx = _group_context(home, c, p["items"], rows, orders)
+        created = old["created"] if old and old.get("created") else now
+        text = _proposal_file(p, created, now, cfg.get("model", ""), rows, ctx, titles)
+        if old and re.sub(r"- updated: .*", "", old["text"]) == re.sub(r"- updated: .*", "", text):
+            continue                                   # same proposal, same body: leave the file alone
+        _write_text_atomic(path, text)
+        written.append(p["id"])
+    removed = []
+    if dirs["pending"].is_dir():
+        for f in sorted(dirs["pending"].glob("*.md")):
+            if f.stem not in keep and _DRAIN_ID.fullmatch(f.stem):
+                f.unlink()
+                removed.append(f.stem)
+    counts = {k: sum(1 for p in props if p["kind"] == k and p["id"] in keep) for k in DRAIN_KINDS}
+    counts["pending"] = sum(counts.values())
+    return {"counts": counts, "written": written, "removed": removed, "skipped": skipped}
+
+
+def drain_status(home) -> "str | None":
+    """One line, or None when there is no pending folder."""
+    pend = _drain_dirs(home)["pending"]
+    if not pend.is_dir():
+        return None
+    n = {k: 0 for k in DRAIN_KINDS}
+    for f in pend.glob("*.md"):
+        m = _read_proposal(f)
+        if m and m["kind"] in n:
+            n[m["kind"]] += 1
+    return (f"drain: {sum(n.values())} pending ({n['join']} join, {n['new-order']} new-order, "
+            f"{n['ask']} ask, {n['park']} park, {n['close']} close, {n['read']} read)")
+
+
+def _drain_dispose(home, pid: str, state: str, note: str, drop_to: "str | None" = None) -> str:
+    """Move a pending proposal to `accepted/` or `declined/`, appending the disposition line. `drop_to`:
+    drop the proposal's items still on the list to that destination first (`loose_ends.py drop`)."""
+    le = _loose_ends()
+    dirs = _drain_dirs(home)
+    if not _DRAIN_ID.fullmatch(pid or ""):
+        raise ValueError(f"{pid!r} is not a proposal id (12 hex characters)")
+    src = dirs["pending"] / f"{pid}.md"
+    m = _read_proposal(src) if src.is_file() else None
+    if m is None:
+        raise ValueError(f"no pending proposal {pid} under {dirs['pending']}")
+    if drop_to:
+        live = {r["id"] for r in le.rows_of(home)}
+        try:
+            for x in m["item_list"]:
+                if x in live:
+                    le.drop(home, x, drop_to)
+        except le.LooseEndsError as e:
+            raise ValueError(str(e))
+    dest = dirs[state] / f"{pid}.md"
+    _write_text_atomic(dest, m["text"].rstrip("\n") + f"\n\n{state}: {note}, {_now()[:10]}\n")
+    src.unlink()
+    return str(dest)
+
+
+def drain_accept(home, pid: str, work_order: "str | None" = None, parked: "str | None" = None,
+                 reason: "str | None" = None) -> str:
+    """Accept a proposal by the act that carries it out: a `join` or `new-order` needs the native order
+    (`work-orders/` holds it, and it must be open: a resolved order, or a join whose target is resolved, is
+    refused before anything changes), a `park` needs the
+    P<n> row, a `close` needs a reason; an `ask` needs nothing (the items stay on the list)."""
+    home = Path(home)
+    src = _drain_dirs(home)["pending"] / f"{pid}.md"
+    m = _read_proposal(src) if src.is_file() else None
+    if m is None:
+        raise ValueError(f"no pending proposal {pid}")
+    kind = m["kind"]
+    listing = {n: r for n, _p, r in _wo_listing(home, _canary())}
+
+    def require_open(nnn: str) -> None:
+        if listing.get(nnn):
+            raise ValueError(f"WO-{nnn} is resolved: a proposal is accepted into an open order, so nothing "
+                             f"was changed (decline it, or author a new order)")
+    if kind == "join" and m.get("target"):
+        require_open(str(m["target"]).strip().lstrip("WwOo-").zfill(3))
+    if work_order and kind in ("join", "new-order", "read"):
+        require_open(str(work_order).strip().lstrip("WwOo-").zfill(3))
+    if kind in ("join", "new-order"):
+        if not work_order:
+            raise ValueError(f"a {kind} proposal is accepted with --work-order NNN (author the order first)")
+        nnn = str(work_order).strip().lstrip("WwOo-").zfill(3)
+        if nnn not in listing:
+            raise ValueError(f"no work-order {nnn} under {home / 'work-orders'}: author it first")
+        return _drain_dispose(home, pid, "accepted", f"WO-{nnn}", f"WO-{nnn}")
+    if kind == "read":                  # the orchestrator decided what the item is: the same three forms
+        if work_order:
+            kind = "new-order"
+        elif parked:
+            kind = "park"
+        elif reason:
+            kind = "close"
+        else:
+            raise ValueError("a read proposal is accepted with --work-order NNN, --parked P<n> or --reason R")
+    if kind == "park":
+        if not (parked and re.fullmatch(r"P\d+", parked)):
+            raise ValueError("a park proposal is accepted with --parked P<n> (park it in the INDEX first)")
+        return _drain_dispose(home, pid, "accepted", parked, parked)
+    if kind == "close":
+        if not (reason and len(reason.split()) >= 3):
+            raise ValueError("a close proposal is accepted with --reason (a few words: what makes it done)")
+        return _drain_dispose(home, pid, "accepted", f"closed: {_squash(reason)}", f"closed:{_squash(reason)}")
+    return _drain_dispose(home, pid, "accepted", "asked the operator")
+
+
+def drain_decline(home, pid: str, reason: "str | None") -> str:
+    if not reason or not reason.strip():
+        raise ValueError("decline needs --reason")
+    return _drain_dispose(Path(home), pid, "declined", _squash(reason))
+
+
+def _drain_cli(args) -> int:
+    priv = argparse.ArgumentParser(prog="system_one.py drain", add_help=False)
+    priv.add_argument("rest", nargs="*")
+    priv.add_argument("--work-order")
+    priv.add_argument("--parked")
+    priv.add_argument("--reason")
+    priv.add_argument("--json", action="store_true")
+    priv.add_argument("--fresh", action="store_true")
+    try:
+        ns = priv.parse_intermixed_args(list(args.rest))
+    except SystemExit:
+        return 2
+    for k in ("json", "fresh"):
+        setattr(args, k, getattr(args, k) or getattr(ns, k))
+    args.work_order, args.parked, args.reason = ns.work_order, ns.parked, ns.reason
+    rest = list(ns.rest)
+    act = rest[0] if rest and rest[0] in ("accept", "decline", "defer", "status") else None
+    try:
+        if act is None:
+            if len(rest) != 1:
+                print("drain: usage: drain <home> | accept ID --work-order NNN [ROOT] | decline ID --reason R "
+                      "[ROOT] | defer ID [ROOT] | status [ROOT]", file=sys.stderr)
+                return 2
+            try:
+                d = drain(_resolve_home(rest[0]), fresh=args.fresh)
+            except Off:
+                print("system-one: off")
+                return 0
+            except Unavailable as e:
+                print(f"system-one: unavailable ({e})")
+                return 0
+            c = d["counts"]
+            print(json.dumps(d) if args.json else
+                  f"drain: {c['pending']} pending ({c['join']} join, {c['new-order']} new-order, {c['ask']} ask, "
+                  f"{c['park']} park, {c['close']} close, {c['read']} read); {len(d['written'])} written, {len(d['removed'])} removed")
+            return 0
+        if act == "status":
+            if len(rest) > 2:
+                print("drain: status takes at most one ROOT", file=sys.stderr)
+                return 2
+            line = drain_status(_resolve_home(rest[1] if len(rest) == 2 else "."))
+            if line:
+                print(line)
+            return 0
+        if len(rest) not in (2, 3):
+            print(f"drain: {act} needs an ID and at most one ROOT", file=sys.stderr)
+            return 2
+        home = _resolve_home(rest[2] if len(rest) == 3 else ".")
+        if act == "defer":
+            if not (_drain_dirs(home)["pending"] / f"{rest[1]}.md").is_file():
+                print(f"drain: no pending proposal {rest[1]}", file=sys.stderr)
+                return 2
+            print(f"deferred: {rest[1]} (unchanged)")
+            return 0
+        if act == "accept":
+            dest = drain_accept(home, rest[1], args.work_order, args.parked, args.reason)
+        else:
+            dest = drain_decline(home, rest[1], args.reason)
+        print(f"{'accepted' if act == 'accept' else 'declined'}: {rest[1]} -> {dest}")
+        return 0
+    except (OSError, ValueError) as e:
+        print(f"drain: {e}", file=sys.stderr)
+        return 2
 
 
 # ------------------------------------------------------------------ intake and board (WO-086)
@@ -1426,13 +1752,12 @@ def _cards_cli(args) -> int:
 
 
 # ------------------------------------------------------------------ the brain and the lenses (WO-087)
-# `lenses`, `brain-dupes` and `brain-target` read and print: nothing is written in the repo or the
+# `lenses` and `brain-dupes` read and print: nothing is written in the repo or the
 # global lens library. Code gathers and prefilters; the model answers one small question per
 # candidate; an unsure answer degrades to "maybe" / "READ", never to a silent drop.
 GLOBAL_LENS_ENV = "GITOS_GLOBAL_LENS_DIR"
 MAX_BRAIN_PAIRS = 30
 TAG_HUB = 8                       # a tag on more pages than this is no signal
-TARGET_MIN_SCORE = 2
 _LENS_NEEDS = ("domain", "when-to-apply")
 
 
@@ -1531,25 +1856,20 @@ def _work_state(home: Path, wo: "str | None", text_file: "str | None") -> tuple:
 
 
 def match_lenses(home, wo=None, text_file=None, global_dir=None) -> dict:
-    """Judge every lens against the work. Raises Unavailable (off, down) before any partial output."""
+    """List the repo's active lenses with each one's domain and when-to-apply, plus the problems the
+    canary's lens readers find. No model call (WO-098: matching a lens to the work stays with the
+    reasoning model, which reads the list). Raises Off when System One is not on in this repo."""
     home = Path(home)
     _active_config(home)
     lm = _lenses_mod()
     cfg = lm.load(home)
-    if cfg["state"] != "on":                          # lenses are opt-in per repo: no judging, no model call
+    if cfg["state"] != "on":                          # lenses are opt-in per repo
         return {"registry": _registry().REGISTRY_VERSION, "work": "", "lenses": [], "off": True,
                 "problems": [f"lenses.json: {cfg['error']}"] if cfg["error"] else []}
-    label, work = _work_state(home, wo, text_file)
+    label, _work = _work_state(home, wo, text_file)   # a missing work-order or text file still refuses
     act = {(a["layer"], a["name"]) for a in lm.active(home, global_dir)}
     g = gather_lenses(home, global_dir, act)
-    rows = []
-    for lens in g["lenses"]:
-        state = (f"Lens {lens['name']}. Domain: {_cap(lens['domain'], 200)}. "
-                 f"When to apply: {_cap(lens['when'], 400)}\n{work}")
-        r = decide("lens-match", f"{label}~{lens['name']}", state, home=home)
-        rows.append({**lens, "verdict": {"applies": "applies", "no": "no"}.get(r["outcome"], "maybe"),
-                     "pass": r["pass"]})
-    rows.sort(key=lambda r: ({"applies": 0, "maybe": 1, "no": 2}[r["verdict"]], r["name"]))
+    rows = sorted(g["lenses"], key=lambda r: r["name"])
     return {"registry": _registry().REGISTRY_VERSION, "work": label, "lenses": rows,
             "problems": g["problems"]}
 
@@ -1557,15 +1877,17 @@ def match_lenses(home, wo=None, text_file=None, global_dir=None) -> dict:
 def format_lenses(d: dict) -> str:
     if d.get("off"):
         return "\n".join(["lenses are off for this repo"] + [f"problem: {p}" for p in d["problems"]])
-    out = [f"== system-one lenses (registry v{d['registry']}): {len(d['lenses'])} lenses vs {d['work']} =="]
+    out = [f"== system-one lenses (registry v{d['registry']}): {len(d['lenses'])} active lenses; "
+           f"you decide which apply to {d['work']} =="]
     for r in d["lenses"]:
-        out.append(f"{r['verdict']:<8}{r['name']}  [{r['layer']}]  {_cap(r['domain'], 60)}  [pass {r['pass']}]")
+        out.append(f"{r['name']}  [{r['layer']}]  domain: {_cap(r['domain'], 120)}  "
+                   f"when: {_cap(r['when'], 300)}")
     if not d["lenses"]:
-        out.append("no lenses found in either layer")
+        out.append("no active lenses")
     for p in d["problems"]:
         out.append(f"problem: {p}")
-    out.append("note: `maybe` means the model was unsure: read that lens's when-to-apply yourself. "
-               "The role still reads each matching lens; this is a suggestion.")
+    out.append("note: no model is asked; read each lens's when-to-apply against the work and apply "
+               "the ones that match.")
     return "\n".join(out)
 
 
@@ -1637,61 +1959,6 @@ def format_brain_dupes(d: dict) -> str:
     return "\n".join(out)
 
 
-def brain_target_candidates(pages: list, fact: str) -> list:
-    """At most BRAIN_SLOTS pages that share tags or tokens with the fact, best first."""
-    bl = _brain_lint()
-    words = bl.title_tokens(fact)
-    _r, _p, body_words = _signals(fact, "")
-    scored = []
-    for p in pages:
-        pw = _signals(p["body"][:1500], "")[2]
-        score = 2 * len(p["tags"] & words) + len(p["ttok"] & words) + (1 if len(body_words & pw) >= 5 else 0)
-        if score >= TARGET_MIN_SCORE:
-            scored.append((-score, p["ref"], p))
-    scored.sort(key=lambda s: s[:2])
-    return [p for _s, _r2, p in scored[:_registry().BRAIN_SLOTS]]
-
-
-def brain_target(home, fact: str) -> dict:
-    """-> {"suggestion": "update <ref>" | "new page" | "undecided", "candidates": [ref], ...}.
-    With no candidate the answer is `new page` and no call is made."""
-    home = Path(home)
-    _active_config(home)
-    cands = brain_target_candidates(_brain_pages(home), fact)
-    res = {"registry": _registry().REGISTRY_VERSION, "candidates": [p["ref"] for p in cands],
-           "suggestion": "new page", "pass": 0, "why": "no existing page shares tags or words with the fact"}
-    if not cands:
-        return res
-    listing = "\n".join(f"Candidate {n}: {p['ref']}. Tags: {', '.join(sorted(p['tags'])) or 'none'}. "
-                        f"{_page_text(p, 140)}" for n, p in enumerate(cands, 1))
-    state = f"New fact: {_cap(fact, 500)}\n{listing}"
-    f = decide("brain-fits", "fact", state, home=home)
-    res["pass"] = f["pass"]
-    if f["outcome"] == "new-page":
-        res["why"] = "the model says no candidate covers the fact"
-        return res
-    if f["outcome"] == "escalate":
-        res.update(suggestion="undecided", why="unsure whether any candidate fits: read them")
-        return res
-    t = decide("brain-target", "fact", state, home=home)
-    res["pass"] = max(res["pass"], t["pass"])
-    slot = t["outcome"].rsplit("-", 1)[-1] if t["outcome"] != "escalate" else ""
-    if slot.isdigit() and 1 <= int(slot) <= len(cands):
-        res.update(suggestion=f"update {cands[int(slot) - 1]['ref']}", why="the model chose this candidate")
-    else:
-        res.update(suggestion="undecided", why="a page fits but the model was unsure which: read the candidates")
-    return res
-
-
-def format_brain_target(d: dict) -> str:
-    out = [f"== system-one brain-target (registry v{d['registry']}) ==",
-           f"{'ok  ' if d['suggestion'] != 'undecided' else 'READ'} {d['suggestion']}  ({d['why']})  "
-           f"[pass {d['pass']}]"]
-    out += [f"  | candidate {n}: {r}" for n, r in enumerate(d["candidates"], 1)]
-    out.append("note: a suggestion only; the orchestrator reads the page and writes the update.")
-    return "\n".join(out)
-
-
 def _brain_cli(args) -> int:
     home = _resolve_home(args.home)
     try:
@@ -1709,17 +1976,8 @@ def _brain_cli(args) -> int:
         if not (home / "brain" / "wiki").is_dir():
             print(f"{args.cmd}: no brain/wiki under {home}", file=sys.stderr)
             return 2
-        if args.cmd == "brain-dupes":
-            d = brain_dupes(home)
-            print(json.dumps(d) if args.json else format_brain_dupes(d))
-        else:
-            try:
-                fact = Path(args.fact).read_text(encoding="utf-8")
-            except OSError as e:
-                print(f"brain-target: cannot read --fact ({type(e).__name__})", file=sys.stderr)
-                return 2
-            d = brain_target(home, fact)
-            print(json.dumps(d) if args.json else format_brain_target(d))
+        d = brain_dupes(home)
+        print(json.dumps(d) if args.json else format_brain_dupes(d))
         return 0
     except Off:
         print("system-one: off")
@@ -1939,9 +2197,8 @@ def _scan_cli(args) -> int:
     return 0
 
 
-# ------------------------------------------------------------------------------------- scope and complexity (WO-089)
-HUNK_TOKENS = 6000                # a hunk over this many tokens (4 characters each) is split
-_SCOPE_END = "every hunk still has to be read: this digest orders the read, it is not a check of the diff"
+# ------------------------------------------------------------------------------------- scope (WO-089)
+_SCOPE_END = "every changed file still has to be read: this lists paths, it is not a check of the diff"
 _PATHISH = re.compile(r"^[\w./*?\[\]{}-]+$")
 
 
@@ -2004,56 +2261,18 @@ def _default_range(root: Path, nnn: str) -> "str | None":
     return None
 
 
-def _diff_hunks(diff: str) -> list:
-    """[{file, line, lines}] per hunk of a unified diff; `line` is the first line in the new file."""
-    out, cur, fname = [], None, None
-    for ln in diff.splitlines():
-        if ln.startswith("diff --git "):
-            fname, cur = None, None
-            m = re.match(r"diff --git a/(.+) b/(.+)$", ln)
-            if m:
-                fname = m.group(2)
-        elif ln.startswith("@@"):
-            m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)", ln)
-            cur = {"file": fname, "line": int(m.group(2)) if m else 0, "lines": [ln]}
-            out.append(cur)
-        elif cur is not None:
-            cur["lines"].append(ln)
-    return [h for h in out if h["file"]]
-
-
-def _split_hunk(h: dict, limit: int) -> list:
-    """The hunk as one or more pieces of at most `limit` tokens; `line` follows each piece."""
-    if sum(len(x) + 1 for x in h["lines"]) <= limit * 4:
-        return [h]
-    pieces, cur, size, line = [], [], 0, h["line"]
-    start = line
-    for ln in h["lines"]:
-        if cur and size + len(ln) + 1 > limit * 4:
-            pieces.append({"file": h["file"], "line": start, "lines": cur})
-            cur, size, start = [], 0, line
-        cur.append(ln)
-        size += len(ln) + 1
-        if not ln.startswith("-"):
-            line += 1
-    if cur:
-        pieces.append({"file": h["file"], "line": start, "lines": cur})
-    return pieces
-
-
 def scope_check(home, wo: str, rng: "str | None" = None) -> dict:
-    """The rule half (`forbidden`, `outside-scope`) never needs the model; the hunk half becomes a
-    stated line when System One is off or down. Writes nothing."""
+    """A code rule on the paths a work-order's scope names: a changed file the scope's Not in scope names
+    is `forbidden`, one no scope path names is `outside-scope`. No model; writes nothing."""
     home = Path(home)
     nnn, text, c = _wo_text(home, wo)
-    scope, inside, forbidden = _scope_patterns(text, c)
+    _scope, inside, forbidden = _scope_patterns(text, c)
     root = Path((_git(home, "rev-parse", "--show-toplevel") or str(home.parent)).strip())
     rng = rng or _default_range(root, nnn)
     if not rng:
         raise ValueError(f"no range for WO-{nnn}: no branch wo-{nnn} and no main/master; pass --range A..B")
-    diff = _git(root, "diff", "--no-renames", "--unified=3", rng)
     names = _git(root, "diff", "--no-renames", "--name-only", rng)
-    if diff is None or names is None:
+    if names is None:
         raise ValueError(f"git diff {rng} failed under {root}")
     files = [x for x in names.splitlines() if x.strip()]
     try:
@@ -2067,101 +2286,26 @@ def scope_check(home, wo: str, rng: "str | None" = None) -> dict:
             facts.append({"file": f, "class": "forbidden", "why": f"Not in scope names `{hit}`"})
         elif not any(_matches(f, p) for p in inside + [own]):
             facts.append({"file": f, "class": "outside-scope", "why": "no path in the scope names it"})
-    judged = {f["file"] for f in facts}
-    rows, model = [], {"state": "checked"}
-    try:
-        _active_config(home)
-    except Unavailable as e:
-        model = {"state": "off" if isinstance(e, Off) else "unavailable", "why": str(e)}
-    pieces = [p for h in _diff_hunks(diff) if h["file"] not in judged for p in _split_hunk(h, HUNK_TOKENS)]
-    if model["state"] == "checked":
-        for p in pieces:
-            state = f"Scope text: {_cap(scope, 2500)}\nFile: {p['file']}\nHunk:\n" + "\n".join(p["lines"])
-            try:
-                r = decide("hunk-scope", f"WO-{nnn}:{p['file']}:{p['line']}", state, home=home)
-            except Unavailable as e:
-                model = {"state": "unavailable", "why": str(e)}
-                rows = []
-                break
-            first = next((x[1:].strip() for x in p["lines"][1:] if x[:1] in "+-" and x[1:].strip()), "")
-            rows.append({"file": p["file"], "line": p["line"], "first": first,
-                         "verdict": {"fits": "fits", "look": "look"}.get(r["outcome"], "unsure")})
-    return {"registry": _registry().REGISTRY_VERSION, "wo": f"WO-{nnn}", "range": rng,
-            "files": len(files), "hunks": len(pieces), "facts": facts, "model": model, "hunk_rows": rows}
+    return {"wo": f"WO-{nnn}", "range": rng, "files": len(files), "facts": facts}
 
 
 def format_scope(d: dict) -> str:
-    out = [f"== system-one scope {d['wo']} (registry v{d['registry']}): {d['range']}, "
-           f"{d['files']} files, {d['hunks']} hunks =="]
+    out = [f"== system-one scope {d['wo']}: {d['range']}, {d['files']} files =="]
     for cls in ("forbidden", "outside-scope"):
         out += [f"{cls:<14}{f['file']}  ({f['why']})" for f in d["facts"] if f["class"] == cls]
-    m = d["model"]
-    if m["state"] != "checked":
-        out.append(f"hunks: not judged, system-one {m['state']} ({m.get('why', '')})")
-    for cls in ("look", "unsure"):
-        out += [f"{cls:<14}{r['file']}:{r['line']}  | {_cap(r['first'], 80)}" for r in d["hunk_rows"]
-                if r["verdict"] == cls]
-    if m["state"] == "checked":
-        out.append(f"fits: {sum(1 for r in d['hunk_rows'] if r['verdict'] == 'fits')} hunks")
     out.append(_SCOPE_END)
     return "\n".join(out)
-
-
-def complexity(home, wo: str) -> dict:
-    """Score a work-order in three one-question calls. Raises Unavailable before any output. Writes
-    nothing; picks nothing. `level` is None when the level itself is unsure (the nouls are then not
-    asked); an unsure noul is None beside a settled level."""
-    home = Path(home)
-    nnn, text, c = _wo_text(home, wo)
-    _active_config(home)
-    scope, inside, _ = _scope_patterns(text, c)
-    sev = next((ln.strip() for ln in (c.section_lines(text, "## Severity") or []) if ln.strip()), "")
-    state = (f"Work-order WO-{nnn}: {_title(text, nnn)}\nSeverity: {_cap(sev, 200)}\n"
-             f"Files named: {len(inside)}\nScope: {_cap(scope, 2500)}")
-    r = decide("wo-complexity-level", f"WO-{nnn}", state, home=home)
-    lvl = r["outcome"][len("level-"):] if r["outcome"].startswith("level-") else None
-    inputs = {"touches_shared_tooling": None, "needs_design_choice": None}
-    if lvl is not None:
-        for use, key in (("wo-touches-shared-tooling", "touches_shared_tooling"),
-                         ("wo-needs-design-choice", "needs_design_choice")):
-            v = decide(use, f"WO-{nnn}", state, home=home)["outcome"]
-            inputs[key] = v if v in ("yes", "no") else None
-    return {"registry": _registry().REGISTRY_VERSION, "wo": f"WO-{nnn}", "level": lvl,
-            "inputs": inputs, "pass": r["pass"]}
-
-
-def format_complexity(d: dict) -> str:
-    head = f"== system-one complexity {d['wo']} (registry v{d['registry']}) =="
-    if d["level"] is None:
-        return head + "\nno input (the model was unsure)"
-    i = d["inputs"]
-    words = {"1": "one file, a mechanical edit", "2": "several files or one design choice",
-             "3": "cross-module change, a new mechanism, or safety-relevant code"}
-    return "\n".join([head, f"level: {d['level']} ({words[d['level']]})",
-                      f"touches_shared_tooling: {i['touches_shared_tooling'] or 'unsure'}",
-                      f"needs_design_choice: {i['needs_design_choice'] or 'unsure'}",
-                      "note: one input to your own reading; the choice of model and effort stays yours."])
 
 
 def _scope_cli(args) -> int:
     home = _resolve_home(args.home)
     try:
-        if args.cmd == "scope":
-            d = scope_check(home, args.wo, args.range)
-            print(json.dumps(d) if args.json else format_scope(d))
-        else:
-            d = complexity(home, args.wo)
-            print(json.dumps(d) if args.json else format_complexity(d))
-        return 0
+        d = scope_check(home, args.wo, args.range)
     except (OSError, ValueError) as e:
-        print(f"{args.cmd}: {e}", file=sys.stderr)
+        print(f"scope: {e}", file=sys.stderr)
         return 2
-    except Off:
-        print("system-one: off")
-        return 0
-    except Unavailable as e:
-        print(f"system-one: unavailable ({e})")
-        return 0
+    print(json.dumps(d) if args.json else format_scope(d))
+    return 0
 
 
 # ------------------------------------------------------------------------------------- repo choice
@@ -2189,11 +2333,50 @@ def set_repo_choice(home, enabled: bool) -> None:
     state, detail = repo_choice(home)
     if state == "malformed":
         raise ValueError(f"system-one.json is malformed ({detail}): fix or delete it first")
+    if state == "retired":
+        raise ValueError(retired_line(detail.split(", ")))
     raw: dict = {}
     if (home / OPTOUT_NAME).is_file():
         raw = json.loads((home / OPTOUT_NAME).read_text(encoding="utf-8"))
     raw["enabled"] = enabled
     _write_json_atomic(home / OPTOUT_NAME, raw)
+
+
+def _strip_keys(text: str, names: list) -> str:
+    """`text` (a JSON object) without the top-level `names`. A key that sits alone on its own line is cut
+    out of the text and every other line stays byte for byte; any other layout is rewritten whole."""
+    want = {k: v for k, v in json.loads(text).items() if k not in names}
+    lines = text.splitlines(keepends=True)
+    keep = [ln for ln in lines if not any(re.match(r'\s*"' + re.escape(k) + r'"\s*:', ln) for k in names)]
+    for i, ln in enumerate(keep[:-1]):
+        if ln.rstrip().endswith(",") and keep[i + 1].strip().startswith("}"):
+            keep[i] = ln.rstrip()[:-1] + ln[len(ln.rstrip()):]
+    try:
+        if len(keep) < len(lines) and json.loads("".join(keep)) == want:
+            return "".join(keep)
+    except ValueError:
+        pass
+    return json.dumps(want, indent=2) + "\n"
+
+
+def migrate(root=".", write: bool = False) -> list:
+    """The retired keys found in the machine config and the repo's `system-one.json`: [(path, [names])].
+    With `write`, the keys are removed atomically and every other key stays. A file that is missing,
+    unreadable or not an object is skipped."""
+    found = []
+    for path in (system_home() / CONFIG_NAME, _repo_home(root) / OPTOUT_NAME):
+        try:
+            text = path.read_text(encoding="utf-8")
+            data = json.loads(text)
+        except (OSError, ValueError):
+            continue
+        names = [k for k in RETIRED_KEYS if isinstance(data, dict) and k in data]
+        if not names:
+            continue
+        found.append((path, names))
+        if write:
+            _write_text_atomic(path, _strip_keys(text, names))
+    return found
 
 
 def _repo_home(root) -> Path:
@@ -2202,6 +2385,11 @@ def _repo_home(root) -> Path:
 
 
 def _repo_cli(args) -> int:
+    rest = list(args.rest)
+    if len(rest) > 1:
+        print("repo: takes at most one ROOT", file=sys.stderr)
+        return 2
+    args.root = rest[0] if rest else "."
     home = _repo_home(args.root)
     try:
         if args.action in ("on", "off"):
@@ -2213,7 +2401,8 @@ def _repo_cli(args) -> int:
     except (OSError, ValueError) as e:
         print(f"repo: {e}", file=sys.stderr)
         return 2
-    words = {"on": "on", "off": "off", "missing": "not chosen (off)", "malformed": "malformed (off)"}
+    words = {"on": "on", "off": "off", "missing": "not chosen (off)", "malformed": "malformed (off)",
+             "retired": "retired keys (off)"}
     print(f"system-one repo: {words[state]}" + (f" - {detail}" if detail else ""))
     return 0
 
@@ -2349,18 +2538,105 @@ def _setup_cli(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ every use against a server (WO-097)
+USES_CHECK_STATE = "A short test text for checking the connection."
+
+
+def _check_answer(q: dict, a: dict) -> None:
+    """Raise Unavailable unless the normalized answer `a` is the right shape for the question `q`."""
+    if a["type"] != q["type"]:
+        raise Unavailable(f"answered type {a['type']!r} for a {q['type']!r} question")
+    if q["type"] == "choice":
+        names = list(q["criteria"])
+        if a["value"] not in names:
+            raise Unavailable(f"the choice {a['value']!r} is not one of the options")
+        if not a["probabilities"] or any(n not in a["probabilities"] for n in names):
+            raise Unavailable("the choice answer lacks a probability for every option")
+    elif q["type"] == "score":
+        if not a["probabilities"]:
+            raise Unavailable("the score answer carries no probabilities")
+
+
+def uses_check(endpoint: str, base_cfg: "dict | None" = None, model: str = "", home=None,
+               log: bool = True) -> list:
+    """Send one request per registered use, built from that use's own questions and a short neutral text
+    (`sample` of the use when the registry gives one), and check each answer parses through
+    `normalize_answer` for the declared type. -> [{use, questions, ok, reason, latency_ms}]. Decides
+    nothing and writes no `final`; each result is a `check` row in the log (never a `call` row, so the
+    cache never reads it) when `log` is true."""
+    cfg = {**DEFAULTS, **(base_cfg or {}), "endpoint": endpoint}
+    reg = _registry()
+    out = []
+    for use in reg.USES:
+        qs = reg.request_questions(use)
+        t = time.time()
+        reason = ""
+        try:
+            data = _post(endpoint, cfg, model, reg.USES[use].get("sample", USES_CHECK_STATE), qs)[0]
+            ans = normalize_response(data, list(qs))
+            for qid, a in ans.items():
+                _check_answer(qs[qid], a)
+        except Unavailable as e:
+            reason = _clean(str(e), cfg)
+        row = {"use": use, "questions": len(qs), "ok": not reason, "reason": reason,
+               "latency_ms": round((time.time() - t) * 1000, 1)}
+        out.append(row)
+        if log:
+            try:
+                _append(_home(home), {"kind": "check", "t": _now(), "model": model, **row})
+            except OSError:
+                pass
+    return out
+
+
+def _uses_check_cli(args) -> int:
+    try:
+        base = load_config()
+    except Unavailable as e:
+        print(f"unavailable: {e}", file=sys.stderr)
+        return 3
+    endpoint = args.endpoint or (base or {}).get("endpoint")
+    if not endpoint:
+        print("uses-check: no endpoint: pass --endpoint, or configure the machine first", file=sys.stderr)
+        return 2
+    if endpoint_class(endpoint, base or {}) == "remote":
+        print(f"uses-check: refused: {endpoint} is not loopback and its host is not in `trusted_hosts` "
+              f"of the machine config; nothing was contacted", file=sys.stderr)
+        return 2
+    cfg = {**DEFAULTS, **(base or {}), "endpoint": endpoint}
+    model = (base or {}).get("model", "") if endpoint == (base or {}).get("endpoint") else ""
+    if not model:
+        origin = "{0.scheme}://{0.netloc}".format(urllib.parse.urlsplit(endpoint))
+        _, data, _ = _get_json(origin + "/health", SETUP_TIMEOUT_S, _headers(cfg))
+        model = data.get("model", "") if isinstance(data, dict) and isinstance(data.get("model"), str) else ""
+    results = uses_check(endpoint, base, model, log=base is not None)
+    bad = [r for r in results if not r["ok"]]
+    if args.json:
+        print(json.dumps({"endpoint": endpoint, "model": model, "uses": results, "failed": len(bad)}))
+    else:
+        for r in results:
+            print(f"ok {r['use']} ({r['questions']} questions)" if r["ok"] else f"FAIL {r['use']}: {r['reason']}")
+        print(f"{len(results) - len(bad)} of {len(results)} uses ok" + (f", {len(bad)} failed" if bad else ""))
+    return 1 if bad else 0
+
+
 # ------------------------------------------------------------------------------------- CLI
 def _brief() -> int:
     """One line, or nothing when there is no machine config."""
     try:
         cfg = load_config()
+    except RetiredKeys as e:
+        print(f"system-one: down ({e})")
+        return 0
     except Unavailable:
         print("system-one: down (config)")
         return 0
     if cfg is None:
         return 0
-    state, _ = repo_choice(find_home())
-    if state in ("off", "malformed"):
+    state, detail = repo_choice(find_home())
+    if state == "retired":
+        print(f"system-one: down ({retired_line(detail.split(', '))})")
+    elif state in ("off", "malformed"):
         print("system-one: off in this repo")
     elif state == "missing":
         print("system-one: not chosen here")
@@ -2387,8 +2663,7 @@ def _status(as_json: bool, brief: bool = False) -> int:
         ok, detail = health(cfg["endpoint"], cfg)
         info.update({"state": "on", "endpoint": cfg["endpoint"], "model": cfg.get("model", ""),
                      "class": endpoint_class(cfg["endpoint"], cfg), "health": detail if not ok else "ok",
-                     "key": ("set" if _key(cfg) else "unset") if cfg.get("key_env") else "none",
-                     "group": cfg["group"]})
+                     "key": ("set" if _key(cfg) else "unset") if cfg.get("key_env") else "none"})
         try:
             info["registry_version"] = _registry().REGISTRY_VERSION
         except Exception as e:
@@ -2399,7 +2674,7 @@ def _status(as_json: bool, brief: bool = False) -> int:
         print("off" + (f" ({info['reason']})" if "reason" in info else ""))
     else:
         print("on")
-        for k in ("endpoint", "model", "class", "health", "key", "group", "registry_version"):
+        for k in ("endpoint", "model", "class", "health", "key", "registry_version"):
             print(f"  {k}: {info[k]}")
     return 0
 
@@ -2412,12 +2687,111 @@ def _load_json_or_text(path: str):
         return text
 
 
+# ------------------------------------------------------------------ eval of the drain (WO-098)
+_DRAIN_STATES = ("closable", "ask-operator", "park", "open")
+
+
+def _drain_points(path: str) -> list:
+    """The JSONL items of a drain eval file; a malformed line raises ValueError naming the line."""
+    pts = []
+    for n, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            p = json.loads(line)
+        except ValueError:
+            raise ValueError(f"line {n}: not valid JSON")
+        ok = (isinstance(p, dict) and isinstance(p.get("id"), str) and p["id"].strip()
+              and isinstance(p.get("text"), str) and p["text"].strip()
+              and isinstance(p.get("source", ""), str)
+              and (p.get("age_days") is None or (isinstance(p.get("age_days"), int)
+                                                 and not isinstance(p.get("age_days"), bool)))
+              and p.get("expect_state") in _DRAIN_STATES
+              and (p.get("expect_join") is None or isinstance(p.get("expect_join"), str)))
+        if not ok:
+            raise ValueError(f"line {n}: needs id, text, expect_state (one of {', '.join(_DRAIN_STATES)}), "
+                             f"and expect_join (WO-NNN or null)")
+        pts.append(p)
+    ids = [p["id"] for p in pts]
+    if len(set(ids)) != len(ids):
+        raise ValueError("an id is used on two lines")
+    return pts
+
+
+def eval_drain(path: str, home) -> dict:
+    """Ask `loose-end-state` for each labelled item and `loose-end-join` for each (item, open order)
+    candidate, cache off, and compare with the labels. Hand-back is an `escalate` (a `closable` is
+    settled: its confirm is a separate step). Writes nothing in the home; raises `Unavailable` when off or
+    a call fails."""
+    pts = _drain_points(path)
+    home = Path(home)
+    _active_config(home)
+    rows = []
+    for p in pts:
+        r = decide("loose-end-state", p["id"], _loose_state(p["id"], _squash(p["text"]), p.get("source") or "unknown",
+                                                           p.get("age_days")), home=home, fresh=True)
+        rows.append({"id": p["id"], "expect_state": p["expect_state"], "outcome": r["outcome"],
+                     "handed_back": r["outcome"] == "escalate", "expect_join": p.get("expect_join"),
+                     "join": None})
+    by = {r["id"]: r for r in rows}
+    asked: set = set()
+    for j in _loose_ends().join_candidates(home, [(p["id"], p["text"]) for p in pts], sm=sys.modules[__name__],
+                                           pick=lambda ref, text, opts: pick_orders(home, ref, text, opts))["join"]:
+        j2 = _join_item(j)
+        if j2["ref"] in asked:
+            continue                                     # each pair is asked once per run
+        asked.add(j2["ref"])
+        r = decide("loose-end-join", j2["ref"], j2["state"], home=home, fresh=True)
+        if r["outcome"] == "join" and by[j["item"]]["join"] is None:
+            by[j["item"]]["join"] = j["wo"]              # the best join of an item: its first `join` pair
+    settled = [r for r in rows if not r["handed_back"]]
+    right = sum(1 for r in settled if r["outcome"] == r["expect_state"])
+    said = [r for r in rows if r["join"]]
+    wanted = [r for r in rows if r["expect_join"]]
+    return {"registry": _registry().REGISTRY_VERSION, "count": len(rows),
+            "handed_back": len(rows) - len(settled),
+            "hand_back_rate": (len(rows) - len(settled)) / len(rows) if rows else 0.0,
+            "settled": len(settled), "settled_correct": right,
+            "state_accuracy": right / len(settled) if settled else None,
+            "join_said": len(said), "join_right": sum(1 for r in said if r["join"] == r["expect_join"]),
+            "join_precision": (sum(1 for r in said if r["join"] == r["expect_join"]) / len(said)
+                               if said else None),
+            "join_wanted": len(wanted), "join_found": sum(1 for r in wanted if r["join"] == r["expect_join"]),
+            "join_recall": (sum(1 for r in wanted if r["join"] == r["expect_join"]) / len(wanted)
+                            if wanted else None),
+            "points": rows}
+
+
+def format_drain_eval(d: dict) -> str:
+    def pct(x):
+        return "n/a" if x is None else f"{100 * x:.0f}%"
+    return "\n".join([
+        f"== system-one eval-drain (registry v{d['registry']}): {d['count']} items ==",
+        f"hand-back rate: {d['handed_back']} of {d['count']} ({pct(d['hand_back_rate'])})",
+        f"state accuracy (settled items): {d['settled_correct']} of {d['settled']} ({pct(d['state_accuracy'])})",
+        f"join precision: {d['join_right']} of {d['join_said']} ({pct(d['join_precision'])})",
+        f"join recall: {d['join_found']} of {d['join_wanted']} ({pct(d['join_recall'])})"])
+
+
+def _eval_drain_cli(args) -> int:
+    try:
+        d = eval_drain(args.file, _resolve_home(args.home))
+    except ValueError as e:
+        print(f"eval-drain: {e}", file=sys.stderr)
+        return 2
+    except OSError as e:
+        print(f"eval-drain: cannot read {args.file}: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(d) if args.json else format_drain_eval(d))
+    return 0
+
+
 def _triage_cli(args) -> int:
     home = Path(args.home)
     if (home / ".gitos").is_dir():
         home = home / ".gitos"
     try:
-        d = triage(home, args.register)
+        d = triage(home, fresh=args.fresh)
     except Off:
         print("system-one: off")
         return 0
@@ -2425,23 +2799,6 @@ def _triage_cli(args) -> int:
         print(f"system-one: unavailable ({e})")
         return 0
     print(json.dumps(d) if args.json else format_digest(d))
-    return 0
-
-
-def _final_cli(args) -> int:
-    outcome = args.outcome
-    if outcome is None:
-        if args.by == "overridden":
-            print("final: `overridden` needs --outcome", file=sys.stderr)
-            return 2
-        calls = [r for r in log_rows() if r.get("kind") == "call" and r.get("use") == args.use
-                 and r.get("item") == args.item and r.get("outcome") not in (None, "error")]
-        if not calls:
-            print(f"final: no logged call for {args.use} {args.item}; pass --outcome", file=sys.stderr)
-            return 2
-        outcome = calls[-1]["outcome"]
-    record_final(args.use, args.item, outcome, args.by)
-    print(f"recorded: {args.use} {args.item} {outcome} ({args.by})")
     return 0
 
 
@@ -2458,12 +2815,20 @@ def main(argv: "list | None" = None) -> int:
     s.add_argument("--brief", action="store_true", help="one line, or nothing with no machine config")
     rg = sub.add_parser("repo", help="this repo's choice: on, off or status (<home>/system-one.json)")
     rg.add_argument("action", choices=("on", "off", "status"))
-    rg.add_argument("root", nargs="?", default=".")
+    rg.add_argument("rest", nargs="*", metavar="ROOT")
+    mg = sub.add_parser("migrate", help="list (or, with --write, remove) the retired keys of the machine "
+                                        "config and the repo's system-one.json")
+    mg.add_argument("root", nargs="?", default=".", metavar="ROOT")
+    mg.add_argument("--write", action="store_true", help="remove the keys; every other key stays")
     su = sub.add_parser("setup", help="find and check a local server, then write the machine config")
     su.add_argument("--endpoint", help=f"default {SETUP_ENDPOINT}")
     su.add_argument("--write", action="store_true", help="write the machine config")
     su.add_argument("--force", action="store_true", help="overwrite an existing machine config")
     su.add_argument("--detect", action="store_true", help="quiet: one line if a server answers, else nothing")
+    uc = sub.add_parser("uses-check", help="send every registered use to the server and check each answer "
+                                           "parses for its declared type (decides nothing)")
+    uc.add_argument("--endpoint", help="a server to check (default: the machine config's)")
+    uc.add_argument("--json", action="store_true")
     a = sub.add_parser("ask", help="ask the configured model")
     a.add_argument("--state", required=True)
     a.add_argument("--questions", required=True)
@@ -2472,13 +2837,23 @@ def main(argv: "list | None" = None) -> int:
     lg.add_argument("--summary", action="store_true")
     lg.add_argument("--use")
     lg.add_argument("--json", action="store_true")
-    rp = sub.add_parser("replay", help="re-ask logged examples against another endpoint")
-    rp.add_argument("--use", required=True)
-    rp.add_argument("--endpoint")
     tg = sub.add_parser("triage", help="digest of ledger judgments (writes nothing in the home)")
     tg.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
-    tg.add_argument("--register", help="a markdown table whose first column is the row id")
     tg.add_argument("--json", action="store_true")
+    tg.add_argument("--fresh", action="store_true", help="ask every item again; skip the cache")
+    dr = sub.add_parser("drain", help="ask the loose-ends group and write one proposal file each under "
+                                      "<home>/drain/pending/ (the one command that writes in the home); "
+                                      "also: accept ID | decline ID | defer ID | status")
+    dr.add_argument("rest", nargs=argparse.REMAINDER,
+                    help="<home>; or accept ID --work-order NNN | --parked P<n> | --reason R [ROOT]; "
+                         "decline ID --reason R [ROOT]; defer ID [ROOT]; status [ROOT]")
+    dr.add_argument("--json", action="store_true")
+    dr.add_argument("--fresh", action="store_true", help="ask every item again; skip the cache")
+    ed = sub.add_parser("eval-drain", help="ask the drain's uses on labelled loose ends and compare with the labels")
+    ed.add_argument("file", help="JSONL: id, text, source, age_days, expect_state "
+                                 "(closable|ask-operator|park|open), expect_join (WO-NNN or null)")
+    ed.add_argument("--home", required=True, help="the .gitos directory or repo root whose open orders are the join candidates")
+    ed.add_argument("--json", action="store_true")
     cd = sub.add_parser("cards", help="suggest a board group per card (picks no option)")
     cd.add_argument("--items", required=True, help="JSON list of cards: id, title, why, options")
     cd.add_argument("--home", default=".", help="the .gitos directory or the repo root")
@@ -2487,7 +2862,7 @@ def main(argv: "list | None" = None) -> int:
     sc.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
     sc.add_argument("--registry", default=None, help="the federation registry directory")
     sc.add_argument("--json", action="store_true")
-    ln = sub.add_parser("lenses", help="which lenses apply to a work-order or a text (writes nothing)")
+    ln = sub.add_parser("lenses", help="list the active lenses with their domain and when-to-apply (no model call, writes nothing)")
     ln.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
     ln.add_argument("--wo", help="a work-order number")
     ln.add_argument("--text", help="a text file describing the work")
@@ -2497,10 +2872,6 @@ def main(argv: "list | None" = None) -> int:
     bd = sub.add_parser("brain-dupes", help="near-duplicate brain page pairs with a verdict (writes nothing)")
     bd.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
     bd.add_argument("--json", action="store_true")
-    bt = sub.add_parser("brain-target", help="the page a new fact belongs on, or a new page")
-    bt.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
-    bt.add_argument("--fact", required=True, help="a text file holding the fact")
-    bt.add_argument("--json", action="store_true")
     sc = sub.add_parser("scan", help="reading order for log files: templates grouped by anomaly family")
     sc.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
     sc.add_argument("files", nargs="+", help="log files to scan")
@@ -2512,23 +2883,26 @@ def main(argv: "list | None" = None) -> int:
     sc.add_argument("wo", help="a work-order number")
     sc.add_argument("--range", help="A..B (default: merge-base to the branch wo-NNN)")
     sc.add_argument("--json", action="store_true")
-    cx = sub.add_parser("complexity", help="how complex a work-order reads; one input, never a choice")
-    cx.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
-    cx.add_argument("wo", help="a work-order number")
-    cx.add_argument("--json", action="store_true")
-    fn = sub.add_parser("final", help="record what was done with a suggestion")
-    fn.add_argument("use")
-    fn.add_argument("item")
-    fn.add_argument("by", choices=("accepted", "overridden"))
-    fn.add_argument("--outcome", help="the final outcome (default for `accepted`: the logged one)")
+    given = sys.argv[1:] if argv is None else list(argv)
+    if given and not given[0].startswith("-") and given[0] not in sub.choices:
+        print(f"system_one.py: unknown command {given[0]!r}; run system_one.py --help", file=sys.stderr)
+        return 2
     args = ap.parse_args(argv)
     try:
         if args.cmd == "status":
             return _status(args.json, args.brief)
         if args.cmd == "repo":
             return _repo_cli(args)
+        if args.cmd == "migrate":
+            found = migrate(args.root, args.write)
+            if found:
+                print(("removed retired keys: " if args.write else "retired keys: ")
+                      + "; ".join(f"{', '.join(n)} in {p}" for p, n in found))
+            return 0
         if args.cmd == "setup":
             return _setup_cli(args)
+        if args.cmd == "uses-check":
+            return _uses_check_cli(args)
         if args.cmd == "ask":
             out = ask(_load_json_or_text(args.state), _load_json_or_text(args.questions))
             if args.json:
@@ -2539,6 +2913,8 @@ def main(argv: "list | None" = None) -> int:
             return 0
         if args.cmd == "log":
             stats = log_summary(args.use)
+            skipped: list = []
+            log_rows(skipped=skipped)
             if args.json:
                 print(json.dumps(stats))
             else:
@@ -2546,24 +2922,24 @@ def main(argv: "list | None" = None) -> int:
                     print(u + ": " + ", ".join(f"{k}={v}" for k, v in st.items()))
                 if not stats:
                     print("no log rows")
+                if args.summary:
+                    print(f"skipped lines (not valid JSON): {len(skipped)}")
             return 0
         if args.cmd == "triage":
             return _triage_cli(args)
+        if args.cmd == "drain":
+            return _drain_cli(args)
+        if args.cmd == "eval-drain":
+            return _eval_drain_cli(args)
         if args.cmd == "scan":
             return _scan_cli(args)
-        if args.cmd == "final":
-            return _final_cli(args)
         if args.cmd == "cards":
             return _cards_cli(args)
         if args.cmd == "screen":
             return _screen_cli(args)
-        if args.cmd in ("lenses", "brain-dupes", "brain-target"):
+        if args.cmd in ("lenses", "brain-dupes"):
             return _brain_cli(args)
-        if args.cmd in ("scope", "complexity"):
-            return _scope_cli(args)
-        res = replay(args.use, args.endpoint)
-        print(json.dumps(res))
-        return 0
+        return _scope_cli(args)
     except Unavailable as e:
         print(f"unavailable: {e}", file=sys.stderr)
         return 3

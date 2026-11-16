@@ -241,12 +241,18 @@ observations, and the orchestrator decides and acts on them.
 - **Deviations** — where you departed from the Proposed scope / Proposed fix scope, and why.
 - **Surprises** — anything that contradicted the work-order's assumptions (the code wasn't where it
   said; a guard already existed; the fix revealed a second issue).
-- **Durable facts** — things now true about the system the next session should know (a new
-  invariant, a non-obvious coupling, a gotcha). Brain candidates.
+- **Durable facts** — reasons, limits, rules and traps a later change must know (why something is
+  done this way, a limit found, a rule that holds across files, what must not be done). **Not** a
+  description of what was built or where it is: the code and the work-order already hold that. Brain
+  candidates.
 - **Process notes** — anything about HOW the work went that could improve future dispatch (an
   under- or over-scoped work-order, a missing precondition, a faster path).
 - **Follow-ups** — work this surfaced that should become its own work-order (name it; do NOT fix it
   here).
+
+Write the notes **under these five labels** (a bold or heading label above a run of bullets, or a
+label at the start of a bullet); the labels help the orchestrator read them. One top-level bullet per
+point; nested bullets belong to their parent.
 
 "Nothing notable" is a valid and useful answer.
 

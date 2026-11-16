@@ -392,10 +392,9 @@ Manage them via `references/agent-import.md`:
   prompts are never stored as-is.
 - `/gitos agent list` — print the active and inactive lenses with their layer.
 
-When System One is on (opt-in per repo, `references/system-one.md`), `python scripts/system_one.py lenses <home> --wo NNN`
-(or `--text FILE`) lists, from the active set only, the lenses that apply (`applies`), may apply (`maybe`: the
-model was unsure, so read the lens's `when-to-apply` yourself) or do not (`no`), and reports a lens whose
-frontmatter cannot be judged. It writes nothing and the role still reads each matching lens itself.
+You match lenses to the work yourself; no model does. `python scripts/system_one.py lenses <home> --wo NNN`
+(or `--text FILE`) only lists the active set with each lens's domain and when-to-apply (no model call, writes
+nothing) and reports a lens whose frontmatter cannot be read; the role reads each matching lens itself.
 
 ## When the user authorizes fixes / implementers
 
@@ -418,7 +417,7 @@ A local decision model scripts may ask small typed questions (code rules, then l
 reasoning model, then the operator). Opt-in per repo: it needs the machine config
 `~/.claude/gitos-system-one/config.json` and `<home>/system-one.json` `{"enabled": true}`
 (`system_one.py repo on`); a repo that has not chosen is off. When on, a script may print a **System One digest**: read it, confirm every `confirm` outcome yourself by reading
-the item, and record finals. Judgments come from the model, decisions from a table in code; a failed call
+the item. Judgments come from the model, decisions from a table in code; a failed call
 is an error, never a "no". `references/system-one.md`.
 
 ## Reference index (read on demand)

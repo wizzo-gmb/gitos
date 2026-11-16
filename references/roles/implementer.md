@@ -40,7 +40,9 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    files the work-order did not name are not — even an "obvious" adjacent fix.
 3. **Fill the work-order's Implementer notes** on completion — deviations, surprises, durable
    facts, process notes, follow-ups. This is your only write-back channel; "nothing notable" is a
-   valid answer.
+   valid answer. Write them **under those five labels** (they help the orchestrator read them), and
+   make *Durable facts* the reasons, limits, rules and traps a later change must know, **not**
+   a description of what you built (the code and the work-order already hold that).
    If dispatched with model optimization enabled, complete its existing compact
    model/outcome entry: observed settings or explicit unknown, revisions/escalation,
    and a material reason. Do not infer execution from the requested model, write

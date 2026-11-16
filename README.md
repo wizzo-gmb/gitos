@@ -188,47 +188,53 @@ Configuration, harness support, and limits: [model optimization](references/mode
 
 ## System One — optional, off by default
 
-A lot of what the orchestrator does between real decisions is small, repeated judgment: is this
-implementer note owed work or a fact for the brain, is this proposal a duplicate of an order we already
-have, which lenses apply to this order, which log lines are worth reading first. **System One** hands those
-to a small local decision model that answers typed questions (yes or no with a probability, or one of a
-fixed list) in a fraction of a second, so the main model doesn't spend whole passes on them.
+Loose ends pile up between work orders: a follow-up an implementer named, a remark that was not acted on, a
+small gap found while doing something else. gitos writes each one down on the repo's loose-ends list so the
+current order stays on track. **System One** is a small local model that drains that list between orders, so
+it never goes stale and nobody has to read it row by row.
 
-The model never decides on its own. The engine writes every question, a table in code turns the answers
-into an outcome, and only outcomes that annotate or order work run by themselves. Anything that would
-close, reject, merge or fold something is reported for the orchestrator to confirm. An unsure answer goes to
-the reasoning model as before, and a failed call is an error, never a "no".
+It turns every loose end into exactly one proposal: join a related open order, a new order for a group of
+related items, park it until an event, ask you, close it, or "read it" when the model is unsure. Each proposal
+carries the items' own text and context gathered by code (the orders they came from, the files they mention,
+open orders touching the same files). The orchestrator reads the proposals, writes the orders itself, and
+accepts, declines with a reason, or defers each one. A declined group is not proposed again. Nothing leaves the
+list without that decision, and closes wait for your confirmation.
+
+System One only does work the main model is not already doing. Decisions made while reading an order, such as
+routing implementer notes, what goes into the brain, which lenses apply, or reviewing a diff, stay with the
+orchestrator. A second reader there would only add work.
 
 ```text
 system_one.py setup                  find and check a local server; --write saves the machine config
 system_one.py repo on|off|status     use it in this repo, or not
 system_one.py status --brief         one line: on, off, not chosen, or down
-system_one.py triage <home>          route implementer notes, Parked rows, duplicate orders
+system_one.py drain <home>           turn the loose ends into proposals (drain accept|decline|defer|status)
+system_one.py triage <home>          Parked rows whose trigger has fired, duplicate orders, loose ends
 system_one.py screen <home>          annotate pending federation proposals (local model only)
-system_one.py lenses <home> --wo N   which of this repo's active lenses apply
 system_one.py scan <home> LOG...     a reading order for log files
-system_one.py scope <home> N         an advisory check of a work-order's diff against its scope
+system_one.py uses-check             check every question type against a server after a model change
 ```
 
-**What you need.** A CUDA GPU with about 10 GB free, and Linux or WSL2. The tested model is
-[`perplexity-ai/pplx-decider-flash-v1.2`](https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2)
-(Apache-2.0); any server that answers the same request shape works.
+**What you need.** A CUDA GPU with about 20 GB free, and Linux or WSL2. The tested model is
+[`Qwen/Qwen3.5-9B`](https://huggingface.co/Qwen/Qwen3.5-9B) at BF16, run alone on the card; any server that
+answers the same request shape works.
 
 **Setting it up, once per machine.**
 
-1. Download the model and install its requirements in a Python 3.12 environment.
-2. Start the shipped server: `python assets/system-one/serve_decider.py <model-dir> --warmup`. It
-   listens on `127.0.0.1:8765`.
-3. Run `python scripts/system_one.py setup`. It checks that the server is really a System One server,
-   shows what it would write, and writes the machine config only with `--write`.
-4. Each repo is then asked once, at inception or on the next `/gitos upgrade`, whether to use it. A repo
-   that hasn't answered stays off.
+1. Download the model (`hf download Qwen/Qwen3.5-9B --local-dir models/qwen3.5-9b`) and install its requirements
+   in a Python 3.12 environment.
+2. Start the shipped server: `python assets/system-one/serve_general.py models/qwen3.5-9b --warmup`. It listens on
+   `127.0.0.1:8765`.
+3. Run `python scripts/system_one.py setup`, then `uses-check`. `setup` checks that the server is really a System
+   One server, shows what it would write, and writes the machine config only with `--write`.
+4. Each repo is then asked once, at inception or on the next `/gitos upgrade`, whether to use it. A repo that
+   hasn't answered stays off.
 
-Auto-start, serving other machines on your network, the Windows settings that matter when the GPU also
-drives your display, and measured speeds: **`references/system-one.md`** → *Machine setup*.
+Auto-start, serving other machines on your network, the Windows settings that matter when the GPU also drives
+your display, and measured speeds: **`references/system-one.md`** → *Machine setup*.
 
-**Without it, nothing changes.** No machine config means no question, no extra output and no network call:
-gitos behaves exactly as it did before.
+**Without it, nothing changes.** No machine config means no question, no extra output and no network call. The
+loose-ends list still works; the orchestrator drains it itself.
 
 ## Federation — optional, off by default
 

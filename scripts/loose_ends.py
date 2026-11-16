@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import importlib.util as importlib_util
 import json
+import math
 import os
 import re
 import subprocess
@@ -50,6 +51,13 @@ ID_RE = re.compile(r"L\d+")
 SOURCE_RE = re.compile(r"(?:WO-\d{3,}|P\d+|chat|proposal:\S+|import:.+)")
 NEXT_RE = re.compile(r"<!--\s*next:\s*L(\d+)\s*-->")
 STATE_NEW = "new"
+JOIN_TOP = 3                      # open orders offered to an item as a join
+MAX_JOIN_PAIRS = 60               # join pairs asked per run
+ORDER_BODY_CHARS = 4000           # an order with no Implementer notes heading is read this far
+BM25_K1, BM25_B = 1.2, 0.75       # the word part of the join score
+PICK_OPTIONS = 26                 # open orders offered to the title pick (the best by BM25)
+PICK_TOP = 2                      # orders the pick adds to an item's candidates
+JOIN_MIN_COVER = 0.0              # share of the item's words an order must hold when nothing is shared; none
 WAIT_RE = re.compile(r"waiting:\s*user\s*(?:—|–|--|-)\s*(\S.*)")
 DEST_RE = re.compile(r"(?:WO-(\d{3,})|P(\d+)|brain:(\S.*)|closed:(\S.*))")
 DONE_CELL_RE = re.compile(r"^[\s*_`~>\-]*(?:done|fixed|closed|merged|superseded|resolved)\b", re.IGNORECASE)
@@ -361,6 +369,18 @@ def brief(home, now=None) -> "str | None":
 
 
 # ------------------------------------------------------------------ candidates (code only, no model)
+_SENT_END = re.compile(r"[.!?][\"')\]]*\s+(?=[A-Z0-9\[*])")
+
+
+def _severity_line(text: str, c) -> str:
+    """The first sentence of the work-order's `## Severity` section ("" when absent)."""
+    block = c.section_lines(text, "## Severity") or []
+    body = " ".join(" ".join(ln.split()) for ln in block
+                    if ln.strip() and not ln.strip().startswith(("#", ">", "<!--")))
+    m = _SENT_END.search(body)
+    return body[:m.start() + 1] if m else body
+
+
 def _open_orders(home: Path) -> list:
     c = _canary()
     out = []
@@ -373,11 +393,15 @@ def _open_orders(home: Path) -> list:
             continue
         title = next((" ".join(ln[2:].split()) for ln in text.splitlines() if ln.startswith("# ")), path.stem)
         scope = c.section_lines(text, "## Proposed fix scope") or []
+        cut = re.search(r"(?m)^#{2,3}\s*Implementer notes", text)
+        body = " ".join((text[:cut.start()] if cut else text[:ORDER_BODY_CHARS]).split())
+        sev = _severity_line(text, c)
         notes = c.section_lines(text, c.NOTES_HEADING) or []
         has_notes = any(s and not c.NOTE_PLACEHOLDER_RE.match(s) and not s.startswith("<!--")
                         for s in (ln.strip() for ln in notes))
-        out.append({"nnn": nnn, "ref": f"WO-{nnn}", "file": names[0], "title": title,
-                    "text": " ".join((title + ". " + " ".join(scope)).split())[:1200],
+        lead = " ".join(scope) if any(x.strip() for x in scope) else body
+        out.append({"nnn": nnn, "ref": f"WO-{nnn}", "file": names[0], "title": title, "body": body,
+                    "text": " ".join((title + ". " + (sev + ". " if sev else "") + lead).split())[:1200],
                     "has_notes": has_notes})
     return out
 
@@ -395,57 +419,127 @@ def _worktree_nnns(home: Path) -> set:
     return {it["nnn"] for it in (inv or {}).get("items", []) if it.get("nnn") and it.get("path")}
 
 
-def candidates(home, sm=None) -> dict:
-    """For each `new` item: the open, undispatched work orders it could join; and the pairs of `new`
-    items that could be bundled. Chosen by code with System One's signals: a shared reference or path
-    (one shared by more than HUB_LIMIT texts is no signal) or word overlap (OVERLAP). An open order is
-    NOT a join candidate when it is dispatched: a worktree for it exists, or its Implementer notes
-    already have content. -> {"items", "join", "bundle", "skipped"}."""
-    sm = sm or _system_one()
-    home = Path(home)
-    items = [r for r in rows_of(home) if r["state"].strip() == STATE_NEW and ID_RE.fullmatch(r["id"])]
-    orders = _open_orders(home)
-    wts = _worktree_nnns(home)
-    skipped, live = [], []
-    for o in orders:
-        why = "a worktree exists" if o["nnn"] in wts else "its Implementer notes have content" \
-            if o["has_notes"] else None
-        if why:
-            skipped.append({"wo": o["ref"], "why": why})
-        else:
-            live.append(o)
-    pool = [(r["id"], r["item"]) for r in items] + [(o["ref"], o["text"]) for o in live]
+def _signal_table(pool: list, sm) -> tuple:
+    """({ref: (refs, paths, words)}, {reference or path: how many texts carry it})."""
     sig = {ref: sm._signals(t, ref) for ref, t in pool}
     count: dict = {}
     for refs, paths, _w in sig.values():
         for k in refs | paths:
             count[k] = count.get(k, 0) + 1
+    return sig, count
 
-    def shared_of(a: str, b: str) -> list:
-        sa, sb = sig[a], sig[b]
-        return sorted(k for k in (sa[0] | sa[1]) & (sb[0] | sb[1]) if count[k] <= sm.HUB_LIMIT)
 
-    join, bundle = [], []
-    for it in items:
-        for o in live:
-            shared = shared_of(it["id"], o["ref"])
-            wi, wo = sig[it["id"]][2], sig[o["ref"]][2]
-            cover = len(wi & wo) / len(wi) if len(wi) >= 5 else 0.0
-            if shared or cover >= sm.OVERLAP:
-                join.append({"item": it["id"], "wo": o["ref"], "shared": shared, "score": round(cover, 3),
-                             "wo_title": o["title"], "wo_text": o["text"], "item_text": it["item"]})
+def _shared(sig: dict, count: dict, a: str, b: str, sm) -> list:
+    sa, sb = sig[a], sig[b]
+    return sorted(k for k in (sa[0] | sa[1]) & (sb[0] | sb[1]) if count[k] <= sm.HUB_LIMIT)
+
+
+def _tokens(text: str, sm) -> list:
+    return [w for w in sm._WORD.findall(text.lower()) if w not in sm._STOP]
+
+
+def _bm25(query: set, docs: list) -> list:
+    """BM25 of the `query` words against each tokenised doc (k1 1.2, b 0.75; idf = ln(1 + (N - df + .5)/(df + .5)))
+    -> [score]. A long document is normalised by its length, so length alone buys nothing."""
+    n = len(docs)
+    avg = sum(len(d) for d in docs) / n if n else 0.0
+    df = {w: sum(1 for d in docs if w in d) for w in query}
+    out = []
+    for d in docs:
+        tf: dict = {}
+        for w in d:
+            if w in query:
+                tf[w] = tf.get(w, 0) + 1
+        sc = 0.0
+        for w, f in tf.items():
+            idf = math.log(1 + (n - df[w] + 0.5) / (df[w] + 0.5))
+            sc += idf * f * (BM25_K1 + 1) / (f + BM25_K1 * (1 - BM25_B + BM25_B * len(d) / (avg or 1.0)))
+        out.append(sc)
+    return out
+
+
+def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = MAX_JOIN_PAIRS,
+                    pick=None) -> dict:
+    """The one reader of the open work orders for any item text, on the list or not.
+    `items` is [(ref, text)]. Each item is offered its `top` best orders: a shared reference or path
+    ranks first, then BM25 of the item's words over the order (its title counted twice, read up to its
+    Implementer notes; its Proposed fix scope need not exist), so a long order gains nothing from its length.
+    `pick(item_ref, item_text, [(order ref, title)]) -> [(order ref, probability)]` (best first), when given,
+    is a model's title pick for what words cannot find: it sees the best PICK_OPTIONS orders by BM25 and its
+    top PICK_TOP orders are added to the candidates (unique). No minimum: the model's `loose-end-join`
+    question decides. At most `cap` pairs, taken best first across the items in turn, each pair once.
+    Every open order is a candidate, dispatched or not: the drain only proposes, the orchestrator decides.
+    An order is in progress ("dispatched") when a worktree exists for it or its Implementer notes have
+    content; that is information on the order and on each pair, never a filter.
+    -> {"join": [{item, wo, shared, score, picked, dispatched, wo_title, wo_text, item_text}], "orders":
+    [every open order, each with "dispatched": why | None]}."""
+    sm = sm or _system_one()
+    home = Path(home)
+    items = list(dict.fromkeys((ref, text) for ref, text in items))
+    orders = _open_orders(home)
+    wts = _worktree_nnns(home)
+    for o in orders:
+        o["dispatched"] = ("worktree" if o["nnn"] in wts else "notes started" if o["has_notes"] else None)
+    live = orders
+    pool = [(ref, text) for ref, text in items] + [(o["ref"], o["body"] or o["text"]) for o in live]
+    sig, count = _signal_table(pool, sm)
+    docs = [_tokens(o["title"], sm) + _tokens(o["body"] or o["text"], sm) for o in live]
+    per_item = []
+    for ref, text in items:
+        words = sig[ref][2]
+        scores = _bm25(words, docs)
+        mine = []
+        for o, sc, d in zip(live, scores, docs):
+            shared = _shared(sig, count, ref, o["ref"], sm)
+            cover = len(words & set(d)) / len(words) if words else 0.0
+            if shared or cover >= JOIN_MIN_COVER:
+                mine.append({"item": ref, "wo": o["ref"], "shared": shared, "score": round(sc, 3), "picked": None,
+                             "dispatched": o["dispatched"], "wo_title": o["title"], "wo_text": o["text"],
+                             "item_text": text})
+        mine.sort(key=lambda x: (-len(x["shared"]), -x["score"], x["wo"]))
+        chosen = mine[:top]
+        if pick is not None and mine:
+            offered = mine[:PICK_OPTIONS]
+            got = pick(ref, text, [(x["wo"], x["wo_title"]) for x in offered])
+            have = {x["wo"] for x in chosen}
+            by_wo = {x["wo"]: x for x in offered}
+            for wo, prob in got[:PICK_TOP]:
+                if wo in by_wo and wo not in have:
+                    chosen.append({**by_wo[wo], "picked": round(prob, 3)})
+                    have.add(wo)
+        per_item.append(chosen)
+    pairs = []
+    for rank in range(max((len(c) for c in per_item), default=0)):       # best of every item first
+        for c in per_item:
+            if rank < len(c) and len(pairs) < cap:
+                pairs.append(c[rank])
+    pairs.sort(key=lambda x: (-len(x["shared"]), -x["score"], x["item"], x["wo"]))
+    return {"join": pairs, "orders": orders}
+
+
+def candidates(home, sm=None, pick=None) -> dict:
+    """For each `new` item: its best open work orders (`join_candidates`); and the pairs
+    of `new` items that could be bundled, chosen by code with System One's signals: a shared reference or
+    path (one shared by more than HUB_LIMIT texts is no signal) or word overlap (OVERLAP).
+    -> {"items", "join", "bundle", "orders"}."""
+    sm = sm or _system_one()
+    home = Path(home)
+    items = [r for r in rows_of(home) if r["state"].strip() == STATE_NEW and ID_RE.fullmatch(r["id"])]
+    jc = join_candidates(home, [(r["id"], r["item"]) for r in items], sm, pick=pick)
+    pool = [(r["id"], r["item"]) for r in items] + [(o["ref"], o["text"]) for o in jc["orders"]]
+    sig, count = _signal_table(pool, sm)
+    bundle = []
     for i, a in enumerate(items):
         for b in items[i + 1:]:
-            shared = shared_of(a["id"], b["id"])
+            shared = _shared(sig, count, a["id"], b["id"], sm)
             wa, wb = sig[a["id"]][2], sig[b["id"]][2]
             jac = len(wa & wb) / len(wa | wb) if len(wa) >= 5 and len(wb) >= 5 else 0.0
             if shared or jac >= sm.OVERLAP:
                 bundle.append({"a": a["id"], "b": b["id"], "shared": shared, "score": round(jac, 3),
                                "a_text": a["item"], "b_text": b["item"]})
-    join.sort(key=lambda x: (-len(x["shared"]), -x["score"], x["item"], x["wo"]))
     bundle.sort(key=lambda x: (-len(x["shared"]), -x["score"], x["a"], x["b"]))
-    return {"items": [r["id"] for r in items], "join": join[:sm.MAX_PAIRS], "bundle": bundle[:sm.MAX_PAIRS],
-            "skipped": skipped}
+    return {"items": [r["id"] for r in items], "join": jc["join"], "bundle": bundle[:sm.MAX_PAIRS],
+            "orders": jc["orders"]}
 
 
 # ------------------------------------------------------------------ legacy registers (asked once per file)
@@ -651,16 +745,15 @@ def main(argv=None) -> int:
         elif a.cmd == "candidates":
             d = candidates(home)
             if a.json:
-                print(json.dumps(d, indent=2, ensure_ascii=False))
+                print(json.dumps({k: v for k, v in d.items() if k != "orders"}, indent=2, ensure_ascii=False))
             else:
                 for j in d["join"]:
                     why = ("shared " + ", ".join(j["shared"])) if j["shared"] else f"word overlap {j['score']}"
-                    print(f"join    {j['item']} -> {j['wo']} ({why})")
+                    print(f"join    {j['item']} -> {j['wo']} ({why})"
+                          + (f" [in progress: {j['dispatched']}]" if j["dispatched"] else ""))
                 for b in d["bundle"]:
                     why = ("shared " + ", ".join(b["shared"])) if b["shared"] else f"word overlap {b['score']}"
                     print(f"bundle  {b['a']} + {b['b']} ({why})")
-                for k in d["skipped"]:
-                    print(f"skipped {k['wo']}: {k['why']}")
                 if not (d["join"] or d["bundle"]):
                     print("no candidates")
         elif a.cmd == "legacy":

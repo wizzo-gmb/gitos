@@ -2052,7 +2052,9 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
         notes = section_lines(text, NOTES_HEADING) if text else None
         if not notes:
             continue
-        if any(ADJUDICATION_HEADING_RE.match(ln.strip()) for ln in notes):
+        cut = next((k for k, ln in enumerate(notes) if ADJUDICATION_HEADING_RE.match(ln.strip())),
+                   len(notes))
+        if cut < len(notes):
             continue
         body = [s for s in (ln.strip() for ln in notes)
                 if s and not NOTE_PLACEHOLDER_RE.match(s) and not s.startswith("<!--")]
@@ -2104,7 +2106,6 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
 # machine that has a config but no readable system_one.py gets a VISIBLE skip. Report-only.
 #   endpoint-down     configured, repo not opted out, the health probe fails.
 #   registry-invalid  the question registry does not load (a table gap, a duplicate id, ...).
-#   high-override     a use whose last 50 finalized rows are overridden more than 30 %.
 OPTIONAL_CATEGORIES = OPTIONAL_CATEGORIES + ("system-one",)
 SYSTEM_ONE_TOOL = "system_one.py"
 
@@ -2148,13 +2149,6 @@ def check_system_one(home: Path, skill_dir: "Path | None") -> tuple[list[dict], 
     for msg in problems:
         items.append({"kind": "registry-invalid",
                       "finding": f"the System One question registry does not load: {msg}"})
-    try:
-        for use, rate in mod.high_override(home):
-            items.append({"kind": "high-override",
-                          "finding": f"System One use `{use}`: {rate:.0%} of the last 50 finalized "
-                                     f"rows were overridden -> review its questions or table"})
-    except Exception as e:
-        return items, f"the System One log could not be read ({type(e).__name__})", True
     return items, None, True
 
 

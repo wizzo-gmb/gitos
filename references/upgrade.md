@@ -231,6 +231,11 @@ Direct the running orchestrator to:
   exist: no question and no output. Ask with the harness's question UI: say in one sentence what it does
   and that the repo's text goes to the configured endpoint; the default is no. Write the answer with
   `system_one.py repo on|off <ROOT>`. A repo that already has a `system-one.json` is never asked again;
+- **remove retired System One keys** — run `python <SKILL_DIR>/scripts/system_one.py migrate <ROOT> --write`.
+  It is the upgrade, so there is no question to ask: it removes the keys the engine no longer reads
+  (`RETIRED_KEYS` in `system_one.py`) from the machine config and from the repo's `system-one.json`, keeping
+  every other key, and prints nothing when there is nothing to remove. Report what it removed in one line;
+  with no output, say nothing. Until it has run, System One reports itself down with the retired keys named;
 - **offer federation — the tool computes the ask; you ask it.** Federation lets independent gitos
   instances **on one machine** reach each other, so work that belongs to a sibling repo can go
   there instead of crossing the gap by copy-paste. Run:

@@ -64,6 +64,9 @@ Bootstrap your state before doing anything:
    work-order (work-loop step 7). SSOT: SKILL.md → *Canary*. Then run
    `python ~/.claude/skills/gitos/scripts/system_one.py status --brief` and report its line if it
    prints one (with no machine config it prints nothing: say nothing). Then run
+   `python ~/.claude/skills/gitos/scripts/system_one.py drain status <repo-root>` and report its line
+   (`drain: N pending (J join, B new-order, Q ask, P park, C close, R read)`) the way the intake count is
+   reported; with no `<home>/drain/pending/` it prints nothing, say nothing. Then run
    `python ~/.claude/skills/gitos/scripts/worktree.py status`: a reapable leftover is reaped at once
    (`reap --merged`), an abandoned one is raised to the operator. Then run
    `python ~/.claude/skills/gitos/scripts/loose_ends.py status --brief <repo-root>` and report its line if
@@ -141,11 +144,10 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    topology** — a fresh window per work-order (clean budget, isolation) is the default, but you may
    batch similar/related work into one window, or pick sequence vs. parallel, to optimize context
    usage. Pin disjoint files for anything concurrent + the chosen Option; state the scope bound.
-   Name the lenses that match the work-order in the dispatch brief (with System One on,
-   `system_one.py lenses <home> --wo NNN` lists them; read each `maybe` yourself).
-   With System One on, `system_one.py complexity <home> NNN` prints a level and its inputs: one input to
-   your own reading, never the choice of model or effort (the standing rule in
-   `references/model-optimization.md` stays).
+   Name the lenses that match the work-order in the dispatch brief; you match them yourself, always
+   (`system_one.py lenses <home> --wo NNN` only lists the active set with each lens's domain and
+   when-to-apply; it asks no model). The choice of model and effort is yours, by the standing rule in
+   `references/model-optimization.md`.
    **Every implementer that edits files is dispatched into its own worktree, by default and without
    being asked:** `python ~/.claude/skills/gitos/scripts/worktree.py new NNN` makes `.claude/worktrees/wo-NNN` on
    branch `wo-NNN` from the current `HEAD` and prints the path to dispatch into. Your own state edits
@@ -165,9 +167,9 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    author Proposed fix scope) and **re-dispatch** the implementer to that one WO — repeat until the
    operator is satisfied; only then resolve it. A genuinely *new* direction is a follow-up work-order,
    not a revision. → *Dispatch + verify.*
-   With System One on, run `system_one.py scope <home> NNN` first to order your read: it lists
-   `forbidden` and `outside-scope` files by rule and the hunks worth a look; it never substitutes for
-   reading every hunk.
+   `system_one.py scope <home> NNN` lists `forbidden` and `outside-scope` files by rule (always; no
+   model). If this repo turned the `scope` assist on, it also lists the hunks worth a look, to order your
+   read; it never substitutes for reading every hunk.
    *Gate:* you do **not** proceed on the worker's word (an unread diff is not a verified one), and you
    do **not** resolve a WO the operator hasn't accepted.
 5. **Adjudicate the notes.** Read the Implementer notes; ACCEPT each (→ brain / follow-up work-order /
@@ -185,9 +187,10 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    At each checkpoint, re-read Parked and promote the items whose trigger has fired. The canary's
    `loose-ends` category checks Parked, the notes and the list.
    *With System One on* (`references/system-one.md`): run `python <skill>/scripts/system_one.py triage
-   <home>` and read the digest; read every `READ` item (`confirm` and `escalate`) yourself, write the
-   Adjudication block yourself (the digest only suggests, and is never pasted under that heading), then
-   record each outcome with `system_one.py final <use> <item> accepted|overridden [--outcome O]`.
+   <home>` and read the digest (it covers Parked rows, duplicates and the loose ends, never the implementer
+   notes: adjudicate those by your own reading); read every `READ` item (`confirm` and `escalate`) yourself.
+   System One never routes into the brain: you alone decide and write brain pages, and only for a
+   fact that is not plain from the code.
    Off or down, the digest is one line and this step is unchanged.
 6. **Commit.** Commit the verified work; record the sha. **A commit is scoped to one work-order, the
    same way an edit is** — so **stage by explicit path**. Staging is directory-shaped and work-orders
@@ -524,9 +527,8 @@ whom, the next three steps, pointers to the standing rules. Short (target under 
 pointer-only; the template is the engine's `assets/RESUME.md.tmpl`, laid by the scaffold. The
 canary reports a RESUME over 150 lines (`resume-too-long`) and a bullet under a rules heading that
 points at nothing (`resume-rules-section`).
-With System One on, also run `system_one.py triage <home>` at the checkpoint: read the digest, read
-every `READ` item (`confirm` and `escalate`) yourself, write any Adjudication block yourself, and record
-finals with `system_one.py final`. Without it, the checkpoint is unchanged. **Drain the loose ends** at
+With System One on, also run `system_one.py triage <home>` at the checkpoint: read the digest and
+every `READ` item (`confirm` and `escalate`) yourself. Without it, the checkpoint is unchanged. **Drain the loose ends** at
 each checkpoint, for the whole list (*Draining the loose ends*).
 
 **Rotation triggers — four are work-shaped and one is measured by a hook, because those are what you can measure.**
@@ -610,14 +612,24 @@ list. A repo with no file has an empty list; the first `loose_ends.py add` creat
 checkpoint, for the whole list; (c) at first action, when the canary reports `loose-ends-stale`, before
 new work; (d) when the operator says "triage the loose ends" or runs `/gitos triage`.
 
-**The drain, step by step.** Get suggestions: with System One on, `system_one.py triage <home>` (the
-`loose-ends` group: each item's `row-state`, its best join with an open order, the bundles); off or
-down, `loose_ends.py candidates` and your own reading, asking the same questions of the same table.
+**The drain, step by step.** Get proposals: with System One on, `system_one.py drain <home>` runs the
+loose-ends group (each item's `loose-end-state`, its best join with an open order, the bundles) and writes
+**one file per proposal** under `<home>/drain/pending/<id>.md` (kinds `join`, `new-order`, `ask`, `park`,
+`close`, and `read` for an item the model was unsure about: it is never left out, so read it and decide what it is, then accept it with whichever of `--work-order`, `--parked`, `--reason` fits; the body shows each item in full with its Source, age and the context code gathered: Source order
+titles, paths, open orders sharing them; no model-written prose). A re-run updates the same ids; a proposal
+you declined is not proposed again; a `join` means "related open order: consider adding" (the item is about the same part of the product), and you decide whether it belongs in that order, its next slice, or elsewhere; one whose items left the list is removed. **Read each pending proposal,
+author the orders from them yourself** (the local model only groups, qualifies and passes context on; you
+decide and write every order), then dispose of each: `drain accept ID --work-order NNN` (`--parked P<n>` for a
+park, `--reason R` for a close; it drops the items from the list), `drain decline ID --reason R` (the items
+stay), or `drain defer ID` (nothing changes). Commit `<home>/drain/` with the arrival and the disposition.
+`system_one.py triage <home>` still prints the group as a digest with one `plan` line per item. Off or down, `loose_ends.py candidates` and your own reading, asking the same questions of the same table.
 Decide each item. Apply. Commit. Report `loose ends: N before -> M after (K waiting on you)`.
 
-**Who decides.** You adjudicate and apply, on your own: join an open order that is not dispatched (write
-the item into that order's `## Proposed fix scope` and its verification, so its adjudication checks it,
-then `loose_ends.py drop L<n> --to WO-NNN`); bundle items into one new order; Park with a named trigger
+**Who decides.** You adjudicate and apply, on your own: join an open order (the drain proposes joins into
+any open order; a proposal whose header says `target in progress: <why>` means a worktree exists or the
+notes are started, so decide whether the item waits for the next slice, and never change a running slice's
+scope). For an order not in progress, write the item into that order's `## Proposed fix scope` and its
+verification, so its adjudication checks it, then `loose_ends.py drop L<n> --to WO-NNN`; bundle items into one new order; Park with a named trigger
 (`drop --to P<n>`); move a lasting fact to the brain (`drop --to brain:<page>`). **The operator
 approves**, in one batch with the harness's question UI and never one by one mid-work: every close
 (`closed:<reason>`), superseded item and fold; anything about money, security or what users see;
@@ -630,7 +642,6 @@ suggested: a System One outcome is a suggestion, and `drop` is always your own a
 
 When a script prints a System One digest (`references/system-one.md`), read the digest rather than
 re-deriving it. Confirm every `confirm` outcome yourself by reading the item; the script only reports it.
-Record the final with `system_one.record_final(use, item, final, by)` (`accepted` or `overridden`).
 
 ## Out of scope
 

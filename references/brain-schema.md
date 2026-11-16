@@ -155,10 +155,8 @@ experience back into the brain as it builds**, and prunes redundancy. Three laye
 Whenever you learn or decide something worth remembering, before writing anything:
 
 1. **Search first.** Read `wiki/index.md` and grep `wiki/` for an existing page on
-   this atom (entity / concept / decision / source). With System One on,
-   `system_one.py brain-target <home> --fact FILE` suggests `update <page>` or `new page` from
-   candidates chosen in code; read the page before you write. This search-before-write step
-   is the *primary* defense against duplication — most "new" facts belong on a page
+   this atom (entity / concept / decision / source); read the page before you write. This
+   search-before-write step is the *primary* defense against duplication — most "new" facts belong on a page
    that already exists.
 2. **Upsert.** UPDATE the existing page (revise the relevant section, bump
    `updated`, add `[[wikilinks]]`). CREATE a new page ONLY when the atom is
