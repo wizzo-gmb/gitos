@@ -3091,6 +3091,10 @@ def find_native_work_order(home: Path, ref: str) -> "Path | None":
     for cand in sorted(wo_dir.glob("*.md")) + sorted((wo_dir / "resolved").glob("*.md")):
         if re.search(rf"(?:^|[^0-9]){nnn}(?!\d)", cand.stem):
             return cand
+    for d in (wo_dir, wo_dir / "resolved"):
+        for cand in sorted(d.glob(f"*{nnn}*/order.md")):
+            if re.search(rf"(?:^|[^0-9]){nnn}(?!\d)", cand.parent.name):
+                return cand
     return None
 
 

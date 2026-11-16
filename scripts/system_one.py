@@ -970,12 +970,10 @@ def _bundle_groups(results: list) -> list:
 _TRIGGER = re.compile(r"\b(?:after|once|until|when|waits? (?:for|on)|following)\b[^.;]{3,70}", re.I)
 
 
-def _drain_plan(results: list, bundles: list, force_open: bool = False) -> list:
+def _drain_plan(results: list, bundles: list) -> list:
     """One suggested next step per loose end, built by code from the answers: [{ref, step}]. A step the
     item's own state settles (`close`, `ask`, `park`) comes first; otherwise a `join` answer beats a
-    bundle group, and a bundle beats `open` alone (an item still unsettled is `read it`). `force_open`: every
-    open order is over the size limit, so an item that no state settles and no bundle takes needs a new order.
-    Nothing is applied."""
+    bundle group, and a bundle beats `open` alone (an item still unsettled is `read it`). Nothing is applied."""
     best: dict = {}
     for r in results:
         if r["use"] == "loose-end-join" and r["outcome"] == "join":
@@ -1001,7 +999,7 @@ def _drain_plan(results: list, bundles: list, force_open: bool = False) -> list:
         elif group:
             step, kind = "bundle with " + ", ".join(x for x in group if x != ref) + " -> new order", "bundle"
         else:
-            step, kind = "read it", ("open" if out == "open" or force_open else "read")
+            step, kind = "read it", ("open" if out == "open" else "read")
         plan.append({"ref": ref, "step": step, "kind": kind, "wo": wo})
     return sorted(plan, key=lambda p: int(p["ref"][1:]))
 
@@ -1181,7 +1179,7 @@ def _drain_write(home: Path, model: str, loose_rows: list, orders: list, results
     c = _canary()
     le = _loose_ends()
     bundles = _bundle_groups(results)
-    plan = _drain_plan(results, bundles, force_open=bool(orders) and all(o.get("over") for o in orders))
+    plan = _drain_plan(results, bundles)
     cause = {r["ref"]: r["cause"] for r in results if r["use"] == "loose-end-state"}
     rows = {r["id"]: {"text": _squash(r["item"]), "source": r["source"], "age": le.age_days(r["added"]),
                       "added": r["added"]}
@@ -1439,17 +1437,35 @@ def _carry_boxes(path: Path, rows: list, slice_name: str) -> list:
     return [i for i, _a, _s, _t in rows if i not in have]
 
 
+def _slice_mod():
+    """slice.py, imported by path."""
+    mod = sys.modules.get("_gitos_slice_s3")
+    if mod is None:
+        spec = importlib_util.spec_from_file_location("_gitos_slice_s3", Path(__file__).resolve().with_name("slice.py"))
+        mod = importlib_util.module_from_spec(spec)
+        sys.modules["_gitos_slice_s3"] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop("_gitos_slice_s3", None)
+            raise
+    return mod
+
+
 def drain_accept(home, pid: str, work_order: "str | None" = None, parked: "str | None" = None,
-                 reason: "str | None" = None, slice_name: "str | None" = None) -> str:
+                 reason: "str | None" = None, slice_name: "str | None" = None,
+                 new_slice: "str | None" = None) -> str:
     """Accept a proposal by the act that carries it out: a `join` or `new-order` needs the native order
     (`work-orders/` holds it, and it must be open: a resolved order, or a join whose target is resolved, is
     refused before anything changes), a `park` needs the P<n> row, a `close` needs a reason. A `read` and an
     `ask` are decided by the orchestrator or the operator, so they take any one of the three forms
     (`--work-order NNN`, `--parked P<n>`, `--reason R`) and run the same path as the proposal of that kind.
     Every accept into an order (`join`, `new-order`, and a `read` or `ask` given `--work-order`) needs `--slice NAME`
-    (the unit of the order's work that carries the items) and refuses an order over the size limit, both before
+    (the unit of the order's work that carries the items), before
     anything changes. The items are written into the order as boxes (the order file first, then the proposal
-    moves), so nothing accepted into an order is untracked."""
+    moves), so nothing accepted into an order is untracked. A folder order takes no boxes: `--new-slice NAME` (the
+    orchestrator's explicit call, when the order's definition of done needs the work) writes a `proposed` slice with
+    `origin:` set to the items through `slice add`; without it the accept refuses, naming the alternatives."""
     home = Path(home)
     src = _drain_dirs(home)["pending"] / f"{pid}.md"
     m = _read_proposal(src) if src.is_file() else None
@@ -1483,10 +1499,18 @@ def drain_accept(home, pid: str, work_order: "str | None" = None, parked: "str |
             raise ValueError(f"no work-order {nnn} under {home / 'work-orders'}: author it first")
         c = _canary()
         order_path = next(pth for n, pth, _r in _wo_listing(home, c) if n == nnn)
-        over = c.wo_oversize(_read_text(order_path) or "")
-        if over:
-            raise ValueError(f"WO-{nnn} is over the size limit ({over}): nothing was changed (trim it or split it, "
-                             f"or author a new order)")
+        if order_path.name == "order.md":
+            if not (new_slice and new_slice.strip()):
+                raise ValueError(f"WO-{nnn} is a folder order: an accept writes no box into it. Author a new order with "
+                                 f"`origin:` (default), decline with a reason, or, when its definition of done needs the "
+                                 f"work, accept with --new-slice NAME (a `proposed` slice with `origin:`); nothing was changed")
+            sl = _slice_mod()
+            try:
+                origin = _squash("; ".join(f"{i}: {item}" for i, _a, _s, item in _proposal_rows(m)))[:400]
+                sl.slice_add(home, nnn, new_slice.strip(), (), origin)
+            except sl.SliceError as e:
+                raise ValueError(str(e))
+            return _drain_dispose(home, pid, "accepted", f"WO-{nnn} slice {new_slice.strip()}", f"WO-{nnn}")
         if not (slice_name and slice_name.strip()):
             raise ValueError(f"an accept into WO-{nnn} needs --slice NAME: the unit of its work (a Proposed fix scope "
                              f"item, a Revision, the first unit of a new order, or the repo's own slice name) that "
@@ -1551,6 +1575,7 @@ def _drain_cli(args) -> int:
     priv.add_argument("--reason")
     priv.add_argument("--route")
     priv.add_argument("--slice")
+    priv.add_argument("--new-slice")
     priv.add_argument("--json", action="store_true")
     priv.add_argument("--fresh", action="store_true")
     priv.add_argument("--export")
@@ -1563,6 +1588,7 @@ def _drain_cli(args) -> int:
         setattr(args, k, getattr(args, k) or getattr(ns, k))
     args.work_order, args.parked, args.reason, args.route = ns.work_order, ns.parked, ns.reason, ns.route
     args.slice = ns.slice
+    args.new_slice = ns.new_slice
     rest = list(ns.rest)
     act = rest[0] if rest and rest[0] in ("accept", "decline", "defer", "withdraw", "status") else None
     try:
@@ -1624,7 +1650,8 @@ def _drain_cli(args) -> int:
             print(f"withdrawn: {rest[1]} -> back on the list: {drain_withdraw(home, rest[1])}")
             return 0
         if act == "accept":
-            dest = drain_accept(home, rest[1], args.work_order, args.parked, args.reason, args.slice)
+            dest = drain_accept(home, rest[1], args.work_order, args.parked, args.reason, args.slice,
+                                args.new_slice)
         else:
             dest = drain_decline(home, rest[1], args.reason, args.route)
         print(f"{'accepted' if act == 'accept' else 'declined'}: {rest[1]} -> {dest}")
@@ -1846,6 +1873,15 @@ def scope_check(home, wo: str, rng: "str | None" = None) -> dict:
     home = Path(home)
     nnn, text, c = _wo_text(home, wo)
     _scope, inside, forbidden = _scope_patterns(text, c)
+    folder = next((pth.parent for n, pth, _r in _wo_listing(home, c) if n == nnn and pth.name == "order.md"), None)
+    if folder is not None:      # a folder order: the scope lives in its slice files (`## Scope`)
+        inside, forbidden = [], []
+        for sf in sorted((folder / "slices").glob("*.md")):
+            body = "\n".join(c.section_lines(_read_text(sf) or "", "## Scope") or [])
+            _s, i, f = _scope_patterns("## Proposed fix scope\n" + body + "\n", c)
+            inside += i
+            forbidden += f
+        forbidden = [x for x in dict.fromkeys(forbidden) if x not in inside]
     root = Path((_git(home, "rev-parse", "--show-toplevel") or str(home.parent)).strip())
     rng = rng or _default_range(root, nnn)
     if not rng:
@@ -1858,12 +1894,13 @@ def scope_check(home, wo: str, rng: "str | None" = None) -> dict:
         own = home.resolve().relative_to(root.resolve()).as_posix() + f"/work-orders/WO-{nnn}-*.md"
     except ValueError:
         own = f"work-orders/WO-{nnn}-*.md"
+    own_dir = own.rsplit("/", 1)[0] + f"/WO-{nnn}/"
     facts = []
     for f in files:
         hit = next((p for p in forbidden if _matches(f, p)), None)
         if hit:
             facts.append({"file": f, "class": "forbidden", "why": f"Not in scope names `{hit}`"})
-        elif not any(_matches(f, p) for p in inside + [own]):
+        elif not any(_matches(f, p) for p in inside + [own, own_dir]):
             facts.append({"file": f, "class": "outside-scope", "why": "no path in the scope names it"})
     return {"wo": f"WO-{nnn}", "range": rng, "files": len(files), "facts": facts}
 

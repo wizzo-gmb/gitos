@@ -155,6 +155,17 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    being asked:** `python ~/.claude/skills/gitos/scripts/worktree.py new NNN` makes `<parent>/<repo name>.worktrees/wo-NNN` (outside
    the repo tree) on branch `wo-NNN` from the current `HEAD` and prints the path to dispatch into. Your own state edits
    (INDEX, RESUME, brain, work orders) stay on the main checkout, and your cwd never enters a worktree.
+   **An order with two or more slices is a folder** (`references/work-order-template.md` -> *The folder form*), and a
+   dispatch names a slice, not the order. Pick it with `python <SKILL_DIR>/scripts/slice.py next [WO-NNN] <home>` (the
+   first `ready` slice whose `depends_on` are all `landed`), make the worktree with
+   `worktree.py new NNN --slice SN` (it writes the marker the edit hook reads), set the slice `in-progress`, and give the
+   worker the output of `python <SKILL_DIR>/scripts/slice.py brief WO-NNN/SN <home>` as its brief: `order.md`, the
+   slice, and the Durable facts of each landed dependency, each with its path. A second slice is added with
+   `slice.py add WO-NNN NAME <home>`, which converts a single-file order to the folder with `git mv` first; the
+   canary gates a single file with more than one slice section. **Only you move a slice to `landed` or `dropped`**
+   (and set its `commit`), at adjudication; the worker moves its own slice `in-progress` -> `implemented`. The edit
+   hook refuses a worker's edit to `order.md`, `log.md`, another slice file, `INDEX.md` and that status change; it
+   does not cover Bash edits, so your merge review of the diff is the backstop.
    The built-in `isolation: "worktree"` is the alternative only for a repo whose settings set
    `worktree.baseRef: "head"`: its default base is the remote's default branch, which lacks the
    unpushed commits a locally authored work order sits on. Two worktrees may touch the same file; the
@@ -207,15 +218,13 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    landing:** merge the `wo-NNN` branch, verify on the merged result, then run
    `worktree.py reap NNN` *before* step 7 resolves the order, so the canary run that closes resolution
    sees no leftover. Never stage a worktree path.
-   **Trim the order.** Once the slice is adjudicated, move its finished sections (scope text, implementer notes,
-   adjudication) to `<home>/work-orders/history/WO-NNN.md`, appended in landing order under a heading naming the
-   slice and the merge sha, and leave one line under the order's `## History`:
-   `- <slice> landed <sha>: history/WO-NNN.md#<anchor>`. The live order keeps its objective, acceptance, open
-   slices and open carried boxes. By hand, no command; an order the canary calls `work-order-oversized` is trimmed
-   or split. A resolved order moves to `resolved/`; its history file stays in `history/`.
    *Gate:* **nothing is committed before steps 4–5 pass** — no commit of an unverified or
    un-adjudicated landing — and **the staged set matches this work-order's scope.**
-7. **Update INDEX + maintain the brain.** Move the item open→resolved (with sha), and **record that
+7. **Update INDEX + maintain the brain.** Move the item open→resolved (with sha). Where the INDEX carries the
+   `<!-- gitos:index ... -->` markers, the tables are generated: set `summary`, `landed` and `result` in the
+   order's front matter, move the order to `resolved/`, and run `python <SKILL_DIR>/scripts/ledger_index.py
+   <home>`; the resolved row is no longer typed into the INDEX by hand, and the canary's `index-drift` check
+   gates a table that differs from the files. **Record that
    landing's footprint** — the set of paths its commit touched, i.e. the staged set you already read
    back at step 6 — in the append-only footprint log (`<home>/footprints.md`), keyed to that same sha
    (the resolved row already carries it, so the sha is a reader's join from the board into the log).
@@ -645,11 +654,8 @@ Decide each item. Apply. Commit. Report the line `loose_ends.py status --brief` 
 
 **The join test.** An item joins an open order only when all four hold: (a) it is in files the named slice
 already changes; (b) that slice is planned or in flight; (c) it changes neither the slice's scope nor what counts
-as done; (d) the order is under the size limit (400 lines or 60 KB). Code checks (d) and that a slice is named:
-`drain accept ID --work-order NNN --slice NAME` (the slice is required on every accept into an order, a new order's being its first unit of work) refuses an order over the limit and an accept without `--slice`, and
-the drain offers only orders under the limit (an item whose only candidates are over it comes back as a
-`new-order` suggestion, bundled with related items; `drain status` lists those together, so the operator approves
-them in one batch). (a) to (c) are yours: an item that fails any of them is a new order, a Parked row or the list,
+as done; (d) the order is a single file (a folder order takes no boxes). Code checks that a slice is named:
+`drain accept ID --work-order NNN --slice NAME` (the slice is required on every accept into an order, a new order's being its first unit of work) refuses an accept without `--slice` (a folder order refuses unless the accept names `--new-slice NAME`). (a) to (c) are yours: an item that fails any of them is a new order, a Parked row or the list,
 never a join. A slice is whatever names a unit of the order's work: a Proposed fix scope item, a Revision, or the
 repo's own slice name.
 
@@ -658,8 +664,7 @@ section as `- [ ] L<n> (slice: <name>) <text>`. A box is closed as `- [x] L<n> (
 when the slice carrying it lands, or moved: `-> L<n>` (back on the list, re-added there), `-> P<n>`, `-> WO-NNN`,
 `-> rejected: <why>`. Name the boxes each slice takes in its dispatch brief; at adjudication tick or move every
 box of the landed slice (a resolved order with an open box is a `carried-open` finding and gates). The canary
-also reports `carried-stale` (an open box older than 14 days, dated by its accept record) and
-`work-order-oversized` (move landed slices to `history/WO-NNN.md`, or split it).
+also reports `carried-stale` (an open box older than 14 days, dated by its accept record).
 
 **Who decides.** You adjudicate and apply, on your own: join an open order by the test above (a proposal whose
 header says `target in progress: <why>` means a worktree exists or the notes are started, so decide whether the

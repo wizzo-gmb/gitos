@@ -70,7 +70,7 @@ from urllib.parse import unquote
 
 PAGE_TYPES = ("sources", "entities", "concepts", "decisions")   # brain_lint's constant
 CATEGORIES = ("ledger", "counts", "stamp", "lenses", "links", "brain", "anchor", "tool",
-              "resume", "worktree", "loose-ends")
+              "resume", "worktree", "loose-ends", "index-drift")
 # The engine's home tool copies (WO-034). <home>/tools/ holds byte-copies of the engine's own
 # scripts — engine artifacts, a cache of the installed skill that the briefs invoke by home
 # path. `upgrade` refreshes them (references/upgrade.md step 4); this category is what NOTICES
@@ -265,6 +265,12 @@ WO_FILE_RE = re.compile(rf"^(?:[A-Za-z]+[-_.]?)?{IDENT_NNN}[-_.][A-Za-z0-9][\w.-
 WO_FORM_NAMES = ("<prefix><sep>NNN<sep><slug>.md — an optional letter prefix (WO-, wo_, bug_, "
                  "task_, ... or none), then EXACTLY three digits, then a separator and a slug; "
                  "e.g. WO-007-thing.md, wo_007_thing.md, task_007_thing.md")
+# The FOLDER form (WO-110): an order with two or more slices is `<prefix>NNN[-slug]/` holding `order.md`,
+# `slices/SN-<name>.md` and `log.md`. It yields the same identity as a file and is listed under the name
+# `<dir>/order.md`, so every reader that joins a listed name onto the ledger dir reads the folder form unchanged.
+WO_DIR_RE = re.compile(rf"^(?:[A-Za-z]+[-_.]?)?{IDENT_NNN}(?:[-_.][A-Za-z0-9][\w.-]*)?$")
+ORDER_FILE = "order.md"
+SLICE_HEAD_RE = re.compile(r"^###\s+S\d+(?!\d)")
 NNN_RE = re.compile(r"\d{3}")
 EMDASH = "—"           # resolved rows may carry an em-dash NNN (no work-order number)
 # A prose/blockquote ledger row's IDENTITY position: the NNN at the head of the item, past
@@ -490,7 +496,8 @@ def resolve_skill_dir(arg: str | None) -> Path | None:
 
 # --------------------------------------------------------------------------- checks
 def _wo_files(d: Path) -> tuple[dict[str, list[str]], list[str]]:
-    """-> ({NNN: [work-order names under any known convention]}, [nonconforming *.md names])."""
+    """-> ({NNN: [work-order names under any known convention]}, [nonconforming names]).
+    A folder order is listed as `<dir>/order.md`."""
     by_nnn: dict[str, list[str]] = {}
     bad: list[str] = []
     if d.is_dir():
@@ -500,7 +507,31 @@ def _wo_files(d: Path) -> tuple[dict[str, list[str]], list[str]]:
                 by_nnn.setdefault(nnn, []).append(f.name)
             else:
                 bad.append(f.name)
+        for sub in sorted(x for x in d.iterdir() if x.is_dir()):
+            m = WO_DIR_RE.match(sub.name)
+            if not m:
+                continue
+            if (sub / ORDER_FILE).is_file():
+                by_nnn.setdefault(m.group(1), []).append(f"{sub.name}/{ORDER_FILE}")
+            else:
+                bad.append(f"{sub.name}/")
     return by_nnn, bad
+
+
+def folder_order_files(d: Path) -> list[Path]:
+    """Every markdown file of every folder order under `d`: order.md, log.md and slices/*.md."""
+    out: list[Path] = []
+    if d.is_dir():
+        for sub in sorted(x for x in d.iterdir() if x.is_dir() and WO_DIR_RE.match(x.name)):
+            if (sub / ORDER_FILE).is_file():
+                out += [sub / ORDER_FILE] + sorted(sub.glob("log.md")) + sorted((sub / "slices").glob("*.md"))
+    return out
+
+
+def single_file_multi_slice(text: str) -> int:
+    """How many `### S<n>` slice sections a single-file order's `## Slices` section holds."""
+    block = section_lines(text, "## Slices")
+    return sum(1 for ln in (block or []) if SLICE_HEAD_RE.match(ln.strip()))
 
 
 def check_ledger(home: Path) -> list[dict]:
@@ -517,6 +548,17 @@ def check_ledger(home: Path) -> list[dict]:
                           "finding": f"{where}/{name} carries no work-order identity at the "
                                      f"identity position ({WO_FORM_NAMES}) -> rename it to "
                                      "carry one or move it out of the ledger dirs"})
+
+    for nnn, names in sorted(on_root.items()):
+        for name in names:
+            if "/" in name:
+                continue
+            n = single_file_multi_slice(_read(wo_dir / name) or "")
+            if n > 1:
+                items.append({"kind": "single-file-multi-slice", "nnn": nnn, "file": f"work-orders/{name}",
+                              "finding": f"work-orders/{name} is a single file with {n} slice sections; an order "
+                                         f"with two or more slices is a folder -> run `slice add WO-{nnn} NAME "
+                                         f"<home>` (it converts the order with git mv) or the migration tool"})
 
     idx_text = _read(home / "INDEX.md")
     if idx_text is None:
@@ -824,53 +866,6 @@ def check_lens_layer(layer_dir: Path, layer: str) -> list[dict]:
     return items
 
 
-HISTORY_DIR = "work-orders/history"
-HISTORY_PTR_RE = re.compile(r"history/(WO-\d{3}\.md)(?:#([A-Za-z0-9_-]+))?")
-
-
-def _heading_slug(h: str) -> str:
-    """The anchor a markdown heading gets: lower-cased, punctuation dropped, spaces to hyphens."""
-    return re.sub(r"\s", "-", re.sub(r"[^\w\s-]", "", h.strip().lower()))
-
-
-def check_history(home: Path) -> list[dict]:
-    """The `## History` pointers of every order (open and resolved) must reach a history file and its anchor
-    (`dead-link`), and every file in `work-orders/history/` must have an order of its number (`orphan-history`)."""
-    items: list[dict] = []
-    hdir = home / HISTORY_DIR
-    have: set = set()
-    for sub in ("work-orders", "work-orders/resolved"):
-        d = home / sub
-        for nnn, names in _wo_files(d)[0].items():
-            have.add(nnn)
-            lines = (_read(d / names[0]) or "").splitlines()
-            h = next((i for i, ln in enumerate(lines) if ln.strip() == "## History"), None)
-            if h is None:
-                continue
-            end = next((i for i in range(h + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
-            for ln in lines[h + 1:end]:
-                for m in HISTORY_PTR_RE.finditer(re.sub(r"`[^`]*`", "", ln)):
-                    rel = f"{sub}/{names[0]}"
-                    f = hdir / m.group(1)
-                    if not f.is_file():
-                        items.append({"kind": "dead-link", "file": rel, "link": f"history/{m.group(1)}",
-                                      "finding": f"{rel} -> history/{m.group(1)} does not exist "
-                                                 "-> restore the history file or fix the pointer"})
-                    elif m.group(2) and m.group(2) not in {_heading_slug(x.lstrip("#")) for x in
-                                                           (_read(f) or "").splitlines() if x.startswith("#")}:
-                        items.append({"kind": "dead-link", "file": rel, "link": f"history/{m.group(1)}#{m.group(2)}",
-                                      "finding": f"{rel} -> history/{m.group(1)}#{m.group(2)}: no such heading "
-                                                 "-> fix the anchor or the history heading"})
-    if hdir.is_dir():
-        for f in sorted(hdir.glob("*.md")):
-            m = re.fullmatch(r"WO-(\d{3})\.md", f.name)
-            if not m or m.group(1) not in have:
-                items.append({"kind": "orphan-history", "file": f"{HISTORY_DIR}/{f.name}",
-                              "finding": f"{HISTORY_DIR}/{f.name} has no work-order of that number "
-                                         "-> restore the order or move the file out"})
-    return items
-
-
 def check_links(home: Path) -> list[dict]:
     """Link rot in INDEX.md + open work-order files.
 
@@ -890,6 +885,7 @@ def check_links(home: Path) -> list[dict]:
     wo_dir = home / "work-orders"
     if wo_dir.is_dir():
         sources.extend(sorted(f for f in wo_dir.glob("*.md") if wo_nnn(f.name)))
+        sources.extend(folder_order_files(wo_dir))
     for src in sources:
         rel = src.relative_to(home).as_posix()
         for tgt in extract_links(_read(src) or ""):
@@ -2068,22 +2064,12 @@ def check_loose_list(home: Path, today: "date | None" = None) -> list[dict]:
 #   `- [x] L<n> (slice: <name>) <text> -> <sha>`   closed when the slice carrying it landed; or moved:
 #   `-> L<n>` (back on the list), `-> P<n>`, `-> WO-NNN`, `-> rejected: <why>`.
 # This is the one place the grammar lives; system_one.py (which writes boxes) and loose_ends.py (which counts
-# them) import it from here. An order over the size limit cannot be read in full: the limit is one pair.
+# them) import it from here.
 CARRIED_HEADING = "## Carried loose ends"
 CARRIED_LEGACY_RE = re.compile(r"^##\s+(?:taken from the loose[- ]ends\b.*|carried (?:over\b.*|loose ends?\b.*)"
                                r"|loose ends? carried\b.*)$", re.IGNORECASE)
-WO_MAX_LINES = 400                   # an order longer than this (or WO_MAX_BYTES, whichever trips first) is oversized
-WO_MAX_BYTES = 60 * 1024
 BOX_RE = re.compile(r"^- \[( |x)\] (L\d+) \(slice: ([^()\n]*\S)\) (\S.*)$")
 BOX_DEST_RE = re.compile(r"^(.*?\S)\s+->\s+((?:[0-9a-f]{7,40}|L\d+|P\d+|WO-\d{3,}|rejected:\s*\S.*))$")
-
-
-def wo_oversize(text: str) -> "str | None":
-    """Why an order is over the size limit, or None."""
-    lines, size = len(text.splitlines()), len(text.encode("utf-8"))
-    if lines > WO_MAX_LINES or size > WO_MAX_BYTES:
-        return f"{lines} lines, {size // 1024} KB; limit {WO_MAX_LINES} lines or {WO_MAX_BYTES // 1024} KB"
-    return None
 
 
 def box_line(lid: str, slice_name: str, text: str) -> str:
@@ -2160,15 +2146,17 @@ def _accept_dates(home: Path) -> dict:
 
 
 def check_carried(home: Path, today: "date | None" = None) -> list[dict]:
-    """`carried-open` (gating): a resolved order with an open box. `carried-stale` (advisory): an open box in an
-    open order whose accept record is older than LOOSE_STALE_DAYS. `work-order-oversized` (advisory): an open
-    order over the size limit."""
+    """Single-file orders only (a folder order carries no boxes and has per-file limits, see `check_slices`).
+    `carried-open` (gating): a resolved order with an open box. `carried-stale` (advisory): an open box in an
+    open order whose accept record is older than LOOSE_STALE_DAYS."""
     today = today or date.today()
     items: list[dict] = []
     dates = _accept_dates(home)
     for sub, resolved in (("work-orders", False), ("work-orders/resolved", True)):
         d = home / sub
         for nnn, names in sorted(_wo_files(d)[0].items()):
+            if "/" in names[0]:
+                continue          # a folder order carries no boxes: follow-ups become slices or orders
             text = _read(d / names[0])
             if not text:
                 continue
@@ -2188,11 +2176,122 @@ def check_carried(home: Path, today: "date | None" = None) -> list[dict]:
                               "finding": f"WO-{nnn} carries open loose end(s) older than {LOOSE_STALE_DAYS} days: "
                                          + ", ".join(f"{i} ({n} days)" for i, n in old)
                                          + " -> land the slice, or move them"})
-            over = wo_oversize(text)
-            if over:
-                items.append({"kind": "work-order-oversized", "advisory": True, "wo": f"WO-{nnn}", "file": names[0],
-                              "finding": f"WO-{nnn} is over the size limit ({over}) -> move landed slices to "
-                                         f"history/WO-{nnn}.md, or split the order"})
+    return items
+
+
+def _ledger_index_src(home: Path, skill_dir: "Path | None") -> "Path | None":
+    cands = [Path(__file__).resolve().parent / "ledger_index.py", home / TOOL_HOME_DIR / "ledger_index.py"]
+    if skill_dir is not None:
+        cands.append(skill_dir / TOOL_SRC_DIR / "ledger_index.py")
+    return next((c for c in cands if c.is_file()), None)
+
+
+def _slice_age_days(home: Path, path: Path, today: date) -> "int | None":
+    """Days since the last commit that touched `path`; None when git says nothing (untracked, no git)."""
+    try:
+        cp = subprocess.run(["git", "-C", str(home), "log", "-1", "--format=%ct", "--", str(path)],
+                            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = cp.stdout.strip()
+    if cp.returncode != 0 or not out.isdigit():
+        return None
+    return (today - datetime.fromtimestamp(int(out), timezone.utc).date()).days
+
+
+def check_slices(home: Path, skill_dir: "Path | None", today: "date | None" = None) -> list[dict]:
+    """The folder orders' slices (WO-110). Gating: `slice-landed-no-commit` (a landed slice with an empty `commit:`),
+    `slice-depends-dangling` (a `depends_on` naming no slice), `slice-depends-cycle`. Advisory: `ready-to-close` (an
+    open order whose slices are all landed or dropped), `slice-stale` (in-progress, no commit touching the file for
+    SLICE_STALE_DAYS), `file-oversized` (order.md or a slice over its per-file limit), `order-split-advice` (an open
+    order with SPLIT_ADVICE_SLICES or more slices). Read-only; nothing to check without ledger_index.py."""
+    today = today or date.today()
+    src = _ledger_index_src(home, skill_dir)
+    if src is None:
+        return []
+    li = _load_module("_gitos_ledger_index_slices", src)
+    slices: dict[str, dict] = {}
+    orders: list[tuple[str, Path, bool]] = []
+    for sub, resolved in (("work-orders", False), ("work-orders/resolved", True)):
+        d = home / sub
+        if not d.is_dir():
+            continue
+        for f in sorted(x for x in d.iterdir() if x.is_dir() and WO_DIR_RE.match(x.name) and (x / ORDER_FILE).is_file()):
+            nnn = WO_DIR_RE.match(f.name).group(1)
+            orders.append((nnn, f, resolved))
+            for sf in sorted((f / "slices").glob("*.md")):
+                m = re.match(r"^S(\d+)(?:-[^/]*)?\.md$", sf.name)
+                if not m:
+                    continue
+                meta = li.parse_front_matter(_read(sf) or "")[0]
+                deps = meta.get("depends_on") or []
+                if isinstance(deps, str):
+                    deps = [deps] if deps.strip() else []
+                slices[f"WO-{nnn}/S{int(m.group(1))}"] = {
+                    "nnn": nnn, "path": sf, "status": str(meta.get("status", "")).strip(),
+                    "commit": str(meta.get("commit", "")).strip(), "deps": deps, "resolved": resolved,
+                    "file": sf.relative_to(home).as_posix()}
+    items: list[dict] = []
+    for sid, s in sorted(slices.items()):
+        if s["status"] == "landed" and not s["commit"]:
+            items.append({"kind": "slice-landed-no-commit", "wo": f"WO-{s['nnn']}", "file": s["file"],
+                          "finding": f"{sid} is landed with no `commit:` -> record the commit that landed it"})
+        for dep in s["deps"]:
+            if dep not in slices:
+                items.append({"kind": "slice-depends-dangling", "wo": f"WO-{s['nnn']}", "file": s["file"],
+                              "finding": f"{sid} depends on {dep}, which is no slice -> fix `depends_on`"})
+    state: dict[str, int] = {}
+    reported: set = set()
+
+    def walk(sid: str, stack: list) -> None:
+        state[sid] = 1
+        stack.append(sid)
+        for dep in slices[sid]["deps"]:
+            if dep not in slices:
+                continue
+            if state.get(dep) == 1:
+                cyc = stack[stack.index(dep):]
+                key = frozenset(cyc)
+                if key not in reported:
+                    reported.add(key)
+                    items.append({"kind": "slice-depends-cycle", "wo": f"WO-{slices[dep]['nnn']}",
+                                  "file": slices[dep]["file"],
+                                  "finding": "slices depend on each other in a cycle: " + " -> ".join(cyc + [dep])
+                                             + " -> break it in `depends_on`"})
+            elif dep not in state:
+                walk(dep, stack)
+        stack.pop()
+        state[sid] = 2
+    for sid in sorted(slices):
+        if sid not in state:
+            walk(sid, [])
+    for nnn, folder, resolved in orders:
+        if resolved:
+            continue
+        mine = {k: v for k, v in slices.items() if v["nnn"] == nnn}
+        rel = (folder / ORDER_FILE).relative_to(home).as_posix()
+        if mine and all(v["status"] in ("landed", "dropped") for v in mine.values()):
+            items.append({"kind": "ready-to-close", "advisory": True, "wo": f"WO-{nnn}", "file": rel,
+                          "finding": f"WO-{nnn}: every slice is landed or dropped and the order is still open -> "
+                                     "close it (adjudicate, move it to resolved/)"})
+        if len(mine) >= li.SPLIT_ADVICE_SLICES:
+            items.append({"kind": "order-split-advice", "advisory": True, "wo": f"WO-{nnn}", "file": rel,
+                          "finding": f"WO-{nnn} has {len(mine)} slices -> consider splitting the rest into a new order"})
+        n = len((_read(folder / ORDER_FILE) or "").splitlines())
+        if n > li.ORDER_MAX_LINES:
+            items.append({"kind": "file-oversized", "advisory": True, "wo": f"WO-{nnn}", "file": rel,
+                          "finding": f"{rel} is {n} lines; limit {li.ORDER_MAX_LINES} (new slices are refused) -> trim it"})
+        for sid, v in sorted(mine.items()):
+            n = len((_read(v["path"]) or "").splitlines())
+            if n > li.SLICE_MAX_LINES:
+                items.append({"kind": "file-oversized", "advisory": True, "wo": f"WO-{nnn}", "file": v["file"],
+                              "finding": f"{v['file']} is {n} lines; limit {li.SLICE_MAX_LINES} -> trim it or split the slice"})
+            if v["status"] == "in-progress":
+                age = _slice_age_days(home, v["path"], today)
+                if age is not None and age >= li.SLICE_STALE_DAYS:
+                    items.append({"kind": "slice-stale", "advisory": True, "wo": f"WO-{nnn}", "file": v["file"],
+                                  "finding": f"{sid} is in-progress with no commit touching it for {age} days -> "
+                                             "land it, or set it back"})
     return items
 
 
@@ -2384,8 +2483,8 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
     if (home / "INDEX.md").is_file() or (home / "work-orders").is_dir():
         r["ledger"].extend(check_ledger(home))
         r["ledger"].extend(landed_unresolved(home))
+        r["ledger"].extend(check_slices(home, skill_dir, today))
         r["links"].extend(check_links(home))
-        r["links"].extend(check_history(home))
         checked.update(("ledger", "links"))
     else:
         skip("ledger", "no INDEX.md and no work-orders/")
@@ -2502,6 +2601,13 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         checked.add("loose-ends")
     else:
         skip("loose-ends", le_reason)
+    # generated INDEX tables: gates when the markers exist; no markers is a visible skip.
+    id_items, id_reason = check_index_drift(home, skill_dir)
+    r["index-drift"].extend(id_items)
+    if id_reason is None:
+        checked.add("index-drift")
+    else:
+        skip("index-drift", id_reason)
     # harness: optional, same not-applicable-is-not-skipped rule (see OPTIONAL_CATEGORIES).
     h_items, h_reason, h_applicable = check_harness(home, skill_dir)
     if h_applicable:
@@ -2601,6 +2707,34 @@ def dispatch_distribution(home: Path, skill_dir: Path | None) -> str | None:
         return None
 
 
+def check_index_drift(home: Path, skill_dir: Path | None) -> tuple[list[dict], str | None]:
+    """-> (findings, skip-reason). The marked regions of INDEX.md against what ledger_index.py generates
+    from the order files. Read-only; an INDEX with no markers (the repo has not opted in) is a visible skip."""
+    text = _read(home / "INDEX.md")
+    if text is None:
+        return [], "no INDEX.md"
+    if "<!-- gitos:index " not in text:
+        return [], "no generated-index markers in INDEX.md"
+    cands = [Path(__file__).resolve().parent / "ledger_index.py", home / TOOL_HOME_DIR / "ledger_index.py"]
+    if skill_dir is not None:
+        cands.append(skill_dir / TOOL_SRC_DIR / "ledger_index.py")
+    src = next((c for c in cands if c.is_file()), None)
+    if src is None:
+        return [], "no ledger_index.py found (engine script)"
+    try:
+        regions = _load_module("_gitos_ledger_index", src).drift(home)
+    except Exception as e:
+        return [{"kind": "index-drift",
+                 "finding": f"ledger_index.py could not read the INDEX ({type(e).__name__}: {e}) "
+                            "-> fix the markers or the order front matter"}], None
+    if regions is None:
+        return [], "no generated-index markers in INDEX.md"
+    return [{"kind": "index-drift", "region": name,
+             "finding": f"the {name} table of INDEX.md differs from the order files -> run "
+                        "`python <SKILL_DIR>/scripts/ledger_index.py <home>` and commit the result"}
+            for name in regions], None
+
+
 def print_report(r: dict) -> None:
     # THE HUMAN SURFACE, THROUGH THE CHOKE POINT. Everything foreign in the federation category
     # is capped and delimited here, at the moment of emission, rather than wherever somebody
@@ -2621,6 +2755,7 @@ def print_report(r: dict) -> None:
         ("Live session resume (fresh; pointers, not rules)", "resume"),
         ("Lingering worktrees (reapable / abandoned)", "worktree"),
         ("Loose ends (Parked triggers, adjudicated notes)", "loose-ends"),
+        ("Generated INDEX tables (regions vs the order files)", "index-drift"),
     ]
     # The optional category prints ONLY when this repo has it. An unfederated repo gets no line
     # at all — not even a "skipped (not applicable)" one, which would be reporting a check that

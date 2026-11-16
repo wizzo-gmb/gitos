@@ -28,8 +28,15 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
 
 ## Lifecycle
 
-1. **Read the live work-order in full** (and `work-orders/history/WO-NNN.md` only where its `## History` points
-   you) before touching anything — especially its **Proposed fix
+0. **A slice of a folder order.** If you were dispatched a slice (`WO-NNN/SN`), your brief is the output of
+   `slice.py brief WO-NNN/SN <home>`: `order.md`, your slice file and the Durable facts of each landed dependency, each
+   under its path. Read it; open any other file only by the path it gives, and only when you need it. Edit only your
+   slice file's notes (the five labels), and move its `status` from `in-progress` to `implemented`; never edit
+   `order.md`, `log.md`, another slice file or `INDEX.md`, and never set `landed` or `dropped` (the orchestrator
+   does). A PreToolUse hook refuses those edits when your worktree carries a slice marker; it does not see Bash
+   edits, so do not route around it with the shell: the orchestrator reviews the diff at merge. Steps 1-5 below
+   apply to your slice as they do to a single-file order's scope.
+1. **Read the work-order in full** (a folder order: the brief, `slice.py brief`) before touching anything — especially its **Proposed fix
    scope** (your contract) and any pinned Option. **If the WO has open `## Revisions`** (post-landing
    operator changes the orchestrator recorded), *those* are your scope for this round — handle them and
    write the result under the revision; otherwise the Proposed fix scope is your scope.

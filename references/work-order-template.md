@@ -7,8 +7,41 @@ highest existing work-order in that home, open and resolved together. The slug i
 words naming the subject (`state-resets-on-restart`, `tenant-id-frozen-to-placeholder`,
 `federation-consult`).
 
+A work-order opens with a flat front matter block between `---` lines (`key: value`, a value is a bare string
+or `[a, b]`; nothing else): `severity`, `title` and `evidence` are what `scripts/ledger_index.py` writes into the
+INDEX's Open row. With none, the row is built from the H1 and the first word of `## Severity`, and evidence
+reads `—`. At resolution the orchestrator adds `summary`, `landed` (the version) and `result` (the selftest
+line), and `ledger_index.py` writes the Resolved row.
+
 Legacy homes carry the same file as `outputs/debug/bug_<NNN>_<slug>.md`; that path still reads
 correctly and needs no retrofit. New work-orders use the `<home>/work-orders/` convention above.
+
+---
+
+## The folder form (two or more slices)
+
+An order with one slice is the single file above. **The second slice makes it a folder**, never by hand: run
+`python <SKILL_DIR>/scripts/slice.py add WO-NNN NAME <home>`, which converts the file with `git mv` (the existing scope
+becomes `S1`, the rest stays `order.md`) and writes the new slice as `proposed`. The canary gates a single file with
+more than one `### S<n>` slice section and names this fix.
+
+    <home>/work-orders/WO-NNN/order.md              the spec, frozen at accept; amended only by appended, dated amendments
+    <home>/work-orders/WO-NNN/slices/SN-<name>.md   one slice: front matter, scope, verification, notes, adjudication
+    <home>/work-orders/WO-NNN/log.md                append-only: one dated line per event
+
+A slice file opens with front matter (same flat `key: value` block as an order):
+
+    ---
+    status: proposed        # proposed | ready | in-progress | implemented | landed | dropped
+    depends_on: [WO-NNN/S1] # slice ids, or []
+    commit:                 # the merge sha, set by the orchestrator when it lands the slice
+    origin:                 # where the slice came from (a drain item, an order), or empty
+    ---
+
+then `## Scope`, `## Verification`, `## Implementer notes` (the five labels, under `###` headings) and
+`## Adjudication`. `slice.py next` picks the first `ready` slice whose dependencies are all `landed`; `slice.py brief
+WO-NNN/SN` prints what the worker reads. Only the orchestrator moves a slice to `landed` or `dropped`. `INDEX.md`
+reads the order from `order.md`'s front matter; a resolved folder order moves as a whole directory to `resolved/`.
 
 ---
 
@@ -38,6 +71,12 @@ position so it stays copyable; their guidance is stated once, under *Shared sect
 ## Template — bug work-order (evidence-first)
 
 ```markdown
+---
+severity: critical | high | medium | low | unconfirmed
+title: <Short Title>
+evidence: <primary file:line>
+---
+
 # WO-<NNN> — <Short Title>
 
 > **▶ Role on direct open.** Opened this work-order in a fresh window to *do the work* (or were
@@ -127,10 +166,6 @@ next log, confirm <X>".]
 ## Carried loose ends (only when items were accepted into this order)
 
 [Shared — *Shared sections* → Carried loose ends.]
-
-## History (only once a slice has landed and been trimmed)
-
-[Shared — *Shared sections* → History.]
 ```
 
 ---
@@ -138,6 +173,12 @@ next log, confirm <X>".]
 ## Template — forward work-order (objective-first)
 
 ```markdown
+---
+severity: critical | high | medium | low | unconfirmed
+title: <Short Title>
+evidence: <the design or decision page it rests on>
+---
+
 # WO-<NNN> — <Short Title>
 
 > **▶ Role on direct open.** Opened this work-order in a fresh window to *do the work* (or were
@@ -210,10 +251,6 @@ command. Include the home's gates verbatim, e.g.
 ## Revisions (post-landing — the verify→revise loop)
 
 [Shared — *Shared sections* → Revisions.]
-
-## History (only once a slice has landed and been trimmed)
-
-[Shared — *Shared sections* → History.]
 ```
 
 ---
@@ -251,23 +288,7 @@ when missing). One box per item, naming the slice that carries it (`--slice` is 
 
 A slice is whatever names a unit of the order's work: a Proposed fix scope item, a Revision, or the repo's own
 slice name. The orchestrator closes each box when its slice lands (`-> <sha>`), or moves it: `-> L<n>` (back on the
-list, re-added there), `-> P<n>`, `-> WO-NNN`, `-> rejected: <why>`. An order over 400 lines or 60 KB takes no new
-items. The canary gates a resolved order with an open box (`carried-open`).
-
-### History
-
-An order that has landed slices keeps the finished ones out of the live file. The orchestrator moves a landed
-slice's scope text, implementer notes and adjudication to `<home>/work-orders/history/WO-NNN.md`, appended in
-landing order under a heading naming the slice and the merge sha, and leaves a pointer here:
-
-    ## History
-
-    - <slice> landed <sha>: history/WO-NNN.md#<anchor>
-
-The live order keeps its objective, acceptance, open slices and open carried boxes; the implementer reads it in
-full and the history only where a pointer sends them. A missing history file or anchor is a `dead-link`, a history
-file with no order of its number is `orphan-history`. The history file stays in `history/` when the order moves
-to `resolved/`.
+list, re-added there), `-> P<n>`, `-> WO-NNN`, `-> rejected: <why>`. The canary gates a resolved order with an open box (`carried-open`).
 
 ### Implementer notes
 

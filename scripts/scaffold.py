@@ -316,6 +316,20 @@ def compact_restore_module():
         return None
 
 
+def slice_guard_module():
+    """The slice-edit hook (keeps a slice worker to its own slice file), loaded from this `scripts/` dir BY PATH, or None."""
+    path = Path(__file__).resolve().parent / "slice_guard.py"
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_gitos_scaffold_slice_guard", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
 def worktree_module():
     """The engine's worktree lifecycle tool, loaded from this `scripts/` dir BY PATH, or None."""
     path = Path(__file__).resolve().parent / "worktree.py"
@@ -510,8 +524,6 @@ def main() -> int:
            home / "log_vocabulary.md", root)
     gitkeep(home / "work-orders" / "resolved")
     print("OK   work-orders/resolved/")
-    gitkeep(home / "work-orders" / "history")
-    print("OK   work-orders/history/")
 
     if not diagnostic_only:
         report(write_if_missing(home / "README.md",
@@ -796,6 +808,20 @@ def main() -> int:
                 "created": "OK   wrote .claude/settings.json (compaction restore hook)",
                 "appended": "OK   registered the compaction restore hook in .claude/settings.json",
                 "present": "SKIP .claude/settings.json compaction restore hook already registered",
+                "skipped": "SKIP .claude/settings.json left untouched",
+            }[status] + (f" — {detail}" if status == "skipped" else ""))
+        # The slice-edit hook: on PreToolUse for the edit tools, it binds a worktree made for a slice
+        # (`worktree.py new NNN --slice SN`) to that slice's file. Inert everywhere else. Claude Code only;
+        # Bash edits are not covered (the orchestrator's merge review is the backstop).
+        guard_slice = slice_guard_module()
+        if guard_slice is None:
+            print("SKIP .claude/settings.json slice-edit hook — slice_guard.py not found beside scaffold.py")
+        else:
+            status, detail = guard_slice.ensure_hook(root)
+            print({
+                "created": "OK   wrote .claude/settings.json (slice-edit hook)",
+                "appended": "OK   registered the slice-edit hook in .claude/settings.json",
+                "present": "SKIP .claude/settings.json slice-edit hook already registered",
                 "skipped": "SKIP .claude/settings.json left untouched",
             }[status] + (f" — {detail}" if status == "skipped" else ""))
         for name in CLAUDE_AGENT_DEFINITIONS:

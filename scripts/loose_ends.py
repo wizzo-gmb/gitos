@@ -407,6 +407,8 @@ def carried_open(home) -> int:
     d = Path(home) / "work-orders"
     n = 0
     for names in c._wo_files(d)[0].values():
+        if "/" in names[0]:
+            continue          # a folder order carries no boxes
         try:
             n += len(c.open_boxes((d / names[0]).read_text(encoding="utf-8")))
         except (OSError, UnicodeDecodeError):
@@ -458,7 +460,7 @@ def _open_orders(home: Path) -> list:
         lead = " ".join(scope) if any(x.strip() for x in scope) else body
         out.append({"nnn": nnn, "ref": f"WO-{nnn}", "file": names[0], "title": title, "body": body,
                     "text": " ".join((title + ". " + (sev + ". " if sev else "") + lead).split())[:1200],
-                    "has_notes": has_notes, "over": c.wo_oversize(text)})
+                    "has_notes": has_notes})
     return out
 
 
@@ -528,8 +530,7 @@ def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = 
     An order is in progress ("dispatched") when a worktree exists for it or its Implementer notes have
     content; that is information on the order and on each pair, never a filter.
     -> {"join": [{item, wo, shared, score, picked, dispatched, wo_title, wo_text, item_text}], "orders":
-    [every open order, each with "dispatched": why | None and "over": why the order is over the size limit | None]}.
-    An order over the size limit (`canary.wo_oversize`) is never offered as a candidate."""
+    [every open order, each with "dispatched": why | None}]}."""
     sm = sm or _system_one()
     home = Path(home)
     items = list(dict.fromkeys((ref, text) for ref, text in items))
@@ -537,7 +538,7 @@ def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = 
     wts = _worktree_nnns(home)
     for o in orders:
         o["dispatched"] = ("worktree" if o["nnn"] in wts else "notes started" if o["has_notes"] else None)
-    live = [o for o in orders if not o["over"]]          # an order over the size limit takes no new items
+    live = orders
     pool = [(ref, text) for ref, text in items] + [(o["ref"], o["body"] or o["text"]) for o in live]
     sig, count = _signal_table(pool, sm)
     docs = [_tokens(o["title"], sm) + _tokens(o["body"] or o["text"], sm) for o in live]

@@ -94,6 +94,9 @@ BUILTIN_PREFIX = "worktree-"
 # canary.WO_FILE_RE, restated (this file must not import the canary, which imports it); the selftest
 # gate asserts the two agree on a list of names.
 WO_FILE_RE = re.compile(r"^(?:[A-Za-z]+[-_.]?)?(\d{3})(?!\d)[-_.][A-Za-z0-9][\w.-]*\.md$")
+# the folder form of an order (two or more slices): `<prefix>NNN[-slug]/order.md`
+WO_DIR_RE = re.compile(r"^(?:[A-Za-z]+[-_.]?)?(\d{3})(?!\d)(?:[-_.][A-Za-z0-9][\w.-]*)?$")
+SLICE_MARKER = "gitos-slice"
 GIT_TIMEOUT = 30
 LAYOUT_FILE = "worktrees.json"
 ARCHIVE_DIR = "worktree-archive"
@@ -174,6 +177,10 @@ def wo_states(home):
             for f in d.glob("*.md"):
                 m = WO_FILE_RE.match(f.name)
                 if m:
+                    nnns.add(m.group(1))
+            for sub in d.iterdir():
+                m = WO_DIR_RE.match(sub.name)
+                if m and sub.is_dir() and (sub / "order.md").is_file():
                     nnns.add(m.group(1))
         except OSError:
             pass
@@ -555,7 +562,32 @@ def ensure_ignored(root, rel=WORKTREES_REL):
     return True
 
 
-def cmd_new(root, home, nnn):
+def _slice_file(home, nnn, sid):
+    """The slice file `S<n>-*.md` of folder order `nnn` under `home`, or None."""
+    wo_dir = Path(home) / "work-orders"
+    try:
+        for sub in wo_dir.iterdir():
+            m = WO_DIR_RE.match(sub.name)
+            if m and m.group(1) == nnn and sub.is_dir():
+                for f in sorted((sub / "slices").glob(f"{sid}-*.md")) + sorted((sub / "slices").glob(f"{sid}.md")):
+                    return f
+    except OSError:
+        pass
+    return None
+
+
+def write_slice_marker(wt_path, nnn, sid):
+    """Record which slice this worktree is for, in the worktree's own git dir (untracked, removed with the
+    worktree). The edit hook (slice_guard.py) reads it. -> the marker path, or None when git gave no dir."""
+    out = git_ok(wt_path, "rev-parse", "--absolute-git-dir")
+    if not out or not out.strip():
+        return None
+    marker = Path(out.strip()) / SLICE_MARKER
+    marker.write_text(f"WO-{nnn}/{sid}\n", encoding="utf-8")
+    return marker
+
+
+def cmd_new(root, home, nnn, slice_id=None):
     if toplevel(root) is None:
         print(f"worktree: {posix(root)} is not a git repository -> run `git init` first",
               file=sys.stderr)
@@ -576,6 +608,10 @@ def cmd_new(root, home, nnn):
         print(f"worktree: WO-{nnn} {why} -> a worktree is made only for an open work order "
               f"(under {posix(home)}/work-orders/)", file=sys.stderr)
         return 1
+    if slice_id and _slice_file(home, nnn, slice_id) is None:
+        print(f"worktree: WO-{nnn} has no slice {slice_id} (--slice names a slice of a folder order: "
+              f"work-orders/WO-{nnn}/slices/{slice_id}-<name>.md)", file=sys.stderr)
+        return 1
     if git_ok(root, "rev-parse", "--verify", "-q", "HEAD") is None:
         print("worktree: this repository has no commit yet -> commit once, then retry",
               file=sys.stderr)
@@ -585,7 +621,10 @@ def cmd_new(root, home, nnn):
     entries = _entries(root) or []
     for e in entries[1:]:
         if e["branch"] == branch:
-            print(f"worktree: {branch} already exists, nothing changed")
+            print(f"worktree: {branch} already exists, nothing changed"
+                  + (" but the slice marker" if slice_id else ""))
+            if slice_id:
+                write_slice_marker(Path(e["path"]), nnn, slice_id)
             print(posix(Path(e["path"])))
             return 0
     if git_ok(root, "rev-parse", "--verify", "-q", f"refs/heads/{branch}") is not None:
@@ -605,6 +644,10 @@ def cmd_new(root, home, nnn):
         print(f"worktree: git refused: {err.strip() or 'worktree add failed'}", file=sys.stderr)
         return 1
     print(f"worktree: created {branch} from HEAD @ {(git_ok(root, 'rev-parse', '--short', 'HEAD') or '').strip()}")
+    if slice_id:
+        marker = write_slice_marker(path, nnn, slice_id)
+        print(f"worktree: slice marker WO-{nnn}/{slice_id} " + (f"written to {posix(marker)}" if marker else
+              "NOT written (git gave no git dir); the edit hook will not bind this worktree"))
     print(posix(path.resolve()))
     print("worktree: dispatch the implementer with this path as its working root; keep the "
           "orchestrator's own cwd on the main checkout")
@@ -812,6 +855,8 @@ def main(argv=None):
     ap.add_argument("cmd", choices=("new", "reap", "status"))
     ap.add_argument("args", nargs="*", help="new: NNN [ROOT]; reap: NNN [ROOT]; status: [ROOT]")
     ap.add_argument("--home", default=None, help="the gitos home (default: auto-detected under ROOT)")
+    ap.add_argument("--slice", default=None, metavar="SN",
+                    help="new: bind the worktree to slice SN of a folder order (the edit hook reads the marker)")
     ap.add_argument("--merged", action="store_true", help="reap: every reapable worktree/branch")
     ap.add_argument("--json", action="store_true", help="status: machine-readable")
     a = ap.parse_args(argv)
@@ -829,6 +874,8 @@ def main(argv=None):
         target = pos.pop(0)
         if a.cmd == "new" and not re.fullmatch(r"\d{3}", target):
             ap.error("new needs a three-digit work-order number")
+        if a.slice and (a.cmd != "new" or not re.fullmatch(r"S\d+", a.slice)):
+            ap.error("--slice SN (e.g. S2) belongs to `new`")
         if a.cmd == "reap" and target.startswith("-"):
             ap.error("reap needs NNN, a branch or worktree name, or --merged")
         if a.cmd == "reap" and WO_BRANCH_RE.match(target):
@@ -845,7 +892,7 @@ def main(argv=None):
     if a.cmd == "status":
         return cmd_status(root, home, a.json)
     if a.cmd == "new":
-        return cmd_new(root, home, target)
+        return cmd_new(root, home, target, a.slice)
     return cmd_reap(root, home, target, a.merged)
 
 

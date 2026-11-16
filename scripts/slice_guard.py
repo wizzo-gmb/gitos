@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""slice_guard.py - PreToolUse hook: keep a slice worker's file edits to its own slice file (Claude Code only).
+
+A worker for a slice of a folder order works in a worktree made by `worktree.py new NNN --slice SN`, which
+writes an untracked marker `gitos-slice` (content `WO-NNN/SN`) into that worktree's own git dir. This hook
+runs before Edit, Write, MultiEdit and NotebookEdit:
+
+  * No marker for the file's worktree and none for the session's cwd: ALLOW (the orchestrator, or anyone not
+    working a slice).
+  * Marker present: REFUSE an edit to a folder order's `order.md` or `log.md`, to any slice file other than
+    the worker's own `slices/SN-*.md`, to `INDEX.md` of a gitos home, and a front-matter `status` change of
+    the worker's own slice to `landed` or `dropped`. Everything else is allowed: code, tests, docs, and the
+    worker's own slice notes and its status move in-progress -> implemented.
+
+The marker is looked up from the edited file's worktree and from the session's cwd, either one binds the
+edit, so a worker cannot step around it by an absolute path into another checkout, and a subagent whose
+cwd is its parent's still binds when its files are in the worktree.
+
+HONEST LIMITS. Bash edits are not covered (`sed -i`, a redirect, a script): a worker that wants to write a
+protected file through the shell is not stopped, and the orchestrator's review of the diff at merge is the
+backstop. A worker that edits a file in the main checkout by a path while its own cwd and the file's
+worktree both lack the marker is also allowed. Hooks can be switched off by configuration, a Codex session
+runs none, and any failure of the hook itself allows the edit (it never blocks by accident).
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import importlib.util
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+EVENT = "PreToolUse"
+TOOLS = "Edit|Write|MultiEdit|NotebookEdit"
+MARKER = "gitos-slice"
+MARKER_RE = re.compile(r"^WO-(\d{3})/S(\d+)$")
+FOLDER_PATH_RE = re.compile(r"(?:^|/)work-orders/(?:resolved/)?([^/]+)/(order\.md|log\.md|slices/([^/]+\.md))$")
+NNN_RE = re.compile(r"(\d{3})(?!\d)")
+TERMINAL = ("landed", "dropped")
+
+
+def _git_dir(path: Path) -> "Path | None":
+    d = path
+    while not d.is_dir():
+        if d.parent == d:
+            return None
+        d = d.parent
+    try:
+        cp = subprocess.run(["git", "-C", str(d), "rev-parse", "--absolute-git-dir"], capture_output=True,
+                            text=True, encoding="utf-8", errors="replace", timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return Path(cp.stdout.strip()) if cp.returncode == 0 and cp.stdout.strip() else None
+
+
+def marker_for(path: "str | Path") -> "tuple[str, str] | None":
+    """(nnn, slice number) of the slice marker of `path`'s worktree, or None."""
+    gd = _git_dir(Path(path))
+    if gd is None:
+        return None
+    f = gd / MARKER
+    try:
+        m = MARKER_RE.match(f.read_text(encoding="utf-8").strip()) if f.is_file() else None
+    except OSError:
+        return None
+    return (m.group(1), m.group(2)) if m else None
+
+
+def _status(text: str) -> "str | None":
+    lines = text.lstrip("﻿").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    for ln in lines[1:]:
+        if ln.strip() == "---":
+            return None
+        key, _, val = ln.partition(":")
+        if key.strip() == "status":
+            return val.strip().strip("\"'")
+    return None
+
+
+def _after(text: str, tool: str, inp: dict) -> "str | None":
+    """The file text after the edit, or None when it cannot be worked out."""
+    if tool == "Write":
+        c = inp.get("content")
+        return c if isinstance(c, str) else None
+    edits = inp.get("edits") if tool == "MultiEdit" else [inp]
+    if not isinstance(edits, list):
+        return None
+    for e in edits:
+        if not isinstance(e, dict) or not isinstance(e.get("old_string"), str) or not isinstance(e.get("new_string"), str):
+            return None
+        if e["old_string"] in text:
+            text = text.replace(e["old_string"], e["new_string"]) if e.get("replace_all") \
+                else text.replace(e["old_string"], e["new_string"], 1)
+    return text
+
+
+def refusal(path: str, why: str, marker) -> dict:
+    sid = f"WO-{marker[0]}/S{marker[1]}"
+    reason = (f"gitos: this worktree is bound to slice {sid}; {why} ({path}). A worker edits only its own slice "
+              f"file's notes and moves its status in-progress -> implemented; the orchestrator owns the rest. "
+              f"Report what you need changed instead.")
+    return {"hookSpecificOutput": {"hookEventName": EVENT, "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
+
+
+def decide(payload) -> "dict | None":
+    """A deny decision, or None to allow."""
+    if not isinstance(payload, dict):
+        return None
+    tool = payload.get("tool_name")
+    inp = payload.get("tool_input")
+    if tool not in ("Edit", "Write", "MultiEdit", "NotebookEdit") or not isinstance(inp, dict):
+        return None
+    raw = inp.get("file_path") or inp.get("notebook_path")
+    if not isinstance(raw, str) or not raw:
+        return None
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
+    p = Path(raw)
+    if not p.is_absolute() and cwd:
+        p = Path(cwd) / raw
+    marker = marker_for(p) or (marker_for(cwd) if cwd else None)
+    if marker is None:
+        return None
+    posix = p.as_posix().replace("\\", "/")
+    if p.name == "INDEX.md" and (p.parent / "work-orders").is_dir():
+        return refusal(posix, "INDEX.md is generated and kept by the orchestrator", marker)
+    m = FOLDER_PATH_RE.search(posix)
+    if not m:
+        return None
+    folder, leaf, slice_leaf = m.group(1), m.group(2), m.group(3)
+    nm = NNN_RE.search(folder)
+    own_order = bool(nm) and nm.group(1) == marker[0]
+    if slice_leaf is None:
+        return refusal(posix, f"{leaf} is the orchestrator's", marker)
+    own = own_order and re.match(rf"^S{marker[1]}(?:-|\.md$)", slice_leaf) is not None
+    if not own:
+        return refusal(posix, "that is another slice's file", marker)
+    if tool == "NotebookEdit":
+        return None
+    try:
+        before = p.read_text(encoding="utf-8") if p.is_file() else ""
+    except OSError:
+        return None
+    after = _after(before, tool, inp)
+    if after is None:
+        return None
+    new = _status(after)
+    if new in TERMINAL and new != _status(before):
+        return refusal(posix, f"only the orchestrator sets a slice's status to {new}", marker)
+    return None
+
+
+def hook_command(stream) -> int:
+    """The client-event entry point. ALWAYS returns 0; stdout carries a refusal or nothing. Anything the hook
+    cannot decide leaves the edit alone."""
+    try:
+        decision = decide(json.loads(stream.read() or "null"))
+        if decision is not None:
+            print(json.dumps(decision, ensure_ascii=False))
+    except Exception as exc:
+        print(f"gitos slice guard: inert - {type(exc).__name__}: {exc}", file=sys.stderr)
+    return 0
+
+
+# Self-locating, like the other gitos hooks: the settings file is committed, so no absolute path may travel.
+HOOK_BOOTSTRAP = (
+    "import importlib.util, pathlib, sys\n"
+    "try:\n"
+    "    p = pathlib.Path.home() / '.claude/skills/gitos/scripts/slice_guard.py'\n"
+    "    spec = importlib.util.spec_from_file_location('gitos_slice_guard', p)\n"
+    "    mod = importlib.util.module_from_spec(spec)\n"
+    "    spec.loader.exec_module(mod)\n"
+    "    mod.hook_command(sys.stdin)\n"
+    "except BaseException:\n"
+    "    pass\n"
+)
+HOOK_MATCHERS = {EVENT: TOOLS}
+
+
+def hook_entry() -> dict:
+    """Neither `async` nor `onFailure` is set: an async hook's decision has no effect, and `onFailure: block`
+    would make the hook's own breakage a refusal."""
+    return {"type": "command", "command": "python", "args": ["-I", "-c", HOOK_BOOTSTRAP],
+            "statusMessage": "gitos: a slice worker edits only its own slice file"}
+
+
+def _engine():
+    path = Path(__file__).resolve().parent / "model_optimization.py"
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_gitos_slice_guard_model_optimization", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+def ensure_hook(root, engine=None):
+    """Register this hook in `<root>/.claude/settings.json`, beside whatever is there. -> (status, detail)."""
+    engine = _engine() if engine is None else engine
+    if engine is None:
+        return "skipped", "model_optimization.py not found beside slice_guard.py"
+    return engine.ensure_settings_hook(root, entry=copy.deepcopy(hook_entry()), matchers=HOOK_MATCHERS)
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="PreToolUse hook keeping a slice worker to its own slice file.")
+    ap.add_argument("command", choices=("hook", "install"))
+    ap.add_argument("root", nargs="?", default=".")
+    a = ap.parse_args(argv)
+    if a.command == "hook":
+        return hook_command(sys.stdin)
+    status, detail = ensure_hook(Path(a.root).resolve())
+    print(f"gitos slice guard: {status}{f' - {detail}' if detail else ''}")
+    return 0 if status != "skipped" else 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -325,6 +325,15 @@ entry). It registers a `SessionStart` hook matched on `compact|clear` and a `Sto
 the `Stop` entry added. The canary's `restore` category reports it missing in a scaffolded repo; this
 step is the fix. Claude Code only, and `disableAllHooks` switches it off.
 
+**4p. Follow-ups on folder orders.**
+A folder order takes no `## Carried loose ends` boxes. `drain accept ID --work-order NNN` into one refuses, naming the
+alternatives (a new order with `origin:`, or decline with a reason); `--new-slice NAME` writes a `proposed` slice with
+`origin:` set to the items, only when the orchestrator decides the order's definition of done needs them. Single-file
+orders keep boxes and the whole-order limit. A folder order has per-file limits instead (200 lines for `order.md`,
+150 for a slice; `order.md` over its limit refuses new slices). The canary gates `slice-landed-no-commit` and a
+dangling or cyclic `depends_on`, and reports `ready-to-close`, `slice-stale`, `file-oversized` and split advice at
+eight slices; it reads `ledger_index.py` from beside itself, the home `tools/` or `<SKILL_DIR>/scripts/`.
+
 **4j. Worktree leftovers.**
 Run `python <SKILL_DIR>/scripts/worktree.py status <repo-root>` (read-only). Reap the reapable
 leftovers it lists with `reap --merged` (git's own refusals stay the safety: nothing unmerged or
@@ -354,10 +363,41 @@ and only after the operator answered). Then run the drain (`references/roles/orc
 the loose ends*). Sections of implementer notes inside a legacy register are not rows: say so, and
 adjudicate them by hand in the same pass (facts to the brain, follow-ups with `loose_ends.py add`).
 
-**4m. History folder.**
-Scaffold lays `<home>/work-orders/history/` (with a `.gitkeep`, like `resolved/`) where landed slices of a long
-order are moved; run `python <SKILL_DIR>/scripts/scaffold.py <root> --git skip` if it is missing. No order is
-rewritten: trimming is the orchestrator's, as slices land.
+**4m. Migrate multi-slice single-file orders; retire `history/`.**
+Run `python <SKILL_DIR>/scripts/ledger_migrate.py <home>` (a dry run: it writes nothing). It lists each open
+single-file order with two or more `### S<n>` slice sections that it would convert to the folder form (`git mv` to
+`WO-NNN/order.md`, one `slices/SN-<name>.md` per slice; a slice with an adjudication or `## History` pointer naming a
+commit is `landed` with it, the rest `ready` with `depends_on` in order; `history/WO-NNN.md` content becomes the landed
+slices' notes), each order it will skip because the text cannot be split with confidence (with the reason: nothing
+is guessed), the **open carried boxes** (`- [ ] L<n> ...`) it will leave in `order.md`, and any `history/` file it
+cannot fold in. Show the operator that report, triage each listed box with the orchestrator (a proposed slice via
+`slice.py add` or `drain accept --new-slice`, a new order, or dropped), and only after the operator confirms run it
+again with `--write`. It stages its changes and commits nothing; review the diff, then commit. Single-slice orders and
+resolved orders are left alone. `work-orders/history/` is retired: an empty one (a `.gitkeep` only) is removed by
+`--write`; a history file left behind is read by hand, then deleted. Scaffold no longer lays the folder, the canary no
+longer checks it, and the whole-order size limit (`work-order-oversized`) is gone; the per-file limits of a folder
+order stay.
+
+**4n. Generated INDEX tables.**
+Opt in by laying markers around the tables the repo already has, then let the script write them. In
+`<home>/INDEX.md`, put `<!-- gitos:index open -->` and `<!-- /gitos:index -->` on their own lines around the
+rows of the Open table (below its separator row), and `<!-- gitos:index resolved -->` and
+`<!-- /gitos:index -->` at the top of the Resolved table's rows, above the existing ones. Rows already in the
+Resolved table stay hand-kept below the markers and are never regenerated. Then run
+`python <SKILL_DIR>/scripts/ledger_index.py <home>`: it rewrites only what lies between the markers, from the
+orders' front matter (`severity`, `title`, `evidence`; resolved orders also `summary`, `landed`, `result`), and
+leaves every other byte of the file alone. An INDEX with no markers is left unchanged, and the canary's
+`index-drift` check is skipped for it. New repos get the markers from scaffold. Add the front matter to each
+open order first (`references/work-order-template.md`), or the row is built from its H1 and `## Severity`.
+
+**4o. Slice-edit hook and folder orders.**
+Run `python <SKILL_DIR>/scripts/slice_guard.py install <repo-root>` (scaffold lays the same entry). It registers a
+`PreToolUse` hook on `Edit|Write|MultiEdit|NotebookEdit` in the repo's `.claude/settings.json`, beside whatever is
+already there, and is idempotent. The hook acts only in a worktree made by `worktree.py new NNN --slice SN` (an
+untracked marker in that worktree's git dir); everywhere else it allows. Bash edits are not covered and the
+orchestrator's merge review is the backstop. Then run the canary: a single-file order with more than one slice
+section is a `single-file-multi-slice` finding; `slice.py add WO-NNN NAME <home>` converts it with `git mv`.
+Claude Code only, and `disableAllHooks` switches it off.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
@@ -372,8 +412,8 @@ from→to versions, which directives were adopted, and any pointers re-pointed. 
 **7. Report.**
 Show the `git diff` of what changed (the re-pointed pointers, the stamp, the ADR, any
 `<home>/tools/` copy that was newly copied **or refreshed** — name each refreshed tool and
-say the prior bytes are in git). The folder layout is unchanged apart from the empty
-`work-orders/history/` — confirm that explicitly in the report.
+say the prior bytes are in git), and the `ledger_migrate.py` result (converted orders, skipped orders with their reason,
+the carried boxes triaged, `work-orders/history/` removed) — confirm each explicitly in the report.
 
 ## What it never does
 

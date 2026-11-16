@@ -18,6 +18,32 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v54 — 2026-11-16
+breaking: yes
+
+- **Work orders with two or more slices are folders.** `WO-NNN/order.md` is frozen at accept (amendments are
+  appended), each slice is `slices/SN-<name>.md` with front matter (`status`, `depends_on`, `commit`, `origin`), and
+  `log.md` is append-only. `slice add` converts on the second slice (`git mv`); `slice next` names the next ready
+  slice; `slice brief WO-NNN/SN` prints the order, the slice, and the durable facts of landed dependencies, so a
+  worker reads only its own slice. Single-slice orders stay single files.
+- **INDEX regions are generated.** Between `<!-- gitos:index open -->` / `<!-- gitos:index resolved -->` and
+  `<!-- /gitos:index -->`, `ledger_index.py` writes the rows from front matter; `--check` reports drift. Repos opt in
+  by laying the markers; legacy resolved rows stay hand-kept.
+- **Slice workers are bound by a hook.** `worktree.py new NNN ROOT --slice SN` writes a slice marker;
+  `slice_guard.py` (PreToolUse on Edit/Write/MultiEdit/NotebookEdit; `slice_guard.py install`) refuses edits to the
+  order, the log, other slices, INDEX, and a status change to landed or dropped. Bash edits are not covered; the merge
+  review is the backstop.
+- **Drain accepts into a folder order need `--new-slice NAME`**, which writes a proposed slice with `origin:`.
+- **Canary:** gating `slice-landed-no-commit`, `slice-depends-dangling`, `slice-depends-cycle`,
+  `single-file-multi-slice`, `index-drift`; advisory `ready-to-close`, `slice-stale`, `file-oversized`,
+  `order-split-advice`.
+- **Retired:** `history/`, the `## History` pointer, the canary's history check, the whole-order 400-line / 60 KB
+  limit and `work-order-oversized`.
+- **Migration:** `ledger_migrate.py HOME [--write]` (dry run by default) converts multi-slice single-file orders and
+  lists carried boxes for triage; `upgrade` runs it (steps 4m–4p).
+
+---
+
 ## v53 — 2026-11-16
 breaking: no
 
