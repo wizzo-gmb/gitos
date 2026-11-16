@@ -57,7 +57,11 @@ THE CLASSES, one per branch or worktree (`classify`):
   abandoned  unmerged work that nothing is going to finish: a `wo-NNN` whose work order is resolved
              or missing, or a `worktree-*` branch with no worktree left.
   in flight  everything else: an open work order, a locked worktree, a `worktree-*` worktree that is
-             still on disk, any other linked worktree, a declared worktree that is not merged.
+             still on disk, any other linked worktree, a declared worktree that is not merged, and a
+             merge target: a worktree or branch that IS the default branch or an `integration` branch
+             (a target is where work lands, not work; never reapable, never abandoned, whatever its
+             tip is merged into). Merged always means merged into a branch other than its own; a
+             detached checkout holds no branch, so one at a target's tip is still reapable.
 FRESH (`wo` and `builtin` kinds). A branch that has never had a commit of its own is an ancestor of HEAD
 from the moment it is created, so "merged" alone would call every new worktree reapable. Its reflog tells them apart: one
 distinct hash is a branch nobody has committed to. A fresh branch is in flight while its work order is
@@ -305,9 +309,18 @@ def _merge_targets(root, current, layout):
     return targets
 
 
-def _merged_into(root, tip, targets):
-    """The label of the first target that has `tip` as an ancestor, or None."""
+def _is_target(branch, targets, layout):
+    """True when `branch` is itself a merge target: the default branch or an `integration` branch."""
+    return bool(branch) and (branch in [t[0] for t in targets[1:]] or any(
+        fnmatch.fnmatchcase(branch, g) for g in layout["integration"]))
+
+
+def _merged_into(root, tip, targets, own=None):
+    """The label of the first target that has `tip` as an ancestor, or None. `own` is the item's own
+    branch: it is skipped, because a branch is always an ancestor of itself."""
     for label, ref in targets:
+        if own and label == own:
+            continue
         rc, _, _ = git(root, "merge-base", "--is-ancestor", tip, ref)
         if rc == 0:
             return label
@@ -344,6 +357,8 @@ def classify(item):
     has_dir = item["path"] is not None
     if item["dirty"]:
         return "dirty", f"{item['dirty']} changed or untracked file(s)"
+    if item.get("target"):
+        return "in flight", "a merge target"
     if kind == "other":
         return "in flight", "linked worktree on a branch this tool does not manage"
     if item["locked"]:
@@ -388,10 +403,10 @@ def inventory(root, home):
         names = [b for b in refs.splitlines() if b and b != main_branch and _managed(b)]
         items = []
 
-        def _merge_state(tip):
+        def _merge_state(tip, own=None):
             """-> (ahead, merged_into). `ahead` is 0 when the tip is merged into ANY target (the
             reap check reads it), else the count of commits HEAD lacks."""
-            into = _merged_into(root, tip, targets)
+            into = _merged_into(root, tip, targets, own)
             return (0 if into else _ahead(root, tip)), into
 
         def build(name, kind, entry):
@@ -404,13 +419,14 @@ def inventory(root, home):
                       else "missing" if known else "unknown")
             else:
                 wo = "none"
-            ahead, into = _merge_state(f"refs/heads/{name}")
+            ahead, into = _merge_state(f"refs/heads/{name}", name)
             it = {"name": name, "kind": kind, "nnn": nnn, "branch": name, "path": path,
                   "registered": entry is not None,
                   "locked": bool(entry and entry["locked"]),
                   "lock_reason": entry["lock_reason"] if entry else "",
                   "prunable": bool(entry and entry["prunable"]),
                   "wo": wo, "ahead": ahead, "merged": ahead == 0, "merged_into": into,
+                  "target": _is_target(name, targets, layout),
                   "detached": False, "merged_head": into == targets[0][0],
                   "fresh": _fresh(root, name) if name and ahead == 0 else False,
                   "dirty": _dirty_count(path) if path and not (entry and entry["locked"]) else 0}
@@ -428,12 +444,14 @@ def inventory(root, home):
             name = (e["branch"] or f"{p.parent.name}/{p.name}") if decl else p.name
             ahead, into = None, None
             if decl and (e["branch"] or e["head"]):
-                ahead, into = _merge_state(f"refs/heads/{e['branch']}" if e["branch"] else e["head"])
+                ahead, into = _merge_state(f"refs/heads/{e['branch']}" if e["branch"] else e["head"],
+                                           e["branch"])
             it = {"name": name, "kind": "declared" if decl else "other", "nnn": None, "branch": label,
                   "path": e["path"] if not e["prunable"] and Path(e["path"]).is_dir() else None,
                   "registered": True, "locked": e["locked"], "lock_reason": e["lock_reason"],
                   "prunable": e["prunable"], "wo": "none", "ahead": ahead, "merged": ahead == 0,
                   "merged_into": into, "merged_head": into == targets[0][0],
+                  "target": _is_target(e["branch"], targets, layout),
                   "detached": e["branch"] is None, "fresh": False, "dirty": 0}
             if it["path"] and not e["locked"]:
                 it["dirty"] = _dirty_count(it["path"])
@@ -686,6 +704,9 @@ def _archive(root, home, it):
 def _reap_one(root, it, current, home=None):
     """Reap one inventory item. -> (ok, [message lines]). Refuses on anything git or we object to."""
     name = it["name"]
+    if it.get("target"):
+        return False, [f"worktree: {name} NOT reaped: it is a merge target (the default or an "
+                       f"integration branch), where work lands"]
     if it["ahead"] != 0:
         n = "an unknown number of" if it["ahead"] is None else str(it["ahead"])
         return False, [f"worktree: {name} NOT reaped: {n} commit(s) are not merged into "

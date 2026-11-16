@@ -18,6 +18,17 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v52 — 2026-11-15
+breaking: no
+
+- **Fix: an integration checkout is never reapable.** With `"integration"` declared in `worktrees.json`, the
+  worktree checked out on an integration branch read "reapable: merged into" itself, so the canary gated on it and
+  `reap --merged` would have removed the live integration checkout and its branch. A worktree whose branch is the
+  default branch or an integration branch is now `in flight` ("a merge target"), `reap` refuses it by name, and
+  merged means merged into a different branch.
+
+---
+
 ## v51 — 2026-11-15
 breaking: yes
 
