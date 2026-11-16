@@ -62,10 +62,12 @@ THE CLASSES, one per branch or worktree (`classify`):
              (a target is where work lands, not work; never reapable, never abandoned, whatever its
              tip is merged into). Merged always means merged into a branch other than its own; a
              detached checkout holds no branch, so one at a target's tip is still reapable.
-FRESH (`wo` and `builtin` kinds). A branch that has never had a commit of its own is an ancestor of HEAD
+FRESH (`wo`, `builtin` and `declared` kinds). A branch that has never had a commit of its own is an ancestor of HEAD
 from the moment it is created, so "merged" alone would call every new worktree reapable. Its reflog tells them apart: one
 distinct hash is a branch nobody has committed to. A fresh branch is in flight while its work order is
-open (or, for `worktree-*`, while its worktree is on disk). An explicit `reap NNN` is the operator
+open (or, for `worktree-*`, while its worktree is on disk). A declared worktree on disk is fresh when its
+own HEAD reflog holds one distinct hash (nothing committed there), a detached checkout included; for a
+branch checkout whose worktree reflog cannot be read the branch reflog decides. An explicit `reap NNN` is the operator
 naming it and is not held back by this; the passive surfaces (status, canary, Stop) are.
 HONEST LIMIT: a reflog that was expired or never written makes a branch look not-fresh, so a brand-new
 worktree could read as reapable; `reap` still refuses anything dirty.
@@ -343,6 +345,17 @@ def _fresh(root, branch):
     return len(hashes) == 1
 
 
+def _fresh_worktree(path, root, branch):
+    """True when a worktree on disk has had no commit since it was created: one distinct hash in its
+    own HEAD reflog. Falls back to the branch reflog (a branch checkout) when that cannot be read;
+    unreadable both ways is not fresh."""
+    out = git_ok(path, "reflog", "show", "--format=%H", "HEAD")
+    hashes = {h for h in (out or "").split() if h}
+    if hashes:
+        return len(hashes) == 1
+    return _fresh(root, branch) if branch else False
+
+
 def _dirty_count(path):
     """Changed or untracked files in a worktree. Unreadable counts as dirty (the safe answer)."""
     out = git_ok(path, "status", "--porcelain")
@@ -453,6 +466,8 @@ def inventory(root, home):
                   "merged_into": into, "merged_head": into == targets[0][0],
                   "target": _is_target(e["branch"], targets, layout),
                   "detached": e["branch"] is None, "fresh": False, "dirty": 0}
+            if decl and it["path"] and it["merged"]:
+                it["fresh"] = _fresh_worktree(it["path"], root, e["branch"])
             if it["path"] and not e["locked"]:
                 it["dirty"] = _dirty_count(it["path"])
             it["class"], it["why"] = classify(it)

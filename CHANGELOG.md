@@ -18,6 +18,16 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v53 — 2026-11-16
+breaking: no
+
+- **Fix: a fresh declared worktree is in flight.** A declared worktree made at an integration branch's tip, before
+  its worker committed, read "reapable: merged and clean", so the canary, the Stop hook and `reap --merged` offered
+  to remove a checkout in use. A declared worktree with no commit since it was made (its own HEAD reflog; detached
+  checkouts included) is now `in flight` ("no commits of its own yet"); `reap NAME` still removes it.
+
+---
+
 ## v52 — 2026-11-15
 breaking: no
 
