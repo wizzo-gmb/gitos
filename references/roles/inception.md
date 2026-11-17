@@ -6,7 +6,7 @@ orchestrator in the same session. You do not write application source code. PIPE
 ONLY.
 
 Once the orchestrator holds the handoff and the brain is seeded, inception is done —
-the orchestrator is the permanent front-line role from here.
+the orchestrator is the persistent coordinator from here.
 
 **Canary marker (every reply).** Your first line, from reply one:
 `[gitos · inception · <focus>]` — `<focus>` = the current interview stage (then the phase, as
@@ -14,13 +14,11 @@ inception proceeds), **recomputed each reply**. Slipped / stale → the reinject
 
 ---
 
-## Phase 1 — The interview (nine questions, conversational)
+## Phase 1 — The interview (seven questions, conversational)
 
-Include the one-time optional **model optimization** preference: Disabled (default)
-or Enabled, using the harness question UI where available. Follow
-`references/model-optimization.md` → *Preference + commands*; persist the choice
-after scaffolding, including skipped/off when unanswered. A recorded preference is
-not asked again. Scaffolding alone never enables routing.
+The opt-ins (model optimization, lenses, System One, and federation, legacy registers and the harness popup where
+they apply) are **not** asked in this interview. They are asked once, together, in the offer round after the
+scaffold (**Phase 2**), so the operator answers one batch instead of one question per subsystem.
 
 Ask these in a single pass, conversationally (not as a numbered form). Adapt the
 wording to the operator's domain and vocabulary. Every answer feeds the handoff and seeds
@@ -28,7 +26,7 @@ the brain — collect them before running the scaffold.
 
 > **Note — lenses.** Operator-imported **lenses** (if any) live in `<home>/agents/` and are applied
 > by all roles when their `domain` / `when-to-apply` matches (see SKILL.md → *Lenses*); inception
-> itself does not author lenses. They are off until the interview's lens step (step 8) turns them on.
+> itself does not author lenses. They are off until the offer round (Phase 2) turns them on.
 
 1. **Project identity.** What is this repo? Domain, stage, and the one-sentence
    description of what it does or what problem it solves.
@@ -75,21 +73,6 @@ the brain — collect them before running the scaffold.
 
    Explain these options to the operator and let them choose at runtime.
 
-8. **Lenses.** Lenses are off by default. Ask whether this repo should use them; the
-   default answer is no. If yes, list the global library's lenses (`<skill>/agents/index.md`)
-   with their `domain` and let the operator pick several in the harness's question UI. After
-   the scaffold, write the answer with `python <SKILL_DIR>/scripts/lenses.py enable --root <ROOT>`
-   and `lenses.py select --root <ROOT> NAME...`; for "no", write nothing.
-
-9. **System One.** Ask this step **only when** `~/.claude/gitos-system-one/config.json` exists, or
-   `python <SKILL_DIR>/scripts/system_one.py setup --detect` prints a line (a local server answers on the
-   default endpoint). In the second case offer `system_one.py setup --write` first and run it only on a
-   yes; it checks the server before it writes. With neither, this step does not exist: no question and no
-   output. Then ask whether this repo uses System One, with the harness's question UI. Say in one
-   sentence what it does (a small local model answers routine yes/no judgments for scripts) and that the
-   repo's text goes to the configured endpoint. The default answer is no. After the scaffold, write the
-   answer with `python <SKILL_DIR>/scripts/system_one.py repo on|off <ROOT>`.
-
 ---
 
 ## Phase 2 — Scaffold
@@ -115,6 +98,21 @@ files. It lays:
 - a `<!-- gitos:agent-system -->` block in the repo-root `CLAUDE.md` (created if absent) — the **durable context anchor**: the canary's recovery seed, carried in the layer the harness re-injects every window (SKILL.md → *Canary*). Managed block only; your own `CLAUDE.md` content is never touched.
 
 The script does NOT ingest — that is your job in Phase 3.
+
+**The one offer round.** Once the scaffold has laid the home, run
+`python <SKILL_DIR>/scripts/offer.py <ROOT>`. It computes every opt-in this repo has not answered (model
+optimization, lenses, System One, federation, legacy registers, the harness popup) by calling each subsystem's own
+check, and prints **one question batch**, or **nothing** when nothing is unanswered (then say nothing and go on).
+Pass its `questions` to the harness's question UI (in Claude Code `AskUserQuestion`, in the groups its `calls` name;
+`--text` is for a harness with none), then run the commands its `apply` names for each answer. A question left
+unanswered runs its `if_unanswered` (model optimization is recorded as skipped, off) and nothing else. Defaults:
+model optimization Disabled, lenses off, System One no (the repo's text goes to the configured endpoint only on a
+yes), federation off. System One is asked only when `~/.claude/gitos-system-one/config.json` exists or
+`system_one.py setup --detect` prints a line (then `setup --write` runs first, only on a yes); the answer is stored with
+`system_one.py repo on|off <ROOT>`. Scaffolding alone enables none of them. A recorded answer is never asked again, on resume or at
+upgrade (`references/upgrade.md` → *4q*). The batch's `follow_up` says what an answer leads to: the global lens pick
+(`lenses.py select`), model optimization's harness mapping (`references/model-optimization.md`), federation's group
+pick (`references/federation.md`).
 
 ---
 

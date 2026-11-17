@@ -25,10 +25,11 @@ cover:
                              present = `worktree-reapable`; unmerged work whose work-order is
                              resolved or missing = `worktree-abandoned`. Classified by
                              worktree.py; the canary never deletes anything)
-  - loose ends              (the INDEX Parked list and the adjudication of implementer notes:
-                             a Parked row with no restart trigger or a dangling promotion, a
-                             resolved work-order with implementer notes never adjudicated, an
-                             adjudication pointing at nothing. Report-only; INDEX + work-orders)
+  - loose ends              (the loose-ends list, the one place "not now" lives, and the
+                             adjudication of implementer notes: a row whose State cannot be read,
+                             a parked row with no restart trigger, an item a second store also
+                             holds, a resolved work-order with implementer notes never
+                             adjudicated, an adjudication pointing at nothing. Report-only)
   - federation (optional)   (a FEDERATED repo's OWN presence record: missing, corrupt, or not
                              refreshed recently = the bootstrap heartbeat is not running; plus
                              its OWN intake hygiene — a malformed proposal, one from a sender
@@ -1910,11 +1911,12 @@ def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict
 
 
 # ------------------------------------------------------------ the loose-ends category (WO-079)
-# Work saved for "later" must have a ledger home the canary can see. Two homes exist: the INDEX
-# `## Parked` table (a deferral with a restart trigger, ids `P<n>`) and the `### Adjudication`
-# block the orchestrator writes under a work-order's `## Implementer notes` (one line per open
-# point, each ending in exactly one destination: `-> WO-NNN`, `-> P<n>`, `-> brain: <page>` or
-# `-> rejected: <reason>`, or `-> L<n>`: moved to the loose-ends list, shape only). REPORT-ONLY, and it opens only the INDEX and the work-order files.
+# Work saved for "later" must have a ledger home the canary can see. Since WO-115 there is one: a row of
+# `loose-ends.md` (a deferral with a restart trigger is a `parked:` row; the INDEX `## Parked` table is its
+# generated view, and a hand-kept `P<n>` row there is a store the migration retires). The `### Adjudication`
+# block the orchestrator writes under a work-order's `## Implementer notes` routes each open point to exactly one
+# destination: `-> WO-NNN`, `-> WO-NNN/SN`, `-> brain: <page>`, `-> rejected: <reason>` or `-> L<n>` (the list,
+# shape only). REPORT-ONLY.
 #
 # THE EXEMPTION is by engine version, so it works in any repo with no per-repo setting: a
 # resolved row is checked for `order-notes-unadjudicated` only when the version its "Fix landed in" cell
@@ -1949,7 +1951,11 @@ LOOSE_STALE_COUNT = 20               # more `new` items than this is stale
 LOOSE_HEADER = ["id", "added", "source", "item", "state"]
 LOOSE_ID_RE = re.compile(r"L\d+")
 LOOSE_NEXT_RE = re.compile(r"<!--\s*next:\s*L\d+\s*-->")
-LOOSE_DECLINED_RE = re.compile(r"declined:\s*\S.*")
+# A row's State (WO-115): the one place "not now" lives. `new`, or `<name>: <argument>` with a non-empty argument;
+# `proposed:` names one drain kind (its pile file in `drain/pending/` is the attachment, never the authority).
+LOOSE_KINDS = ("join", "new-order", "close", "ask", "park", "read")
+LOOSE_STATE_RE = re.compile(r"(proposed|parked|waiting|declined):\s*(\S.*)")
+LOOSE_STATES = "`new`, `proposed: <kind>`, `parked: <trigger>`, `waiting: <question>` or `declined: <reason>`"
 LOOSE_PILE_DIR = ("drain", "pending")  # the pile: one file per proposal, each carries `- created: <iso>`
 LOOSE_PILE_CREATED_RE = re.compile(r"(?m)^- created: (\d{4}-\d\d-\d\d)")
 LOOSE_PILE_NAME_RE = re.compile(r"[0-9a-f]{12}\.md")
@@ -1961,6 +1967,18 @@ def _loose_cells(line: str) -> list[str]:
     s = s[1:] if s.startswith("|") else s
     s = s[:-1] if s.endswith("|") and not s.endswith("\\|") else s
     return [c.strip().replace("\\|", "|") for c in _LOOSE_PIPE.split(s)]
+
+
+def parse_loose_state(state: str) -> "tuple[str, str] | None":
+    """(name, argument) of a loose-end State, `("new", "")` for `new`; None when it is none of the five (a row whose
+    State cannot be read is reported, never treated as `new`)."""
+    s = " ".join(str(state).split())
+    if s == "new":
+        return "new", ""
+    m = LOOSE_STATE_RE.fullmatch(s)
+    if not m or (m.group(1) == "proposed" and m.group(2) not in LOOSE_KINDS):
+        return None
+    return m.group(1), m.group(2)
 
 
 def parse_loose_list(text: str) -> dict:
@@ -2010,7 +2028,7 @@ def check_drain_pile(home: Path, today: "date | None" = None) -> list[dict]:
         return [{"kind": "drain-stale",
                  "finding": f"{n} pending drain proposal(s){oldest} (limits: {LOOSE_STALE_DAYS} days, "
                             f"{LOOSE_STALE_COUNT} proposals) -> decide them: `system_one.py drain accept | "
-                            "decline | withdraw ID`; an ask is raised to the operator from the pile"}]
+                            "decline | withdraw ID`"}]
     return []
 
 
@@ -2046,13 +2064,16 @@ def check_loose_list(home: Path, today: "date | None" = None) -> list[dict]:
             age = None
             items.append({"kind": "loose-ends-unparseable", "id": name,
                           "finding": f"loose end {name} has no valid Added date (want YYYY-MM-DD) -> fix the row"})
-        if state != "new" and not LOOSE_DECLINED_RE.fullmatch(state):
+        st = parse_loose_state(state)
+        if st is None:
             items.append({"kind": "loose-ends-unparseable", "id": name,
-                          "finding": f"loose end {name} has State {state!r}: it is `new` or "
-                                     "`declined: <reason>` -> fix the State (a row left by an older engine: "
-                                     "`system_one.py migrate --write`); a routed or closed item is "
-                                     "removed from the list"})
-        elif state == "new" and age is not None:
+                          "finding": f"loose end {name} has State {state!r}: it is {LOOSE_STATES} -> fix the "
+                                     "State (`loose_ends.py state`); a routed or closed item is removed from the list"})
+        elif st[0] == "parked" and PLACEHOLDER_TRIGGER_RE.fullmatch(st[1]):
+            items.append({"kind": "parked-no-trigger", "id": name,
+                          "finding": f"loose end {name} is parked with no restart trigger -> name the event that "
+                                     "restarts it (`loose_ends.py state`), or route it"})
+        elif st[0] == "new" and age is not None:
             new_ages.append((age, name))
         if len(item) > LOOSE_ITEM_MAX:
             items.append({"kind": "loose-ends-oversized", "id": name,
@@ -2073,12 +2094,12 @@ def check_loose_list(home: Path, today: "date | None" = None) -> list[dict]:
     return items
 
 
-# Carried loose ends (WO-106): an item accepted into an order is a box in one section the tools find,
+# Carried loose ends (WO-106, retired by WO-115: a follow-up into an order is a `proposed` slice). The grammar stays
+# so a resolved order's old boxes are read (`carried-open`) and the migration finds an open order's boxes:
 #   `- [ ] L<n> (slice: <name>) <text>`      open
 #   `- [x] L<n> (slice: <name>) <text> -> <sha>`   closed when the slice carrying it landed; or moved:
 #   `-> L<n>` (back on the list), `-> P<n>`, `-> WO-NNN`, `-> rejected: <why>`.
-# This is the one place the grammar lives; system_one.py (which writes boxes) and loose_ends.py (which counts
-# them) import it from here.
+# This is the one place the grammar lives; ledger_migrate.py imports it from here.
 CARRIED_HEADING = "## Carried loose ends"
 CARRIED_LEGACY_RE = re.compile(r"^##\s+(?:taken from the loose[- ]ends\b.*|carried (?:over\b.*|loose ends?\b.*)"
                                r"|loose ends? carried\b.*)$", re.IGNORECASE)
@@ -2139,57 +2160,103 @@ def open_boxes(text: str) -> list:
     return [b for b in parse_carried(text)["boxes"] if not b["done"]]
 
 
-def _accept_dates(home: Path) -> dict:
-    """{(NNN, L<n>): the day an accept record in `drain/accepted/` put the item in that order}."""
+def check_carried(home: Path, today: "date | None" = None) -> list[dict]:
+    """`carried-open` (gating): a resolved single-file order with an open box. Boxes are retired (WO-115): an open box
+    in an open order is a migration leftover, reported by `check_not_now_stores`."""
+    items: list[dict] = []
+    d = home / "work-orders" / "resolved"
+    for nnn, names in sorted(_wo_files(d)[0].items()):
+        if "/" in names[0]:
+            continue          # a folder order carries no boxes
+        boxes = open_boxes(_read(d / names[0]) or "")
+        if boxes:
+            ids = ", ".join(b["id"] for b in boxes)
+            items.append({"kind": "carried-open", "wo": f"WO-{nnn}", "file": names[0],
+                          "finding": f"WO-{nnn} is resolved with {len(boxes)} open carried loose end(s) ({ids}) "
+                                     "-> tick each (-> <sha>) or move it (-> L<n> / WO-NNN / rejected: <why>)"})
+    return items
+
+
+def _pile_items(home: Path) -> dict:
+    """{L<n>: [pile file names]} over the pending drain proposals (`- items: L1, L2`)."""
     out: dict = {}
-    d = home / "drain" / "accepted"
+    d = home.joinpath(*LOOSE_PILE_DIR)
     for f in sorted(d.glob("*.md")) if d.is_dir() else []:
-        text = _read(f) or ""
-        im = re.search(r"(?m)^- items: (.*)$", text)
-        am = re.search(r"(?m)^accepted: WO-(\d{3,}), (\d{4}-\d\d-\d\d)\s*$", text)
-        if not (im and am):
+        if not LOOSE_PILE_NAME_RE.fullmatch(f.name):
             continue
-        try:
-            when = date.fromisoformat(am.group(2))
-        except ValueError:
-            continue
-        for lid in (x.strip() for x in im.group(1).split(",")):
-            k = (am.group(1), lid)
-            out[k] = min(out.get(k, when), when)
+        m = re.search(r"(?m)^- items: (.*)$", _read(f) or "")
+        for lid in (x.strip() for x in (m.group(1).split(",") if m else [])):
+            if lid:
+                out.setdefault(lid, []).append(f.name)
     return out
 
 
-def check_carried(home: Path, today: "date | None" = None) -> list[dict]:
-    """Single-file orders only (a folder order carries no boxes and has per-file limits, see `check_slices`).
-    `carried-open` (gating): a resolved order with an open box. `carried-stale` (advisory): an open box in an
-    open order whose accept record is older than LOOSE_STALE_DAYS."""
-    today = today or date.today()
+def _open_parked_rows(idx_text: "str | None") -> list:
+    """[(P<n>, row cells)] of the hand-kept INDEX Parked rows still open (no `->` routing in the row)."""
+    block = section_lines(idx_text or "", PARKED_HEADING) or []
+    out = []
+    for row in _table_rows(block) or []:
+        pid = clean_cell(row[0]) if row else ""
+        if PARKED_ID_RE.fullmatch(pid) and not any("->" in c or "→" in c for c in row):
+            out.append((pid, row))
+    return out
+
+
+def check_not_now_stores(home: Path, rows: list) -> list[dict]:
+    """One authority for "not now" (WO-115): a loose end is a row of `loose-ends.md` and nothing else holds it.
+    Gating `loose-ends-two-stores`: one item held by the list and by another store (a pile file while its row is not
+    `proposed:`, `drain/routed.txt`, an open carried box, an open hand-kept INDEX Parked row it was imported from),
+    or a `proposed:` row no pile file holds. Advisory `loose-ends-migration`: a store retired by WO-115 still holds
+    something only it holds; `ledger_migrate.py <home>` moves it onto the list."""
+    state = {r[0]: (parse_loose_state(r[4]) or ("?", ""))[0] for r in rows if LOOSE_ID_RE.fullmatch(r[0])}
+    imported = {r[2][len("import:"):]: r[0] for r in rows if r[2].startswith("import:P")}
     items: list[dict] = []
-    dates = _accept_dates(home)
-    for sub, resolved in (("work-orders", False), ("work-orders/resolved", True)):
-        d = home / sub
-        for nnn, names in sorted(_wo_files(d)[0].items()):
-            if "/" in names[0]:
-                continue          # a folder order carries no boxes: follow-ups become slices or orders
-            text = _read(d / names[0])
-            if not text:
-                continue
-            boxes = open_boxes(text)
-            if resolved and boxes:
-                ids = ", ".join(b["id"] for b in boxes)
-                items.append({"kind": "carried-open", "wo": f"WO-{nnn}", "file": names[0],
-                              "finding": f"WO-{nnn} is resolved with {len(boxes)} open carried loose end(s) ({ids}) "
-                                         "-> tick each (-> <sha>) or move it (-> L<n> / P<n> / WO-NNN / "
-                                         "rejected: <why>)"})
-            if resolved:
-                continue
-            old = [(b["id"], (today - dates[(nnn, b["id"])]).days) for b in boxes if (nnn, b["id"]) in dates]
-            old = [(i, n) for i, n in old if n > LOOSE_STALE_DAYS]
-            if old:
-                items.append({"kind": "carried-stale", "advisory": True, "wo": f"WO-{nnn}", "file": names[0],
-                              "finding": f"WO-{nnn} carries open loose end(s) older than {LOOSE_STALE_DAYS} days: "
-                                         + ", ".join(f"{i} ({n} days)" for i, n in old)
-                                         + " -> land the slice, or move them"})
+    left: list[str] = []
+
+    def two(lid: str, where: str) -> None:
+        items.append({"kind": "loose-ends-two-stores", "id": lid,
+                      "finding": f"loose end {lid} is on the list and also in {where} -> one store holds it: "
+                                 "settle it on the list and remove the other copy"})
+    pile = _pile_items(home)
+    for lid, files in sorted(pile.items()):
+        if lid not in state:
+            left.append(f"pile {files[0]} holds {lid}")
+        elif state[lid] != "proposed":
+            two(lid, f"drain/pending/{files[0]} while its row is not `proposed:`")
+    for lid, st in sorted(state.items()):
+        if st == "proposed" and lid not in pile:
+            items.append({"kind": "loose-ends-two-stores", "id": lid,
+                          "finding": f"loose end {lid} is `proposed:` and no pile file holds it -> withdraw it "
+                                     f"(`loose_ends.py state {lid} new`) or route it"})
+    routed = _read(home / "drain" / "routed.txt")
+    if routed is not None:
+        ids = set(re.findall(r"(?m)^(L\d+) -> ", routed))
+        for lid in sorted(ids & set(state)):
+            two(lid, "drain/routed.txt")
+        left.append("drain/routed.txt")
+    for sub in ("accepted", "declined"):
+        n = len(list((home / "drain" / sub).glob("*.md"))) if (home / "drain" / sub).is_dir() else 0
+        if n:
+            left.append(f"{n} file(s) in drain/{sub}/")
+    d = home / "work-orders"
+    for nnn, names in sorted(_wo_files(d)[0].items()):
+        if "/" in names[0]:
+            continue
+        for b in open_boxes(_read(d / names[0]) or ""):
+            if b["id"] in state:
+                two(b["id"], f"an open carried box of WO-{nnn}")
+            else:
+                left.append(f"WO-{nnn} carries {b['id']}")
+    for pid, _row in _open_parked_rows(_read(home / "INDEX.md")):
+        if pid in imported:
+            two(imported[pid], f"the INDEX Parked row {pid}")
+        else:
+            left.append(f"Parked {pid}")
+    if left:
+        items.append({"kind": "loose-ends-migration", "advisory": True,
+                      "finding": f"retired not-now stores still hold items ({'; '.join(left[:6])}"
+                                 f"{'; ...' if len(left) > 6 else ''}) -> run `ledger_migrate.py <home>` (a dry run), "
+                                 "then with `--write`"})
     return items
 
 
@@ -2324,6 +2391,8 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
     if idx_text is None:
         return [], "no INDEX.md"
     items: list[dict] = check_loose_list(home, today) + check_drain_pile(home, today) + check_carried(home, today)
+    loose_rows = parse_loose_list(_read(home / LOOSE_LIST_NAME) or "")["rows"]
+    items += check_not_now_stores(home, loose_rows)
     wo_dirs = (home / "work-orders", home / "work-orders" / "resolved")
     exist: set[str] = set()
     for d in wo_dirs:
@@ -2373,10 +2442,13 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
                           "file": path.name,
                           "finding": f"WO-{nnn} is resolved with Implementer notes and no "
                                      "'### Adjudication' block -> route each point "
-                                     "(-> WO-NNN / -> P<n> / -> brain: <page> / -> rejected: <reason> "
+                                     "(-> WO-NNN / -> WO-NNN/SN / -> brain: <page> / -> rejected: <reason> "
                                      "/ -> L<n>)"})
 
-    # every adjudication line must point at something that exists
+    # every adjudication line must point at something that exists. `-> P<n>` is the retired parking target (WO-115:
+    # a parked item is a list row, `-> L<n>`); it is still checked in an open order, against the hand-kept Parked rows
+    # and the rows imported from them. A resolved order is history: its P<n> may name a row the migration retired.
+    parked_ids |= {r[2][len("import:"):] for r in loose_rows if r[2].startswith("import:P")}
     for d in wo_dirs:
         for name in sorted(f for names in _wo_files(d)[0].values() for f in names):
             text = _read(d / name)
@@ -2399,13 +2471,13 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
                                       "target": f"WO-{nnn}",
                                       "finding": f"{name} adjudicates a point to WO-{nnn}, which "
                                                  "does not exist -> fix the number or author it"})
-                for pid in ADJ_P_RE.findall(ln):
+                for pid in ADJ_P_RE.findall(ln) if d == wo_dirs[0] else []:
                     if pid not in parked_ids:
                         items.append({"kind": "adjudication-dangling", "file": name,
                                       "target": pid,
                                       "finding": f"{name} adjudicates a point to {pid}, which is "
-                                                 "not in the INDEX Parked list -> add the row or "
-                                                 "fix the id"})
+                                                 "no Parked row -> park it as a loose end and route "
+                                                 "the point `-> L<n>`"})
     return items, None
 
 
@@ -2748,7 +2820,7 @@ def check_index_drift(home: Path, skill_dir: Path | None) -> tuple[list[dict], s
     if regions is None:
         return [], "no generated-index markers in INDEX.md"
     return [{"kind": "index-drift", "region": name,
-             "finding": f"the {name} table of INDEX.md differs from the order files -> run "
+             "finding": f"the {name} table of INDEX.md differs from its source -> run "
                         "`python <SKILL_DIR>/scripts/ledger_index.py <home>` and commit the result"}
             for name in regions], None
 
@@ -2782,7 +2854,7 @@ def print_report(r: dict) -> None:
         ("Engine tool copies (<home>/tools/ vs skill)", "tool"),
         ("Live session resume (fresh; pointers, not rules)", "resume"),
         ("Lingering worktrees (reapable / abandoned)", "worktree"),
-        ("Loose ends (Parked triggers, adjudicated notes)", "loose-ends"),
+        ("Loose ends (one list, parked triggers, adjudicated notes)", "loose-ends"),
         ("Generated INDEX tables (regions vs the order files)", "index-drift"),
     ]
     # The optional category prints ONLY when this repo has it. An unfederated repo gets no line

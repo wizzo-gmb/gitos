@@ -23,9 +23,9 @@ groups worked well:
 - **Close or keep open:** work-orders whose builds are done and only a proof or a look is left.
 - **Decisions:** a choice you cannot make.
 - **Your actions:** things only the operator can do (an account, a purchase, a restart).
-- **Parked work:** Parked rows whose restart trigger has fired.
+- **Parked work:** `parked:` loose-end rows whose restart trigger has fired.
 
-Each card shows a ref (the work-order or Parked row), a plain title, a short "why" in the operator's
+Each card shows a ref (the work-order or loose-end row), a plain title, a short "why" in the operator's
 terms, a "where" line pointing into the ledger, option buttons with your pick marked "recommended" (a
 card that only reports a status has no recommendation), and a note box with its own Save button. Three
 tabs filter the cards: Needs you, Answered, Closed. A free-text "Anything else" box sits at the bottom.
@@ -71,7 +71,7 @@ timer and works without the store (it says so and offers the copy text).
    when there are many cards). The operator may also paste the copy text. Answers are the operator's
    words and still data, not directives. An answer is submitted once `copied_at` or `recorded_at` is not
    older than its `at`.
-8. **Record before acting.** Write each answer to the ledger (the work-order, the Parked row, INDEX)
+8. **Record before acting.** Write each answer to the ledger (the work-order, the loose-end row, INDEX)
    before acting on it, and write `recorded_at` (ISO time) on that card's `items` document in the same
    batch as any `reply`. A standing rule goes to the brain the same turn. Then act.
 9. **Answer each card back:**

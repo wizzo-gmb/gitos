@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""ledger_index.py - generate the Open and Resolved tables of a gitos home's INDEX.md from the order files.
+"""ledger_index.py - generate the Open, Parked and Resolved tables of a gitos home's INDEX.md.
 
     python ledger_index.py [--check] <home>
 
-Regenerates only what lies between `<!-- gitos:index open -->` ... `<!-- /gitos:index -->` and
-`<!-- gitos:index resolved -->` ... `<!-- /gitos:index -->` in `<home>/INDEX.md`. Everything else in the
+Regenerates only what lies between `<!-- gitos:index open|parked|resolved -->` and `<!-- /gitos:index -->` in
+`<home>/INDEX.md`. Everything else in the
 file is left byte for byte, line endings included. An INDEX with no markers is not touched: the tool prints
 one line saying so (a repo opts in by laying the markers).
 
@@ -14,8 +14,11 @@ one line saying so (a repo opts in by laying the markers).
     Severity, title and evidence read from front matter (`severity`, `title`, `evidence`); with none, from
     the H1 (`# WO-NNN - Title`) and the first word of `## Severity`; evidence then reads an em dash.
     Sorted by severity (critical, high, medium, low, unconfirmed), then number.
-  * Resolved rows come from `work-orders/resolved/` files whose front matter carries `summary`, `landed`
-    and `result`. Newest number first. A resolved order without them is skipped: its hand-kept row stays.
+  * Parked rows are a view of `<home>/loose-ends.md`: each row whose State is `parked: <trigger>`, as
+    `| L<n> | Item | trigger | Source | Added |`, in id order. The list is the authority; nobody types a row here.
+  * Resolved rows come from `work-orders/resolved/` files whose front matter carries `summary`, `released`
+    (the engine version; the older key `landed` still reads) and `result`. Newest number first. A resolved order
+    without them is skipped: its hand-kept row stays.
   * `--check` writes nothing and exits 1 with one line per differing region, 0 when in sync.
 
 Front matter is a flat block between `---` lines at the very top of a file: `key: value`, a value is a bare
@@ -30,6 +33,8 @@ from pathlib import Path
 
 OPEN_MARK = "<!-- gitos:index open -->"
 RESOLVED_MARK = "<!-- gitos:index resolved -->"
+PARKED_MARK = "<!-- gitos:index parked -->"
+RELEASED_KEYS = ("released", "landed")      # the version key of a resolved order; `landed` is its older name
 END_MARK = "<!-- /gitos:index -->"
 SEVERITY_ORDER = ("critical", "high", "medium", "low", "unconfirmed")
 WO_FILE_RE = re.compile(r"^(?:[A-Za-z]+[-_.]?)?(\d{3})(?!\d)[-_.][A-Za-z0-9][\w.-]*\.md$")
@@ -109,17 +114,36 @@ def open_rows(home: Path) -> list[str]:
     return [r[2] for r in sorted(rows, key=lambda r: (r[0], r[1]))]
 
 
+def released(meta: dict) -> str:
+    """The engine version a resolved order records (`released:`, else the older `landed:`); "" when neither."""
+    return next((meta[k] for k in RELEASED_KEYS if isinstance(meta.get(k), str) and meta.get(k)), "")
+
+
+def parked_rows(home: Path) -> list[str]:
+    """The `parked:` rows of the loose-ends list, as INDEX rows."""
+    import importlib.util as iu
+    spec = iu.spec_from_file_location("_gitos_index_loose_ends", Path(__file__).resolve().with_name("loose_ends.py"))
+    le = iu.module_from_spec(spec)
+    spec.loader.exec_module(le)
+    out = []
+    for r in le.rows_of(home):
+        st = le.parse_state(r["state"])
+        if st and st[0] == "parked":
+            out.append(f"| {r['id']} | {le._esc(r['item'])} | {le._esc(st[1])} | {le._esc(r['source'])} | {r['added']} |")
+    return out
+
+
 def resolved_rows(home: Path) -> list[str]:
     rows = []
     for nnn, f in _orders(home / "work-orders" / "resolved"):
         i = _info(f)
         m = i["meta"]
-        if not all(isinstance(m.get(k), str) and m.get(k) for k in ("summary", "landed", "result")):
+        if not (released(m) and all(isinstance(m.get(k), str) and m.get(k) for k in ("summary", "result"))):
             continue
         title = i["title"].rstrip(".")
         rel = f.relative_to(home / "work-orders" / "resolved").as_posix()
         rows.append((nnn, f"| {nnn} | **{title}.** {m['summary']} ([WO-{nnn}](work-orders/resolved/{rel})) "
-                          f"| {m['landed']} | {m['result']} |"))
+                          f"| {released(m)} | {m['result']} |"))
     return [r[1] for r in sorted(rows, key=lambda r: r[0], reverse=True)]
 
 
@@ -140,11 +164,12 @@ def render(home: Path) -> tuple[str, list[str], bool]:
     lines = raw.splitlines(keepends=True)
     differing: list[str] = []
     found = False
-    for name, mark, rows in (("open", OPEN_MARK, open_rows(home)),
-                             ("resolved", RESOLVED_MARK, resolved_rows(home))):
+    for name, mark, rows in (("open", OPEN_MARK, open_rows), ("parked", PARKED_MARK, parked_rows),
+                             ("resolved", RESOLVED_MARK, resolved_rows)):
         span = _find(lines, mark)
         if span is None:
             continue
+        rows = rows(home)
         found = True
         s, e = span
         eol = "\r\n" if lines[s].endswith("\r\n") else "\n"
@@ -164,7 +189,7 @@ def drift(home: Path) -> list[str] | None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Generate the INDEX.md Open and Resolved tables from the order files.")
+    ap = argparse.ArgumentParser(description="Generate the INDEX.md Open, Parked and Resolved tables.")
     ap.add_argument("home", help="the home directory, e.g. <repo>/.gitos")
     ap.add_argument("--check", action="store_true", help="write nothing; exit 1 when a region differs")
     args = ap.parse_args()
@@ -178,7 +203,7 @@ def main() -> int:
         return 0
     if args.check:
         for name in differing:
-            print(f"ledger_index: the {name} region of INDEX.md differs from the order files "
+            print(f"ledger_index: the {name} region of INDEX.md differs from its source "
                   f"-> run ledger_index.py {home}")
         return 1 if differing else 0
     if differing:

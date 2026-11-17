@@ -10,26 +10,31 @@ resume file. Work is never dispatched from the list (an item is first dropped `-
     | ID | Added | Source | Item | State |
 
 `ID` is `L<n>`, never reused (the next id lives in `<!-- next: L<n> -->` under the table).
-`Source` is `WO-NNN`, `P<n>`, `chat`, `proposal:<id>` or `import:<old id>`. `State` is `new` or
-`declined: <reason>` (a proposal the orchestrator declined without routing it; the drain never proposes
-it again and the orchestrator decides it by hand with `drop`). An item that is routed or closed is
-REMOVED; git keeps the history.
+`Source` is `WO-NNN`, `P<n>`, `chat`, `proposal:<id>` or `import:<old id>`. The list is the one place "not now"
+lives (WO-115); a row's State is one of five:
 
-The list is the inbox: only items not yet proposed. When the drain proposes an item it writes the pile file
-(`<home>/drain/pending/<id>.md`) and removes the item from the list in the same run; from then on the pile is
-its one home, until `accept`, `decline` or `withdraw` (`system_one.py drain ...`). An ask for the operator is a
-pile state too: the orchestrator raises it from the pile.
+    new                   written down, not looked at (the drain asks only these)
+    proposed: <kind>      the drain proposed join | new-order | close | ask | park | read; the pile file
+                          `<home>/drain/pending/<id>.md` is its attachment (what the model saw), not its home
+    parked: <trigger>     waiting on a named restart trigger (the INDEX Parked table is a view of these rows)
+    waiting: <question>   needs the operator
+    declined: <reason>    looked at and refused; never proposed again
 
-    loose_ends.py add        [--root R] --source S --item TEXT
-    loose_ends.py drop       [--root R] L<n> --to WO-NNN | P<n> | brain:<page> | closed:<reason>
+A row whose State is none of these is reported, never read as `new`. An item that is routed or closed is REMOVED
+(git keeps it): not on the list means routed. One routing grammar, the adjudication arrows:
+`WO-NNN | WO-NNN/SN | brain:<page> | closed:<reason>`.
+
+    loose_ends.py add        [--root R] --source S --item TEXT [--state STATE]
+    loose_ends.py state      [--root R] L<n> STATE      (new, parked: T, waiting: Q or declined: R)
+    loose_ends.py drop       [--root R] L<n> --to WO-NNN | WO-NNN/SN | brain:<page> | closed:<reason>
     loose_ends.py list       [--root R] [--json]
-    loose_ends.py status     [--brief] [ROOT]     (inbox, pile, and the boxes carried in open orders)
+    loose_ends.py status     [--brief] [ROOT]     (one line: the rows by state; then everything waiting on you: waiting.py)
     loose_ends.py candidates [--root R] [--json]     (code only, no model)
     loose_ends.py import     [--root R] FILE
     loose_ends.py legacy     pending | decline FILE [--root R] [--json]
 
-`drop` also takes an item that is only in the pile: it withdraws the pending proposals that hold only that item,
-removes it from those that hold others, and records the id in `<home>/drain/routed.txt` (never put back).
+`state` and `drop` on a row a pile file holds also release it: a proposal that holds only that item is removed, one
+that holds others is rewritten without it.
 
 Only the orchestrator writes the list. Every write is atomic and keeps every other row and line
 byte for byte. No file means an empty list (nothing is written by drop, list, status, candidates);
@@ -67,8 +72,8 @@ BM25_K1, BM25_B = 1.2, 0.75       # the word part of the join score
 PICK_OPTIONS = 26                 # open orders offered to the title pick (the best by BM25)
 PICK_TOP = 2                      # orders the pick adds to an item's candidates
 JOIN_MIN_COVER = 0.0              # share of the item's words an order must hold when nothing is shared; none
-DECLINED_RE = re.compile(r"declined:\s*(\S.*)")
-DEST_RE = re.compile(r"(?:WO-(\d{3,})|P(\d+)|brain:(\S.*)|closed:(\S.*))")
+DEST_RE = re.compile(r"(?:WO-(\d{3,})(?:/S(\d+))?|brain:\s*(\S.*)|closed:\s*(\S.*))")
+SETTABLE = {"new": "", "parked": "trigger", "waiting": "question", "declined": "reason"}   # `proposed:` is the drain's
 DONE_CELL_RE = re.compile(r"^[\s*_`~>\-]*(?:done|fixed|closed|merged|superseded|resolved)\b", re.IGNORECASE)
 UNESC_PIPE = re.compile(r"(?<!\\)\|")
 TOO_LONG = ("this is a work-order or a RESUME entry, not a loose end: author one, or shorten it "
@@ -242,7 +247,7 @@ def _text_or_template(home) -> str:
 
 def _append_rows(text: str, new_rows: list) -> str:
     """`text` with the rows added at the end of the table and the next-id comment moved up. Nothing
-    else changes. `new_rows` are (source, item[, added date]) tuples with the item already cleaned."""
+    else changes. `new_rows` are (source, item[, added date[, state]]) tuples with the item already cleaned."""
     p = parse(text)
     if p["table"] is None:
         raise LooseEndsError(f"{NAME} has no `| ID | Added | Source | Item | State |` table: fix it first")
@@ -251,7 +256,8 @@ def _append_rows(text: str, new_rows: list) -> str:
     for row in new_rows:
         src, item = row[0], row[1]
         added = row[2] if len(row) > 2 and row[2] else today().isoformat()
-        add.append(f"| L{nid} | {added} | {src} | {_esc(item)} | {STATE_NEW} |{eol}")
+        state = row[3] if len(row) > 3 and row[3] else STATE_NEW
+        add.append(f"| L{nid} | {added} | {src} | {_esc(item)} | {_esc(state)} |{eol}")
         nid += 1
     at = p["end"]
     if at > 0 and not lines[at - 1].endswith(("\n", "\r")):
@@ -268,12 +274,13 @@ def _append_rows(text: str, new_rows: list) -> str:
 
 
 # ------------------------------------------------------------------ operations
-def add(home, source: str, item: str) -> str:
+def add(home, source: str, item: str, state: "str | None" = None) -> str:
     src, it = _source(source), _item(item)
+    st = _state_text(state) if state else STATE_NEW
     text = _text_or_template(home)
     p = parse(text)
     new_id = f"L{_next_id(p)}"
-    _write(home, _append_rows(text, [(src, it)]))
+    _write(home, _append_rows(text, [(src, it, "", st)]))
     return new_id
 
 
@@ -290,106 +297,107 @@ def _wo_open(home: Path, nnn: str) -> bool:
     return bool(by.get(nnn))
 
 
-def _parked_exists(home: Path, pid: str) -> bool:
-    try:
-        idx = (Path(home) / "INDEX.md").read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return False
-    block = _canary().section_lines(idx, "## Parked") or []
-    return any(re.match(rf"^\s*\|\s*{re.escape(pid)}\s*\|", ln) for ln in block)
-
-
 def check_dest(home, dest: str) -> str:
     """The destination `drop` and a routed decline accept, normalised; a LooseEndsError when it is not one."""
     d = " ".join(str(dest).split())
     m = DEST_RE.fullmatch(d)
     if not m:
-        raise LooseEndsError(f"--to {d!r} is not WO-NNN, P<n>, brain:<page> or closed:<reason>")
-    wo, par, brain, closed = m.groups()
+        raise LooseEndsError(f"--to {d!r} is not WO-NNN, WO-NNN/SN, brain:<page> or closed:<reason>")
+    wo, sn, _brain, closed = m.groups()
     if wo and not _wo_open(home, wo):
         raise LooseEndsError(f"WO-{wo} is not an open work-order in {Path(home) / 'work-orders'}: "
                              "author it first, then drop the item to it")
-    if par and not _parked_exists(home, f"P{par}"):
-        raise LooseEndsError(f"P{par} is not a row of the INDEX Parked list: park it first")
+    if sn and _sibling("_gitos_slice_le", "slice.py").find_slice(Path(home), f"WO-{wo}/S{sn}") is None:
+        raise LooseEndsError(f"WO-{wo}/S{sn} is not a slice of WO-{wo}: add it first (`slice.py add`)")
     if closed and len(closed.split()) < 3:
         raise LooseEndsError("closed: needs a reason of at least a few words (what makes it done or moot)")
-    if brain and not brain.strip():
-        raise LooseEndsError("brain: needs a page name")
     return d
 
 
-def routed_path(home) -> Path:
-    return Path(home) / "drain" / "routed.txt"
+def parse_state(state: str) -> "tuple[str, str] | None":
+    """(name, argument) of a State; None when it is not one of the five (see the module docstring)."""
+    return _canary().parse_loose_state(state)
 
 
-def routed_ids(home) -> set:
-    """The ids `drop` routed (one `L<n> -> <dest> (<date>)` line each in `<home>/drain/routed.txt`). Ids are
-    never reused, so an id here is routed for good: no decline, withdraw or drain puts it back on the list."""
-    try:
-        text = routed_path(home).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return set()
-    return {m.group(1) for m in re.finditer(r"(?m)^(L\d+) -> ", text)}
+def _state_text(state: str) -> str:
+    """A State `state` and `add --state` may write, normalised; a LooseEndsError otherwise."""
+    s = " ".join(str(state).split())
+    st = parse_state(s)
+    if st is None or st[0] not in SETTABLE:
+        raise LooseEndsError(f"State {s!r} is not one of: new, parked: <trigger>, waiting: <question>, "
+                             "declined: <reason> (`proposed:` is written by the drain)")
+    if st[0] == "parked" and _canary().PLACEHOLDER_TRIGGER_RE.fullmatch(st[1]):
+        raise LooseEndsError("parked: needs a restart trigger (the event that restarts it)")
+    return s
 
 
-def _record_routed(home, lid: str, dest: str) -> None:
-    path = routed_path(home)
-    try:
-        old = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        old = ""
-    if lid in routed_ids(home):
-        return
-    if old and not old.endswith("\n"):
-        old += "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".routed-", suffix=".tmp", dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(f"{old}{lid} -> {dest} ({today().isoformat()})\n")
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+def _release(home, lid: str) -> list:
+    """Take `lid` out of the pile files that hold it -> notes for the operator."""
+    sm = _system_one()
+    if not sm.pending_holding(home, lid):
+        return []
+    done = sm.release_items(home, [lid])
+    return [f"withdrew proposal {x}" for x in done["withdrawn"]] + [
+        f"proposal {old} is now {new} without it" for old, new in done["edited"]]
 
 
-def drop(home, lid: str, dest: str, release: bool = True) -> "str | None":
-    """Route or close an item: its row leaves the list and `drain/routed.txt` records it. The item may be only
-    in the pile (a proposed item has no row): a pending drain proposal that holds only it is withdrawn, one
-    that holds others loses just this item (`release=False` leaves the pile alone: the caller disposes of the
-    proposal itself). The routing is recorded first, so a crash after it never lets a decline put the item
-    back. No list file and no proposal holding the item is an empty list: nothing to drop (None)."""
+def drop(home, lid: str, dest: str) -> "str | None":
+    """Route or close an item: its row leaves the list (not on the list means routed). Its pile files are released
+    first, so a crash leaves the row (drop again), never a proposal for a routed item. No list file is an empty
+    list: nothing to drop (None)."""
     d = check_dest(home, dest)
     lid = lid.strip()
-    sm = _system_one() if release else None
-    held = sm.pending_holding(home, lid) if sm else []
-    r = None
-    if list_path(home).is_file():
-        p = parse(_text_or_template(home))
-        try:
-            r = _find(p, lid)
-        except LooseEndsError:
-            if not held:
-                raise
-    elif not held:
+    if not list_path(home).is_file():
         return None
-    _record_routed(home, lid, d)
-    if r is not None:
-        lines = list(p["lines"])
-        del lines[r["line"]]
-        _write(home, "".join(lines))
-    done = sm.release_items(home, [lid]) if sm else {"withdrawn": [], "edited": []}
-    note = [f"withdrew proposal {x}" for x in done["withdrawn"]] + [
-        f"proposal {old} is now {new} without it" for old, new in done["edited"]]
+    _find(parse(_text_or_template(home)), lid)
+    note = _release(home, lid)
+    remove_rows(home, [lid])
     return f"{lid} -> {d}" + ("; " + "; ".join(note) if note else "")
 
 
+def set_states(home, states: dict) -> list:
+    """Write each row's State (`{L<n>: state}`, checked by the caller) in one atomic write; every other byte stays.
+    -> the ids changed. An id not on the list raises before anything is written."""
+    text = _text_or_template(home)
+    p = parse(text)
+    lines = list(p["lines"])
+    rows = {r["id"]: r for r in p["rows"]}
+    for lid in states:
+        if lid not in rows:
+            raise LooseEndsError(f"no loose end {lid}")
+    changed = []
+    for lid, st in states.items():
+        r = rows[lid]
+        if r["state"] == st:
+            continue
+        ln = lines[r["line"]]
+        body = ln.rstrip("\r\n")
+        cells = _cells(body)
+        cells[4] = f" {_esc(st)} "
+        lines[r["line"]] = "|" + "|".join(cells) + "|" + ln[len(body):]
+        changed.append(lid)
+    if changed:
+        _write(home, "".join(lines))
+    return changed
+
+
+def set_state(home, lid: str, state: str) -> str:
+    """The `state` command: a row to `new`, `parked: T`, `waiting: Q` or `declined: R`. The row is written first,
+    then any pile file holding it is released, so a crash leaves a pile file beside a row that is not `proposed:`
+    (the canary reports it; `state` run again clears it)."""
+    s = _state_text(state)
+    lid = lid.strip()
+    if not list_path(home).is_file():
+        raise LooseEndsError(f"no loose end {lid} (there is no {NAME})")
+    _find(parse(_text_or_template(home)), lid)
+    set_states(home, {lid: s})
+    note = _release(home, lid)
+    return f"{lid}: {s}" + ("; " + "; ".join(note) if note else "")
+
+
 def remove_rows(home, ids) -> list:
-    """Remove the rows with these ids in one atomic write (no destination: the items live on in the pile).
-    -> the ids removed. No file, or none of them on the list, writes nothing."""
+    """Remove the rows with these ids in one atomic write. -> the ids removed. No file, or none of them on the list,
+    writes nothing."""
     want = {i.strip() for i in ids}
     if not list_path(home).is_file() or not want:
         return []
@@ -402,10 +410,22 @@ def remove_rows(home, ids) -> list:
     return [r["id"] for r in gone]
 
 
-def restore_rows(home, rows: list, state: str = STATE_NEW) -> list:
-    """Put rows back on the list with their own id, Added date, Source and text; State `state`. `rows` are
-    (id, added, source, item); an empty Added is today, an id already on the list is left as it is.
-    -> the ids put back. Ids are never reused, so the next-id comment only ever moves up."""
+def _fmt(r: dict, now=None) -> str:
+    age = age_days(r["added"], now)
+    when = f"{age}d" if age is not None else "?d"
+    state = "new" if r["state"] == STATE_NEW else r["state"]
+    return f"{r['id']}  {when:>4}  [{r['source']}]  {r['item']}  ({state})"
+
+
+def rows_of(home) -> list:
+    p = load(home)
+    return [] if p is None else p["rows"]
+
+
+def insert_rows(home, rows: list) -> list:
+    """Put rows on the list with their own id: `rows` are (id, added, source, item, state), an empty Added is today.
+    An id already on the list is left as it is. -> the ids added. Ids are never reused, so the next-id comment only
+    ever moves up. Used by the migration (a pile item or a carried box back on the list)."""
     text = _text_or_template(home)
     p = parse(text)
     if p["table"] is None:
@@ -415,8 +435,8 @@ def restore_rows(home, rows: list, state: str = STATE_NEW) -> list:
     if not todo:
         return []
     lines, eol = list(p["lines"]), _eol(text)
-    add = [f"| {lid} | {added or today().isoformat()} | {src} | {_esc(item)} | {_esc(state)} |{eol}"
-           for lid, added, src, item in todo]
+    add = [f"| {lid} | {added or today().isoformat()} | {_esc(src)} | {_esc(item)} | {_esc(state)} |{eol}"
+           for lid, added, src, item, state in todo]
     at = p["end"]
     if at > 0 and not lines[at - 1].endswith(("\n", "\r")):
         lines[at - 1] += eol
@@ -433,57 +453,25 @@ def restore_rows(home, rows: list, state: str = STATE_NEW) -> list:
     return [r[0] for r in todo]
 
 
-def pile_counts(home) -> tuple:
-    """(proposals pending in the pile, those that wait for the operator = pending `ask`)."""
-    d = Path(home) / "drain" / "pending"
-    n = k = 0
-    for f in sorted(d.glob("*.md")) if d.is_dir() else []:
-        try:
-            text = f.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        m = re.search(r"(?m)^- kind: (\S+)\s*$", text)
-        if m:
-            n += 1
-            k += m.group(1) == "ask"
-    return n, k
-
-
-def _fmt(r: dict, now=None) -> str:
-    age = age_days(r["added"], now)
-    when = f"{age}d" if age is not None else "?d"
-    state = "new" if r["state"] == STATE_NEW else r["state"]
-    return f"{r['id']}  {when:>4}  [{r['source']}]  {r['item']}  ({state})"
-
-
-def rows_of(home) -> list:
+def state_counts(home) -> "dict | None":
+    """{new, proposed, parked, waiting, declined, unreadable: n}; None when there is no list file."""
     p = load(home)
-    return [] if p is None else p["rows"]
-
-
-def carried_open(home) -> int:
-    """Open boxes (`- [ ] L<n> (slice: ..) ..`) in the open work-orders."""
-    c = _canary()
-    d = Path(home) / "work-orders"
-    n = 0
-    for names in c._wo_files(d)[0].values():
-        if "/" in names[0]:
-            continue          # a folder order carries no boxes
-        try:
-            n += len(c.open_boxes((d / names[0]).read_text(encoding="utf-8")))
-        except (OSError, UnicodeDecodeError):
-            continue
-    return n
+    if p is None:
+        return None
+    out = {k: 0 for k in ("new", "proposed", "parked", "waiting", "declined", "unreadable")}
+    for r in p["rows"]:
+        out[(parse_state(r["state"]) or ("unreadable",))[0]] += 1
+    return out
 
 
 def brief(home, now=None) -> "str | None":
-    """One line, or None when there is no list file, no pile and no carried box."""
-    p = load(home)
-    n, k = pile_counts(home)
-    carried = carried_open(home)
-    if p is None and not n and not carried:
+    """One line, or None when there is no list file."""
+    n = state_counts(home)
+    if n is None:
         return None
-    return f"loose ends: inbox {len(p['rows']) if p else 0} · pile {n} ({k} for you) · carried {carried} open"
+    line = (f"loose ends: {n['new']} new · {n['proposed']} proposed · {n['parked']} parked · "
+            f"{n['waiting']} waiting · {n['declined']} declined")
+    return line + (f" · {n['unreadable']} unreadable (fix the State)" if n["unreadable"] else "")
 
 
 # ------------------------------------------------------------------ candidates (code only, no model)
@@ -966,12 +954,16 @@ def main(argv=None) -> int:
     s = cmd("add", "append a new item; prints its id")
     s.add_argument("--source", required=True)
     s.add_argument("--item", required=True)
+    s.add_argument("--state", default=None, help="new (default), parked: T, waiting: Q or declined: R")
+    s = cmd("state", "set an item's State: new, parked: <trigger>, waiting: <question> or declined: <reason>")
+    s.add_argument("id")
+    s.add_argument("state")
     s = cmd("drop", "remove an item that was routed or closed")
     s.add_argument("id")
-    s.add_argument("--to", required=True, help="WO-NNN | P<n> | brain:<page> | closed:<reason>")
+    s.add_argument("--to", required=True, help="WO-NNN | WO-NNN/SN | brain:<page> | closed:<reason>")
     s = cmd("list", "print the list")
     s.add_argument("--json", action="store_true")
-    s = cmd("status", "one line: the inbox, the pile, and what waits for you")
+    s = cmd("status", "one line: the rows by state")
     s.add_argument("--brief", action="store_true")
     s.add_argument("root_pos", nargs="?", default=None)
     s = cmd("candidates", "open work-orders each new item could join, and items that could be bundled")
@@ -986,7 +978,9 @@ def main(argv=None) -> int:
     home = _root(a)
     try:
         if a.cmd == "add":
-            print(add(home, a.source, a.item))
+            print(add(home, a.source, a.item, a.state))
+        elif a.cmd == "state":
+            print(set_state(home, a.id, a.state))
         elif a.cmd == "drop":
             print(drop(home, a.id, a.to) or "loose ends: empty (no list file), nothing to do")
         elif a.cmd == "list":
@@ -1001,6 +995,7 @@ def main(argv=None) -> int:
             line = brief(home)
             if line:
                 print(line)
+            _sibling("_gitos_waiting_le", "waiting.py").show(home, a.brief)     # the one "waiting on you" view
         elif a.cmd == "candidates":
             d = candidates(home)
             if a.json:

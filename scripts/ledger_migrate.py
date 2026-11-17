@@ -1,9 +1,26 @@
 #!/usr/bin/env python3
-"""ledger_migrate.py - convert open single-file orders with two or more slice sections into the folder form.
+"""ledger_migrate.py - bring a home's ledger to the current form: folder orders, and one not-now list.
 
     python ledger_migrate.py HOME [--write]
 
 HOME is the gitos home dir (`<repo>/.gitos`). Dry run by default: it prints what it would do and writes nothing.
+It is idempotent: run again after a crash, or after `--write`, it finds what is left (nothing, the second time).
+
+**One not-now list (WO-115).** Every item that is not yet an order becomes a row of `loose-ends.md`:
+
+  * a pending drain proposal (`drain/pending/<id>.md`) stays as the attachment; each item it holds gets its row back
+    (own id, Added, Source, text) as `proposed: <kind>`, or a `new` row it holds becomes `proposed: <kind>`;
+  * an open hand-kept INDEX Parked row (`P<n>`, no `->` in it) becomes a row `parked: <trigger>` with Source
+    `import:P<n>`; a closed one (`-> WO-NNN`, `-> dropped ...`) is routed and goes; the section becomes the generated
+    region `<!-- gitos:index parked -->` (`ledger_index.py` writes it from the list);
+  * an open carried box (`- [ ] L<n> (slice: ..) ..`) of an open order goes back on the list as `new` (own id) and
+    the box is ticked `-> L<n>`;
+  * `drain/declined/`, `drain/accepted/` and `drain/routed.txt` are removed: a declined item is already a
+    `declined:` row, an accepted or routed one is off the list (git keeps the files);
+  * the front-matter key `landed:` (the engine version an order resolved in) is renamed `released:`.
+
+What cannot be moved with confidence (an item a pile file holds while its row is in another state, a routed id that
+is still a row, a Parked row with no trigger, a box line that is not a box) is reported and left alone.
 
 An open order `work-orders/WO-NNN-slug.md` whose `## Slices` section holds two or more `### S<n>` sections
 becomes the folder form (see slice.py): the file is `git mv`-ed to `WO-NNN/order.md` (history follows), each slice
@@ -261,6 +278,172 @@ def apply(home: Path, nnn: str, path: Path, hist_path: "Path | None", plan: dict
         _git(top, "add", "--", str(folder))
 
 
+def _rm(path: Path) -> None:
+    """Remove a file, through git when it is tracked (history keeps it)."""
+    top = (_git(path.parent, "rev-parse", "--show-toplevel") or "").strip()
+    if not (top and _git(top, "rm", "-q", "-f", "--", str(path)) is not None):
+        path.unlink()
+
+
+def _shorten(text: str, n: int = 300) -> str:
+    s = " ".join(text.split())
+    return s if len(s) <= n else s[:n - 3].rstrip() + "..."
+
+
+def migrate_not_now(home: Path, write: bool, out=print) -> int:
+    """The WO-115 moves (see the module docstring). -> how many moves were found."""
+    le, cn, s1 = _load("loose_ends"), _load("canary"), _load("system_one")
+    moves = 0
+
+    def say(text: str) -> None:
+        nonlocal moves
+        moves += 1
+        out(f"not-now: {text}")
+    rows = {r["id"]: r for r in le.rows_of(home)}
+    state = {k: (le.parse_state(r["state"]) or ("?", ""))[0] for k, r in rows.items()}
+    routed_file = home / "drain" / "routed.txt"
+    routed = set(re.findall(r"(?m)^(L\d+) -> ", _read(routed_file))) if routed_file.is_file() else set()
+    # 1. the pile: the row is the authority, the file an attachment
+    pend = home / "drain" / "pending"
+    back, marks = [], {}
+    for f in sorted(pend.glob("*.md")) if pend.is_dir() else []:
+        m = s1._read_proposal(f) if s1._DRAIN_ID.fullmatch(f.stem) else None
+        if not m:
+            continue
+        lines = {r[0]: r for r in s1._proposal_rows(m)}
+        for lid in m["item_list"]:
+            want = f"proposed: {m['kind']}"
+            if lid in routed:
+                say(f"{lid} is in pile {f.name} and in drain/routed.txt: routed, so it leaves the pile")
+                if write:
+                    s1.release_items(home, [lid])
+            elif lid not in rows and lid in lines:
+                say(f"{lid} (pile {f.name}) -> back on the list as `{want}`")
+                back.append((lid, lines[lid][1], lines[lid][2], lines[lid][3], want))
+            elif lid not in rows:
+                out(f"not-now: LEFT {lid}: pile {f.name} names it but carries no item line; settle it by hand")
+            elif state[lid] == "new":
+                say(f"{lid} `new` (pile {f.name}) -> `{want}`")
+                marks[lid] = want
+            elif state[lid] != "proposed":
+                out(f"not-now: LEFT {lid}: pile {f.name} holds it while its row is `{rows[lid]['state']}`; "
+                    "withdraw or decline the proposal by hand")
+    # 2. the INDEX Parked rows
+    idx = home / "INDEX.md"
+    idx_text = _read(idx) if idx.is_file() else ""
+    imported = {r["source"][len("import:"):] for r in rows.values() if r["source"].startswith("import:P")}
+    parked_new, parked_left = [], []
+    block = cn.section_lines(idx_text, cn.PARKED_HEADING) if idx_text else None
+    for row in (cn._table_rows(block) or []) if block is not None else []:
+        pid = cn.clean_cell(row[0]) if row else ""
+        if not cn.PARKED_ID_RE.fullmatch(pid):
+            continue
+        if any("->" in c or "→" in c for c in row):
+            say(f"Parked {pid} is closed (routed): it goes with the hand-kept table")
+            continue
+        item = _shorten(row[1] if len(row) > 1 else "")
+        trig = " ".join((row[2] if len(row) > 2 else "").split())
+        if pid in imported:
+            continue
+        if cn.PLACEHOLDER_TRIGGER_RE.fullmatch(cn.clean_cell(trig)) or not item:
+            parked_left.append(pid)
+            out(f"not-now: LEFT Parked {pid}: no item or no restart trigger; name one, then run again")
+            continue
+        when = re.search(r"\d{4}-\d\d-\d\d", cn.clean_cell(row[4]) if len(row) > 4 else "")
+        parked_new.append((f"import:{pid}", item, when.group(0) if when else "", f"parked: {trig}"))
+        say(f"Parked {pid} -> a list row `parked: {trig[:60]}{'...' if len(trig) > 60 else ''}`")
+    region = idx_text and "<!-- gitos:index parked -->" not in idx_text and block is not None and not parked_left
+    if region:
+        say("INDEX Parked section -> the generated region `<!-- gitos:index parked -->` (a view of the list)")
+    # 3. carried boxes of open orders
+    boxes = []
+    wod = home / "work-orders"
+    for f in sorted(wod.glob("*.md")) + sorted(wod.glob("*/order.md")) if wod.is_dir() else []:
+        text = _read(f)
+        info = cn.parse_carried(text, legacy=True)
+        for b in info["boxes"]:
+            if b["done"]:
+                continue
+            boxes.append((f, b))
+            where = f.relative_to(home).as_posix()
+            if b["id"] in rows:
+                say(f"{b['id']} carried in {where} is also a row: the box is ticked `-> {b['id']}`")
+            else:
+                say(f"{b['id']} carried in {where} -> back on the list as `new`, the box ticked `-> {b['id']}`")
+        for n, ln in info["bad"]:
+            out(f"not-now: LEFT {f.relative_to(home).as_posix()}:{n}: not a box: {ln.strip()[:80]}")
+    # 4. the retired drain stores
+    retired = []
+    for sub in ("declined", "accepted"):
+        d = home / "drain" / sub
+        files = sorted(d.glob("*.md")) if d.is_dir() else []
+        if files:
+            ids = sorted({x for f in files for x in (s1._read_proposal(f) or {}).get("item_list", [])},
+                         key=lambda x: int(x[1:]) if x[1:].isdigit() else 0)
+            on = [x for x in ids if x in rows]
+            say(f"drain/{sub}/ ({len(files)} files) retired; their items: "
+                + (", ".join(f"{x} {'is a row' if x in rows else 'off the list'}" for x in ids) or "none")
+                + (" (the row is the authority)" if on else ""))
+            retired += files
+    if routed_file.is_file():
+        both = sorted(routed & set(rows))
+        say(f"drain/routed.txt retired ({len(routed)} id(s); not on the list means routed)")
+        for lid in both:
+            out(f"not-now: LEFT {lid}: drain/routed.txt says routed while it is still a row; drop it or keep it by hand")
+        retired.append(routed_file)
+    # 5. the version key of resolved orders
+    keyed = []
+    for f in sorted(wod.rglob("*.md")) if wod.is_dir() else []:
+        raw = _read(f)
+        m = re.match(r"---\r?\n(.*?\n)---\r?\n", raw, re.S)
+        if m and re.search(r"(?m)^landed:", m.group(1)) and not re.search(r"(?m)^released:", m.group(1)):
+            keyed.append(f)
+            say(f"{f.relative_to(home).as_posix()}: front matter `landed:` -> `released:`")
+    if not write or not moves:
+        return moves
+    # write: the list first (the authority), then the stores that copied it
+    if back or parked_new or [b for _f, b in boxes if b["id"] not in rows]:
+        le.insert_rows(home, back + [(b["id"], "", "WO-" + re.search(r"(\d{3})", f.parent.name if f.name == "order.md" else f.name).group(1),
+                                      _shorten(b["text"]), "new") for f, b in boxes if b["id"] not in rows])
+        if parked_new:
+            text = le._text_or_template(home)
+            le._write(home, le._append_rows(text, [(s, i, a, st) for s, i, a, st in parked_new]))
+    if marks:
+        le.set_states(home, marks)
+    for f in sorted({f for f, _b in boxes}):
+        raw = f.read_bytes().decode("utf-8")
+        for _f, b in [x for x in boxes if x[0] == f]:
+            raw = re.sub(rf"(?m)^- \[ \] ({re.escape(b['id'])} \(slice: [^()\n]*\S\) [^\r\n]*?)[ \t]*(\r?)$",
+                         lambda mm: f"- [x] {mm.group(1)} -> {b['id']}{mm.group(2)}", raw, count=1)
+        f.write_bytes(raw.encode("utf-8"))
+    if region:
+        tmpl = (HERE.parent / "assets" / "INDEX.md.tmpl").read_text(encoding="utf-8").replace("\r\n", "\n")
+        section = tmpl[tmpl.index("## Parked"):tmpl.index("## Resolved")]
+        raw = idx.read_bytes().decode("utf-8")
+        eol = "\r\n" if "\r\n" in raw else "\n"
+        s = re.search(r"(?m)^## Parked.*$", raw).start()
+        e = re.search(r"(?m)^## ", raw[s + 3:])
+        e = s + 3 + e.start() if e else len(raw)
+        idx.write_bytes((raw[:s] + section.replace("\n", eol) + raw[e:]).encode("utf-8"))
+    for f in keyed:
+        raw = f.read_bytes().decode("utf-8")
+        head, sep, rest = raw.partition("\n---")
+        f.write_bytes((re.sub(r"(?m)^landed:", "released:", head, count=1) + sep + rest).encode("utf-8"))
+    for f in retired:
+        _rm(f)
+    for sub in ("declined", "accepted"):
+        try:
+            (home / "drain" / sub).rmdir()
+        except OSError:
+            pass
+    li = _load("ledger_index")
+    if idx.is_file():
+        new, differing, found = li.render(home)
+        if found and differing:
+            idx.write_bytes(new.encode("utf-8"))
+    return moves
+
+
 def run(home: Path, write: bool, out=print) -> int:
     sl, cn = _load("slice"), _load("canary")
     wod = home / "work-orders"
@@ -269,6 +452,8 @@ def run(home: Path, write: bool, out=print) -> int:
     if not wod.is_dir():
         out("ledger_migrate: no work-orders/ folder; nothing to migrate")
         return 0
+    if not migrate_not_now(home, write, out):
+        out("not-now: nothing to move (one list already)")
     migrated, skipped, boxes, consumed = 0, 0, [], set()
     for f in sorted(x for x in wod.iterdir() if x.is_file()):
         m = sl.FILE_RE.match(f.name)
@@ -302,12 +487,9 @@ def run(home: Path, write: bool, out=print) -> int:
             consumed.add(hp.name)
         migrated += 1
     if not migrated and not skipped:
-        out("ledger_migrate: nothing to migrate")
-    if boxes:
-        out("carried boxes left in order.md, not converted; settle each (a proposed slice via `slice add` or "
-            "`drain accept --new-slice`, a new order, or dropped):")
-        for b in boxes:
-            out(f"  {b}")
+        out("ledger_migrate: no order to convert to the folder form")
+    for b in boxes:
+        out(f"carried box left in order.md (the not-now step above moves it to the list): {b}")
     if hdir.is_dir():
         left = sorted(p.name for p in hdir.iterdir() if p.name != ".gitkeep" and p.name not in consumed)
         for name in left:

@@ -141,7 +141,7 @@ small question per request; a table in code decides. `confirm` outcomes are mark
 `system_one.py lenses <home> (--wo NNN | --text FILE) [--global-dir D] [--json]` makes no model call: it lists the active set of `<home>/lenses.json` with each lens's domain and when-to-apply, and prints one line when lenses are off; the repo wins a name collision; the global layer is `<skill>/agents`, or `--global-dir`, or `GITOS_GLOBAL_LENS_DIR`; a lens that cannot be judged is listed as a problem, never dropped. You decide which lenses apply.
 
 **The loose-end uses.** `drain` reads `<home>/loose-ends.md` with no flag (no file: nothing to ask). Each
-`new` item is asked `loose-end-state`: the item says it is
+`new` row is asked `loose-end-state` (a row in any other State, or one whose State cannot be read, is asked nothing): the item says it is
 done -> `closable` (confirm); else it asks the owner -> `ask-operator`; else it waits on a named event -> `park`;
 all three no -> `open`; an unsure answer that the table reads escalates (an unsure `waits_on_event` does not
 escalate an item that says it is done). `superseded` is not an outcome here: an item another order already covers
@@ -156,8 +156,7 @@ best 26 by BM25 when there are more), asked once per item and again with the opt
 averaged (a choice leans to the first option); its top two orders join the candidates, unique. There is **no minimum
 score**, then `loose-end-join` (the noul) decides, up to 60 pairs a run, taken best first across the items, each pair
 once; `loose_ends.py join_candidates(home,
-[(ref, text)])` serves any item text, on the list or not, to `drain` and `eval-drain`. A `declined:` row is
-asked nothing. Bundle pairs are joined by code into **cliques**: a group holds only items every pair of which was answered
+[(ref, text)])` serves any item text, on the list or not, to `drain` and `eval-drain`. Bundle pairs are joined by code into **cliques**: a group holds only items every pair of which was answered
 `bundle`. Bundling is not transitive (A~B and B~C say nothing about A and C), and a cap on size would still let a chain
 through, so a connected set is split greedily in id order (each group takes the lowest-numbered unplaced item that agrees
 with every member so far); an item that agrees with only part of a group stays out of it. Before the next step is chosen,
@@ -175,40 +174,44 @@ Nothing is applied. `closable` stays a `confirm` outcome; `join` and `bundle` ar
 still writes the order.
 
 **`system_one.py drain <home> [--json] [--fresh]`** is the one command that writes in the home. It runs the
-loose-end uses (state, joins, bundles) and writes one file per proposal, `<home>/drain/pending/<id>.md`, in the
-shape of the federation intake: the id is the first 12 hex characters of a sha256 over the proposal's kind, its sorted
-item ids and (for a join) the target order, so a re-run updates the same file (and leaves it alone when the body is
-unchanged). Kinds: `join` (items to one open order), `new-order` (a bundle group, or one open item with no join),
-`read` (an unsure item), `park` (with the trigger words found in the item), `ask` (the item as the question), `close` (confirm). An item the model
-could not settle (`escalate`) becomes its own `read` proposal (one item, with the answers that were unsure), so it never vanishes; `accept` takes the same `--work-order NNN --slice NAME` / `--parked` / `--reason` forms once the orchestrator has decided what it is. Each file has a header (id, kind, items, target, created, updated, model)
-and the items in full with Source and age, plus context gathered by code: the Source orders and their titles, paths and
-backticked names found, open orders that share those paths, the oldest item's age. No sentence is model-written. A
-fingerprint declined before (`drain/declined/<id>.md`) is not proposed again.
+loose-end uses (state, joins, bundles) on the `new` rows and writes one file per proposal, `<home>/drain/pending/<id>.md`,
+in the shape of the federation intake: the id is the first 12 hex characters of a sha256 over the proposal's kind, its
+sorted item ids and (for a join) the target order. Kinds: `join` (items to one open order), `new-order` (a bundle
+group, or one open item with no join), `read` (an unsure item), `park` (with the trigger words found in the item),
+`ask` (the item as the question), `close` (confirm). An item the model could not settle (`escalate`) becomes its own
+`read` proposal (one item, with the answers that were unsure), so it never vanishes. Each file has a header (id, kind,
+items, target, created, updated, model) and the items in full with Source, Added date and age, plus context gathered by
+code: the Source orders and their titles, paths and backticked names found, open orders that share those paths, the
+oldest item's age. No sentence is model-written.
 
-**The pile is the one home of a proposed item.** A run writes the pile file first and only then removes the
-proposal's items from `loose-ends.md`; a crash between the two leaves an item in both places, never in neither,
-and the next run drops from the list every `new` row that a pending file carries (and asks nothing of it). The
-list holds only items not yet proposed. A run never deletes a pending file: only `accept`, `decline` and
-`withdraw` do. Each file also records every item's Added date, so an item that goes back on the list keeps its id,
-age and Source. A join proposal means "related to this open order": the orchestrator decides whether the items belong in that order, its next slice, or elsewhere. A join proposal whose target is in progress (a worktree exists, or its Implementer notes are started) says so in its header and body: `target in progress: <why>`; it is the same kind, and the orchestrator decides whether the item waits for the next slice, without changing a running slice's scope. `drain accept ID --work-order NNN --slice NAME [ROOT]` (every accept into an order names the slice that carries the items, and writes them into the order as `## Carried loose ends` boxes; a folder order refuses unless `--new-slice NAME` is given) refuses
-unless `work-orders/` holds an open WO-NNN (a resolved order, or a join whose target is resolved, is refused
-with one line before anything changes) and moves the file to `drain/accepted/` with `accepted: WO-NNN, <date>`
-(a `park` takes `--parked P<n>`, a `close` takes `--reason`; a `read` and an `ask` take any one of the three, and run
-the same path as the kind that form names, whichever it is). Nothing is left to drop from the list. `drain decline
-ID --reason R` refuses without a reason and moves the file to `drain/declined/`: with `--route
-WO-NNN|P<n>|brain:<page>|closed:<why>` (checked like `loose_ends.py drop`) the orchestrator routed the items by hand;
-without it the items go back on the list with State `declined: <reason>`, which the drain never proposes again (the
-orchestrator decides them by hand with `loose_ends.py drop`). **Routed items leave the pile.** `loose_ends.py drop L<n> --to DEST`
-also works on an item that is only in the pile: it records the id in `drain/routed.txt` (first, so a crash never lets
-it come back), removes the row if there is one, withdraws every pending proposal that holds only that item and
-rewrites one that holds others without it (under the id its remaining items give; its Context lines stay as written).
-A routed id is never put back on the list: a decline or withdraw skips it, and a drain that was asking while the
-drop happened writes no proposal for it. `drain withdraw ID` puts the items back on the list as
-`new` and removes the file, so the next drain asks them again. `drain defer ID` changes nothing. An `ask` stays in
-`pending/` until the operator answers; the orchestrator raises it from the pile, then accepts it with the routing the
-answer gave or declines it. There is no `waiting: user` state and no `loose_ends.py wait`: `system_one.py migrate
---write` (run by `/gitos upgrade`) turns each old `waiting: user — Q` row into an `ask` proposal that carries Q and
-removes the row. `drain status [ROOT]` prints
+**The row is the authority; the file is its attachment** (v57). A run writes the pile file first and then marks each
+of its rows `proposed: <kind>`; a crash between the two leaves a `new` row a file holds, which the next run marks (and
+asks nothing of). Only rows still `new` when the run writes are proposed: one routed or set by hand while the run was
+asking gets no proposal. A run never deletes a pending file: only `accept`, `decline` and `withdraw` do, and each sets
+the rows and removes the file (git keeps it). A join proposal means "related to this open order": the orchestrator
+decides whether the items belong in that order, its next slice, or elsewhere. A join proposal whose target is in
+progress (a worktree exists, or its Implementer notes are started) says so in its header and body: `target in
+progress: <why>`; it is the same kind.
+
+- `drain accept ID --work-order NNN --slice NAME [ROOT]` (a `join` or `new-order`, or a `read` or `ask` given
+  `--work-order`) refuses unless `work-orders/` holds an open WO-NNN (a resolved order, or a join whose target is
+  resolved, is refused with one line before anything changes); the items become a `proposed` slice of WO-NNN with
+  `origin:` naming them (`slice.py add`, which turns a single-file order into a folder), and their rows leave the list.
+  Without `--slice` the order must already name every item id (`origin: L3, L5` in an order authored from the
+  proposal), else it refuses. (`--new-slice NAME` is the older spelling of `--slice`.)
+- `drain accept ID --trigger T` (a `park`) sets `parked: T`; `--question Q` (an `ask`; with no flag, the proposal's
+  question or the item text) sets `waiting: Q`; `--reason R` (a `close`, a few words) routes the rows `closed:`. A
+  `read` takes whichever form fits. `--parked P<n>` is retired and refused.
+- `drain decline ID --reason R` sets the rows `declined: <reason>`, which the drain never proposes again (the
+  orchestrator decides them by hand with `loose_ends.py drop`); with `--route WO-NNN|WO-NNN/SN|brain:<page>|closed:<why>`
+  (checked like `loose_ends.py drop`) the orchestrator routed the items by hand and the rows leave the list.
+- `drain withdraw ID` sets the rows back to `new` (the next drain asks them again); `drain defer ID` changes nothing.
+
+`loose_ends.py drop L<n> --to DEST` on a `proposed:` row (and `loose_ends.py state` on any row a file holds) first
+releases the pile: it removes every pending proposal that holds only that item and rewrites one that holds others
+without it (under the id its remaining items give; its Context lines stay as written), then writes the row. There is
+no `drain/accepted/`, `drain/declined/` or `drain/routed.txt` any more: not on the list means routed, and a declined
+item is a `declined:` row (`ledger_migrate.py` retires them in an older repo). `drain status [ROOT]` prints
 `drain: N pending (J join, B new-order, Q ask, P park, C close, R read)`, or nothing with no pending folder. Bodies are
 shown in full: they are built from the repo's own list and code, so none of the federation intake's foreign-text
 handling applies. The orchestrator reports the status line at first action and authors every order itself.

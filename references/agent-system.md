@@ -22,7 +22,7 @@ start.
 
 ### 2. Orchestrator (every working session after Inception)
 
-The front-line builder. Each session it:
+The persistent coordinator. Each session it:
 
 1. Reads `HANDOFF.md` **once** — the frozen birth record; never edited again.
 2. Reads `INDEX.md` — the current work state (open / parked / resolved / disproved / next-steps).

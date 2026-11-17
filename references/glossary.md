@@ -19,8 +19,9 @@ names in it, comments included. **Tools** are byte-copies of engine scripts in `
 
 **Ledger**
 The work: `<home>/INDEX.md` plus `<home>/work-orders/`. The INDEX has five sections: Open, Parked, Resolved,
-Findings DISPROVED and Operator next-steps. Between its `<!-- gitos:index open|resolved -->` markers
-`ledger_index.py` writes the rows from each order's front matter; nobody types a row there.
+Findings DISPROVED and Operator next-steps. Between its `<!-- gitos:index open|parked|resolved -->` markers
+`ledger_index.py` writes the rows (Open and Resolved from each order's front matter, Parked from the `parked:` rows of
+the loose-ends list); nobody types a row there.
 
 **Brain**
 The orchestrator's long-term memory: typed, cross-linked pages (sources, entities, concepts, decisions) under
@@ -83,6 +84,7 @@ the orchestrator. Writes no application source.
 **Orchestrator**
 The persistent coordinator. Proposes and sequences work-orders, dispatches implementers, verifies each landing,
 adjudicates the notes, resolves orders and stewards the brain. Never edits code: it writes only markdown and state.
+("Front-line builder" is the retired name: the orchestrator coordinates, it does not build.)
 
 **Diagnostic**
 The read-only finder: builds the log vocabulary, scans the anomaly families, writes evidence-first work-orders. It
@@ -145,7 +147,7 @@ at a checkpoint.
 
 **Work-order** (WO, order)
 The unit of tracked work: `<home>/work-orders/WO-NNN-<slug>.md`, or a folder `WO-NNN/` once it has two slices.
-Front matter `severity`, `title`, `evidence`; at resolution also `summary`, `landed`, `result`. Lifecycle: open
+Front matter `severity`, `title`, `evidence`; at resolution also `summary`, `released`, `result`. Lifecycle: open
 (confirmed by the operator) → implemented → verified → accepted → resolved, or DISPROVED. Legacy
 `bug_NNN_<slug>.md` and `wo_NNN` names still read.
 
@@ -171,8 +173,8 @@ related work.
 
 **Slice**
 A unit of an order's work. In a folder order it is a file `slices/SN-<name>.md` with id `WO-NNN/SN` and a status
-(`proposed | ready | in-progress | implemented | landed | dropped`); in a single-file order, the `--slice NAME` of a
-drain accept names a scope item or a Revision. A data partition is a *split*, never a slice.
+(`proposed | ready | in-progress | implemented | landed | dropped`); `drain accept --slice NAME` writes a follow-up
+as a new `proposed` slice. A data partition is a *split*, never a slice.
 
 **Folder order** / **single-file order**
 An order with one slice is one file; `slice.py add` converts it into `WO-NNN/{order.md, slices/, log.md}` when a
@@ -180,8 +182,8 @@ second slice arrives.
 
 **Landing** / **landed**
 A *landing* is an implementer's returned change (status `implemented`), a claim until verified. Slice status
-`landed` means the orchestrator merged it. Two other senses keep the word: the front-matter key `landed:` records the engine version
-at resolution, and the INDEX column "Fix landed in" records the commit.
+`landed` means the orchestrator merged it. The INDEX column "Fix landed in" records the commit. The engine version
+an order resolved in is the front-matter key `released:` (renamed from `landed:` in v57, which still reads).
 
 **Verify** / **accept**
 The orchestrator *verifies* a landing against the disk and the running system ((g)); the operator *accepts* it or
@@ -203,8 +205,9 @@ The implementer's only write-back, under five labels: Deviations, Surprises, Dur
 Follow-ups. Each note is a claim until adjudicated.
 
 **Adjudication** (`### Adjudication`)
-The orchestrator's written ruling on each note, one of three verdicts: ACCEPT (`→ WO-NNN` or `→ brain: <page>`),
-DEFER (`→ P<n>` or `→ L<n>`) or REJECT (`→ rejected: <why>`).
+The orchestrator's written ruling on each note, one of three verdicts: ACCEPT (`→ WO-NNN`, `→ WO-NNN/SN` or
+`→ brain: <page>`), DEFER (`→ L<n>`, parked or not) or REJECT (`→ rejected: <why>`). The same arrows are the one
+routing grammar of `loose_ends.py drop --to` and `drain decline --route` (`closed: <reason>` in place of a verdict).
 
 **Worktree**
 The implementer's own git checkout, `<parent>/<repo>.worktrees/wo-NNN` on branch `wo-NNN`, reaped once merged and
@@ -219,42 +222,46 @@ a substitute.
 ## Loose ends and the drain
 
 **Loose end** (`L<n>`)
-A small item that came up and was not acted on, one or two sentences, in `<home>/loose-ends.md` (*the list*, also
-*the inbox*: only items not yet proposed). Its state is `new` or `declined: <reason>`.
+A small item that came up and was not acted on, one or two sentences: one row of `<home>/loose-ends.md` (*the list*),
+the one place "not now" lives. Its **State** is one of `new` (written down, not looked at), `proposed: <kind>`,
+`parked: <trigger>`, `waiting: <question>` or `declined: <reason>`; a State that cannot be read is reported, never read
+as `new`. Routed or closed, it leaves the list: not on the list means routed.
 
 **Drain**
-The pass that turns list items into proposals (`system_one.py drain`, a helper, or by hand): after an order
+The pass that turns `new` rows into proposals (`system_one.py drain`, a helper, or by hand): after an order
 resolves, at each checkpoint, on `loose-ends-stale`, or when the operator asks ("drain the loose ends").
 
 **Pile** (`<home>/drain/pending/`)
-One file per drain proposal: the one home of a proposed item until it is accepted, declined or withdrawn
-(archives `drain/accepted/`, `drain/declined/`).
+One file per drain proposal: the attachment of its `proposed:` rows (what was asked and found), removed when the
+proposal is accepted, declined or withdrawn. The row is the authority.
 
 **Drain proposal**
 One pile file, of kind `join`, `new-order`, `ask`, `park`, `close` or `read`. Not a federation proposal.
 
 **Ask**
-A drain proposal only the operator can settle. Generally, any question put to the operator: a popup, an owner-board
-card. The tool computes the ask; the orchestrator asks it.
+A drain proposal for the operator; accepted, its row reads `waiting: <question>`. Generally, any question put to the
+operator: a `waiting:` row, a popup, an owner-board card. The tool computes the ask; the orchestrator asks it.
 
-**Parked row** (`P<n>`)
-A deferred item with a named restart trigger, a row in the INDEX `## Parked`; re-read at each checkpoint and promoted
-when its trigger fires.
+**Parked** (`parked: <trigger>`)
+A loose end waiting on a named restart trigger; re-read at each checkpoint and routed when its trigger fires. The INDEX
+`## Parked` table is its generated view. (The hand-kept `P<n>` row is retired in v57; `ledger_migrate.py` moves it.)
 
-**Carried box**
-A `- [ ] L<n> (slice: <name>)` row in an order's `## Carried loose ends`: an item accepted into that order, closed by
-the orchestrator when its slice lands.
+**Carried box** (retired)
+A `- [ ] L<n> (slice: <name>)` row in an order's `## Carried loose ends`, retired in v57: a follow-up into an order is a
+`proposed` slice. A resolved order still holding an open one is `carried-open`.
 
 **Join**
 Adding an item to an open order; allowed only when the order's join test holds (`references/roles/orchestrator.md`).
 
 **Defer**
-"Write it down for later", in the same turn (the deferral rule). The DEFER verdict writes a Parked row or a loose end; `intake --defer` keeps a foreign
-proposal pending and adds a loose end; `drain defer` leaves a pile file as it is.
+"Write it down for later", in the same turn (the deferral rule). The DEFER verdict writes a loose end (`parked:` when
+a trigger is named); `intake --defer` keeps a foreign proposal pending and adds a loose end; `drain defer` leaves a
+pile file as it is.
 
 **Close** / **decline** / **drop** / **withdraw** / **reject**
-Close: the item is done (a drain kind). Decline: refuse with a reason (drain, intake). Drop: abandon a slice or a
-Parked row. Withdraw: put pile items back on the list. Reject: the adjudication verdict.
+Close: the item is done (a drain kind). Decline: refuse with a reason (drain, intake; a loose end then reads
+`declined: <reason>`). Drop: route a loose end off the list, or abandon a slice. Withdraw: set a proposal's rows back
+to `new`. Reject: the adjudication verdict.
 
 ---
 
@@ -365,3 +372,15 @@ Opt-in model and effort routing per dispatch, by tier (light / standard / deep) 
 **Owner board**
 An optional private page where the operator answers many cards at once (`references/owner-board.md`); a card's
 answer is recorded in the ledger before anything acts on it.
+
+**Waiting view** (`loose_ends.py status`, `scripts/waiting.py`)
+The one place that lists everything waiting on the operator: drain `ask` proposals, loose-ends rows in state
+`waiting:`, pending federation intake (a count), Parked rows whose restart trigger may have fired (a work-order it
+names is resolved, or a date it names has passed), and a live owner board, which it says it did not read. A view
+computed from the stores, never a store: RESUME's "Waiting on whom" points at it instead of restating it.
+
+**Offer** (the one consent round) (`scripts/offer.py`)
+Every opt-in the engine has (model optimization, lenses, System One, federation, legacy registers, the harness popup),
+asked together in one question batch at inception and at upgrade. A question exists only while its store lacks the
+answer, so an answered one is never asked again; nothing unanswered prints nothing. `federation.py offer` is the
+federation part of it and still runs on its own.

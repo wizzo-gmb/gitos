@@ -10,7 +10,7 @@ words naming the subject (`state-resets-on-restart`, `tenant-id-frozen-to-placeh
 A work-order opens with a flat front matter block between `---` lines (`key: value`, a value is a bare string
 or `[a, b]`; nothing else): `severity`, `title` and `evidence` are what `scripts/ledger_index.py` writes into the
 INDEX's Open row. With none, the row is built from the H1 and the first word of `## Severity`, and evidence
-reads `—`. At resolution the orchestrator adds `summary`, `landed` (the version) and `result` (the selftest
+reads `—`. At resolution the orchestrator adds `summary`, `released` (the engine version; the older key `landed` still reads) and `result` (the selftest
 line), and `ledger_index.py` writes the Resolved row.
 
 Legacy homes carry the same file as `outputs/debug/bug_<NNN>_<slug>.md`; that path still reads
@@ -166,10 +166,6 @@ something, (b)). Disciplines: `references/disciplines.md`.]
 ## Revisions (post-landing — the verify→revise loop)
 
 [Shared — *Shared sections* → Revisions.]
-
-## Carried loose ends (only when items were accepted into this order)
-
-[Shared — *Shared sections* → Carried loose ends.]
 ```
 
 ---
@@ -284,17 +280,13 @@ independent.]
 [Related work — point at adjacent work-orders, brain pages, or session notes the implementer should
 also be aware of.]
 
-### Carried loose ends
+### Follow-ups taken into an order
 
-Written by `system_one.py drain accept ID --work-order NNN --slice NAME` (section `## Carried loose ends`, created
-when missing). One box per item, naming the slice that carries it (`--slice` is required on every accept into an order):
-
-    - [ ] L<n> (slice: <name>) <text>
-    - [x] L<n> (slice: <name>) <text> -> <sha>
-
-A slice is whatever names a unit of the order's work: a Proposed fix scope item, a Revision, or the repo's own
-slice name. The orchestrator closes each box when its slice lands (`-> <sha>`), or moves it: `-> L<n>` (back on the
-list, re-added there), `-> P<n>`, `-> WO-NNN`, `-> rejected: <why>`. The canary gates a resolved order with an open box (`carried-open`).
+An order carries no loose-end boxes (retired in v57). `system_one.py drain accept ID --work-order NNN --slice NAME`
+writes a follow-up as its own `proposed` slice with `origin:` naming the items (`slice add`; a single-file order
+becomes a folder); an order authored from a proposal names the items in its own front matter (`origin: L3, L5`). A
+resolved order that still holds an old open box is `carried-open` for the canary; an open order's boxes move to the
+list with `ledger_migrate.py`.
 
 ### Implementer notes
 
@@ -330,10 +322,12 @@ Written by the **orchestrator**, never the implementer, as a `### Adjudication` 
 follow-up, each ending in exactly one destination:
 
 - `→ WO-NNN` — becomes (or already is) that work-order;
-- `→ P<n>` — deferred: a row in the INDEX `## Parked` list, with its restart trigger;
+- `→ WO-NNN/SN` — becomes (or already is) that slice of a folder order;
 - `→ brain: <page>` — a durable fact, upserted to that brain page;
 - `→ rejected: <one-line reason>` — discarded;
-- `→ L<n>` — a follow-up moved to the loose-ends list (`<home>/loose-ends.md`), to be drained with the rest.
+- `→ L<n>` — deferred to the loose-ends list (`<home>/loose-ends.md`): a `parked: <trigger>` row when a restart
+  trigger is named, else a `new` row drained with the rest. (`→ P<n>`, the INDEX Parked row, is retired: in an open
+  order the canary still checks it against the rows imported from Parked.)
 
 The canary's `loose-ends` category reads it: a resolved order (engine v44 or later) with notes
 and no block is `order-notes-unadjudicated` (any content other than a "nothing notable" answer counts,
@@ -486,6 +480,6 @@ the markers takes a hand-typed row in the "Open work-orders" section:
 The last column is the file the order anchors to: the evidence `file:line` on a bug order, and on a
 forward order the primary file the work targets.
 
-When the work-order is resolved, add `summary`, `landed` and `result` to its front matter, MOVE the file to
+When the work-order is resolved, add `summary`, `released` and `result` to its front matter, MOVE the file to
 `<home>/work-orders/resolved/` and run `ledger_index.py`; without the markers, move its row to "Resolved" by
 hand with a "Fix landed in" reference (commit hash for repo files, `(no git)` for files outside any repo).

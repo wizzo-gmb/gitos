@@ -46,9 +46,8 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    work-order's Proposed fix scope.
 2. **Edit only what the Proposed fix scope names.** Different sections of one named file is fine;
    files the work-order did not name are not — even an "obvious" adjacent fix.
-   **A box your slice carries is part of your scope.** If the order has a `## Carried loose ends` section, the open
-   boxes naming your slice (`- [ ] L<n> (slice: <yours>) ...`) are work you land with it; you do not tick them
-   (the orchestrator does at adjudication), but you say in the notes which you closed and which you did not.
+   **A follow-up routed into your slice is part of your scope:** a slice whose `origin:` names loose-end items lands
+   them; say in the notes which you closed and which you did not.
    **Disciplines at the step they apply** (`references/disciplines.md`): (a) a gate or check you add or change
    gets a known-answer pass and a known-answer block; (b) assert that your change bit before reporting it;
    (h) show the check go red on a planted defect, as deployed; (i) a skipped, empty, missing or crashed
@@ -100,7 +99,7 @@ this mechanically, but it can only catch names someone already knew to list.
 - **The work-order is your contract.** Its **Proposed fix scope** is the boundary; its
   **Implementer notes** section is your only write-back channel.
 - **Your notes are adjudicated, not auto-trusted.** The orchestrator ACCEPTs (→ brain / dispatch
-  change / new work-order), DEFERs (→ Parked row / loose end) or REJECTs each note. Every code edit thus traces to a specified
+  change / new work-order), DEFERs (→ a `parked:` or `new` loose-end row) or REJECTs each note. Every code edit thus traces to a specified
   work-order — the find/fix separation, completed from the implementer side.
 
 ## Reference index

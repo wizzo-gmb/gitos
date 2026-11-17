@@ -922,9 +922,9 @@ def pick_orders(home, item_ref: str, item_text: str, options: list) -> list:
 
 def _loose_end_items(home: Path, pick: bool = True) -> tuple:
     """-> (items, new rows, open orders). Read from `<home>/loose-ends.md` with no flag. Each `new` item is
-    asked `loose-end-state`; the (item, open order) join pairs (the item's best three open orders by BM25, in progress or not, plus the model's title pick)
-    and the (item, item) bundle pairs are chosen by code (`loose_ends.candidates`). An item already in the pile
-    (a crash left it on the list too) and a `declined:` row are asked nothing. `pick=False` skips the title pick (it needs a model): the candidates then come
+    asked `loose-end-state` (a row in any other state, or one whose State cannot be read, is asked nothing); the (item, open order) join pairs (the item's best three open orders by BM25, in progress or not, plus the model's title pick)
+    and the (item, item) bundle pairs are chosen by code (`loose_ends.candidates`). A `new` row a pile file already
+    holds (a crash between the pile write and the row write) is asked nothing: the next write marks it `proposed:`. `pick=False` skips the title pick (it needs a model): the candidates then come
     from references, paths and BM25 only."""
     le = _loose_ends()
     if not le.list_path(home).is_file():
@@ -1039,11 +1039,11 @@ def _cause(r: dict, use: "str | None" = None) -> str:
     return "conflict: " + (", ".join(yes) if yes else "no answer is yes")
 
 
-# ------------------------------------------------------------------ the drain proposals (WO-098)
-# `drain` is the one System One command that writes in the home: one file per proposal under
-# `<home>/drain/pending/`, with a federation-shaped lifecycle (accept by authoring a native order, decline
-# with a reason, defer). The proposals are built from our own list and code, so each body is shown in full.
-# No sentence is model-written: each is an item's own text or built by code from the answers.
+# ------------------------------------------------------------------ the drain proposals (WO-098, WO-115)
+# `drain` is the one System One command that writes in the home. The list row is the authority: a proposed item's
+# row reads `proposed: <kind>`, and one file per proposal under `<home>/drain/pending/` is its attachment (what was
+# asked and found). Accept, decline and withdraw change the row and remove the file (git keeps it). No sentence is
+# model-written: each is an item's own text or built by code from the answers.
 DRAIN_DIR = "drain"
 DRAIN_KINDS = ("join", "new-order", "ask", "park", "close", "read")
 _TICKS = re.compile(r"`([^`\n]{2,60})`")
@@ -1161,7 +1161,7 @@ def _read_proposal(path: Path) -> "dict | None":
 
 
 def _drain_dirs(home: Path) -> dict:
-    return {k: Path(home) / DRAIN_DIR / k for k in ("pending", "accepted", "declined")}
+    return {"pending": Path(home) / DRAIN_DIR / "pending"}
 
 
 ITEM_LINE = re.compile(r"^- (L\d+) \(Source: (.*?); (?:added (\d{4}-\d\d-\d\d); )?(?:\d+ days old|age unknown)\): (.*)$")
@@ -1177,15 +1177,21 @@ def _proposal_rows(m: dict) -> list:
     return out
 
 
-def _pile_ids(home: Path) -> set:
-    """The item ids of every pending proposal."""
-    out: set = set()
+def _pile_kinds(home: Path) -> dict:
+    """{item id: the kind of the pending proposal that holds it}."""
+    out: dict = {}
     pend = _drain_dirs(home)["pending"]
-    for f in pend.glob("*.md") if pend.is_dir() else []:
+    for f in sorted(pend.glob("*.md")) if pend.is_dir() else []:
         m = _read_proposal(f) if _DRAIN_ID.fullmatch(f.stem) else None
         if m:
-            out.update(m["item_list"])
+            for x in m["item_list"]:
+                out.setdefault(x, m["kind"])
     return out
+
+
+def _pile_ids(home: Path) -> set:
+    """The item ids of every pending proposal."""
+    return set(_pile_kinds(home))
 
 
 def pending_holding(home, lid: str) -> list:
@@ -1237,11 +1243,10 @@ def release_items(home, ids) -> dict:
 
 
 def drain(home, fresh: bool = False) -> dict:
-    """Ask the loose-end uses (state, joins, bundles) and write one file per proposal under
-    `<home>/drain/pending/`, then removes those items from `loose-ends.md`: a proposed item lives in the pile
-    only. A proposal declined before (same fingerprint) is not proposed again. A run never deletes a pending
-    file: only `accept`, `decline` and `withdraw` do. Raises `Unavailable` (nothing written) when System One
-    is off or a call fails. -> {"counts", "written", "moved", "skipped"}."""
+    """Ask the loose-end uses (state, joins, bundles) of the `new` rows, write one file per proposal under
+    `<home>/drain/pending/`, then mark each proposed row `proposed: <kind>`. A run never deletes a pending file:
+    only `accept`, `decline` and `withdraw` do. Raises `Unavailable` (nothing written) when System One is off or a
+    call fails. -> {"counts", "written", "proposed"}."""
     home = Path(home)
     cfg = _active_config(home)
     items, loose_rows, orders = _loose_end_items(home)
@@ -1281,20 +1286,17 @@ def _drain_write(home: Path, model: str, loose_rows: list, orders: list, results
         elif p["kind"] in ("ask", "park", "close", "read"):     # an unsure item never vanishes: it is a `read`
             props.append({"kind": p["kind"], "items": [p["ref"]], "cause": cause.get(p["ref"], ""),
                           "fix": p.get("fix"), "trigger": (p["step"][len("park (trigger: "):-1] if p["kind"] == "park" else "")})
-    routed = le.routed_ids(home)           # routed while this run was asking: they never come back as proposals
-    if routed:
-        for p in props:
-            p["items"] = [x for x in p["items"] if x not in routed]
-        props = [p for p in props if p["items"]]
+    # only rows still `new` now are proposed: one routed (removed) or set by hand while this run was asking is not
+    live = {r["id"] for r in le.rows_of(home) if (le.parse_state(r["state"]) or ("",))[0] == "new"}
+    for p in props:
+        p["items"] = [x for x in p["items"] if x in live]
+    props = [p for p in props if p["items"]]
     dirs = _drain_dirs(home)
     now = _now()
-    written, skipped, keep = [], [], set()
+    written, keep = [], set()
     for p in props:
         p["items"] = sorted(p["items"], key=lambda t: int(t[1:]))
         p["id"] = drain_id(p["kind"], p["items"], p.get("wo"))
-        if (dirs["declined"] / f"{p['id']}.md").is_file():
-            skipped.append(p["id"])
-            continue
         keep.add(p["id"])
         path = dirs["pending"] / f"{p['id']}.md"
         old = _read_proposal(path) if path.is_file() else None
@@ -1305,13 +1307,15 @@ def _drain_write(home: Path, model: str, loose_rows: list, orders: list, results
             continue                                   # same proposal, same body: leave the file alone
         _write_text_atomic(path, text)
         written.append(p["id"])
-    # the pile file is written above; only now do the items leave the list. A crash between the two leaves an
-    # item in both places, never in neither; the next run drops every `new` row that a pending file carries.
-    moved = le.remove_rows(home, [x for x in _pile_ids(home) if x in {r["id"] for r in le.rows_of(home)
-                                                                    if r["state"].strip() == le.STATE_NEW}])
+    # the pile file is written above; only now does the row say `proposed:`. A crash between the two leaves a `new`
+    # row a pile file holds; this step, on the next run, marks it.
+    kinds = _pile_kinds(home)
+    proposed = le.set_states(home, {r["id"]: f"proposed: {kinds[r['id']]}" for r in le.rows_of(home)
+                                    if r["id"] in kinds and (le.parse_state(r["state"]) or ("",))[0] == "new"}) \
+        if le.list_path(home).is_file() else []
     counts = {k: sum(1 for p in props if p["kind"] == k and p["id"] in keep) for k in DRAIN_KINDS}
     counts["pending"] = sum(counts.values())
-    return {"counts": counts, "written": written, "moved": moved, "skipped": skipped}
+    return {"counts": counts, "written": written, "proposed": proposed}
 
 
 # ------------------------------------------------------------------ the drain without a local model (WO-101)
@@ -1456,72 +1460,40 @@ def drain_status(home) -> "str | None":
     return line
 
 
-def _drain_dispose(home, pid: str, state: str, note: str, drop_to: "str | None" = None,
-                   back: "str | None" = None) -> str:
-    """Move a pending proposal to `accepted/` or `declined/`, appending the disposition line. The items live
-    in the pile, so nothing is left to drop from the list; a `new` row still there (a crash between the pile
-    write and the list write) is dropped to `drop_to` first. `back`: put the proposal's items back on the list
-    with that State (a decline without a route), before the file moves, so a crash never leaves an item nowhere;
-    an item `drop` routed (`drain/routed.txt`) is not put back."""
-    le = _loose_ends()
-    dirs = _drain_dirs(home)
+def _pending(home: Path, pid: str) -> dict:
     if not _DRAIN_ID.fullmatch(pid or ""):
         raise ValueError(f"{pid!r} is not a proposal id (12 hex characters)")
-    src = dirs["pending"] / f"{pid}.md"
+    src = _drain_dirs(home)["pending"] / f"{pid}.md"
     m = _read_proposal(src) if src.is_file() else None
     if m is None:
-        raise ValueError(f"no pending proposal {pid} under {dirs['pending']}")
-    if drop_to:
-        live = {r["id"] for r in le.rows_of(home)}
-        try:
-            for x in m["item_list"]:
-                if x in live:
-                    le.drop(home, x, drop_to, release=False)
-        except le.LooseEndsError as e:
-            raise ValueError(str(e))
-    if back:
-        try:
-            routed = le.routed_ids(home)        # an item `drop` routed never goes back on the list
-            le.restore_rows(home, [r for r in _proposal_rows(m) if r[0] not in routed], back)
-        except le.LooseEndsError as e:
-            raise ValueError(str(e))
-    dest = dirs[state] / f"{pid}.md"
-    _write_text_atomic(dest, m["text"].rstrip("\n") + f"\n\n{state}: {note}, {_now()[:10]}\n")
-    src.unlink()
-    return str(dest)
+        raise ValueError(f"no pending proposal {pid} under {src.parent}")
+    m["path"] = src
+    return m
 
 
-def _carry_boxes(path: Path, rows: list, slice_name: str) -> list:
-    """Write one open box per row into the order's `## Carried loose ends` section (created before
-    `## Implementer notes`, else at the end, when missing); an item that is already a box there is skipped (a
-    re-run after a crash adds nothing twice). One atomic write; every other byte of the file stays. -> [ids]."""
-    c = _canary()
-    text = path.read_bytes().decode("utf-8")
-    eol = "\r\n" if "\r\n" in text else "\n"
-    lines = text.splitlines(keepends=True)
-    info = c.parse_carried(text)
-    have = {b["id"] for b in info["boxes"]}
-    new = [c.box_line(i, slice_name, item) for i, _added, _src, item in rows if i not in have]
-    if not new:
-        return []
-    block = [b + eol for b in new]
-    if info["heading"] is not None:
-        at = info["last"] + 1
-        if info["last"] == info["heading"]:
-            block = [eol] + block
-        if not lines[at - 1].endswith(("\n", "\r")):
-            lines[at - 1] += eol
-        lines[at:at] = block
-    else:
-        at = next((i for i, ln in enumerate(lines) if ln.strip() == c.NOTES_HEADING), len(lines))
-        block = [c.CARRIED_HEADING + eol, eol] + block + [eol]
-        if at == len(lines) and lines:
-            if not lines[-1].endswith(("\n", "\r")):
-                lines[-1] += eol
-            block = [eol] + block[:-1]
-        lines[at:at] = block
-    _write_text_atomic(path, "".join(lines))
-    return [i for i, _a, _s, _t in rows if i not in have]
+def _drain_dispose(home, m: dict, state: "str | None" = None, route: "str | None" = None) -> str:
+    """Settle a pending proposal on the list, then remove its file (git keeps it). `state`: its items' rows take that
+    State (written first: a crash leaves the file beside rows that are no longer `proposed:`, which the canary
+    reports and a re-run clears). `route`: its items are routed and their rows leave the list (the file goes first:
+    a crash leaves `proposed:` rows with no file, which the canary reports and `drop` clears). An item no longer on
+    the list is skipped. -> what was done."""
+    le = _loose_ends()
+    on = {r["id"] for r in le.rows_of(home)}
+    ids = [x for x in m["item_list"] if x in on]
+    if state:
+        le.set_states(home, {x: state for x in ids})
+        m["path"].unlink()
+        return f"{', '.join(ids) or 'no row'}: {state}"
+    m["path"].unlink()
+    le.remove_rows(home, ids)
+    return f"{', '.join(ids) or 'no row'} -> {route}"
+
+
+def _order_text(home: Path, nnn: str) -> str:
+    """Everything an order holds: its file, or every file of its folder."""
+    path = next(pth for n, pth, _r in _wo_listing(home, _canary()) if n == nnn)
+    files = sorted(path.parent.rglob("*.md")) if path.name == "order.md" else [path]
+    return "\n".join(_read_text(f) or "" for f in files)
 
 
 def _slice_mod():
@@ -1539,120 +1511,101 @@ def _slice_mod():
     return mod
 
 
-def drain_accept(home, pid: str, work_order: "str | None" = None, parked: "str | None" = None,
+def _ask_question(m: dict) -> str:
+    """The question an `ask` proposal carries, else its item's own text."""
+    q = re.search(r"(?m)^## Question for the operator\s*\n\s*\n- (.+)$", m["text"])
+    rows = _proposal_rows(m)
+    return _squash(q.group(1)) if q else (_squash(rows[0][3]) if rows else "")
+
+
+def drain_accept(home, pid: str, work_order: "str | None" = None, trigger: "str | None" = None,
                  reason: "str | None" = None, slice_name: "str | None" = None,
-                 new_slice: "str | None" = None) -> str:
-    """Accept a proposal by the act that carries it out: a `join` or `new-order` needs the native order
-    (`work-orders/` holds it, and it must be open: a resolved order, or a join whose target is resolved, is
-    refused before anything changes), a `park` needs the P<n> row, a `close` needs a reason. A `read` and an
-    `ask` are decided by the orchestrator or the operator, so they take any one of the three forms
-    (`--work-order NNN`, `--parked P<n>`, `--reason R`) and run the same path as the proposal of that kind.
-    Every accept into an order (`join`, `new-order`, and a `read` or `ask` given `--work-order`) needs `--slice NAME`
-    (the unit of the order's work that carries the items), before
-    anything changes. The items are written into the order as boxes (the order file first, then the proposal
-    moves), so nothing accepted into an order is untracked. A folder order takes no boxes: `--new-slice NAME` (the
-    orchestrator's explicit call, when the order's definition of done needs the work) writes a `proposed` slice with
-    `origin:` set to the items through `slice add`; without it the accept refuses, naming the alternatives."""
+                 question: "str | None" = None, parked: "str | None" = None) -> str:
+    """Accept a proposal by the act that carries it out; every check runs before anything changes.
+    `join` / `new-order` (and a `read` or `ask` given `--work-order`): the open order WO-NNN takes the items. With
+    `--slice NAME` they become a `proposed` slice with `origin:` naming them (`slice add`, which turns a single-file
+    order into the folder form); without it the order must already name every item id (an order authored from the
+    proposal, `origin: L3, L5`). The rows leave the list. `park` -> `parked: <--trigger>`; `ask` -> `waiting:
+    <--question, else the proposal's question>`; `close` -> routed `closed: <--reason>`. A `read` takes any one of
+    `--work-order`, `--trigger`, `--question`, `--reason`."""
     home = Path(home)
-    src = _drain_dirs(home)["pending"] / f"{pid}.md"
-    m = _read_proposal(src) if src.is_file() else None
-    if m is None:
-        raise ValueError(f"no pending proposal {pid}")
+    m = _pending(home, pid)
+    if parked:
+        raise ValueError("--parked P<n> is retired: a parked item is a loose-end row; accept with --trigger T")
     kind = m["kind"]
     if kind in ("read", "ask"):
-        if work_order:
-            kind = "new-order"
-        elif parked:
-            kind = "park"
-        elif reason:
-            kind = "close"
-        else:
-            raise ValueError(f"a {kind} proposal is accepted with --work-order NNN, --parked P<n> or --reason R")
+        kind = ("new-order" if work_order else "park" if trigger else "close" if reason else
+                "ask" if (question or kind == "ask") else None)
+        if kind is None:
+            raise ValueError("a read proposal is accepted with --work-order NNN, --trigger T, --question Q or --reason R")
     listing = {n: r for n, _p, r in _wo_listing(home, _canary())}
 
     def require_open(nnn: str) -> None:
-        if listing.get(nnn):
+        if nnn not in listing:
+            raise ValueError(f"no work-order {nnn} under {home / 'work-orders'}: author it first")
+        if listing[nnn]:
             raise ValueError(f"WO-{nnn} is resolved: a proposal is accepted into an open order, so nothing "
                              f"was changed (decline it, or author a new order)")
-    if kind == "join" and m.get("target"):
-        require_open(str(m["target"]).strip().lstrip("WwOo-").zfill(3))
-    if work_order and kind in ("join", "new-order"):
-        require_open(str(work_order).strip().lstrip("WwOo-").zfill(3))
     if kind in ("join", "new-order"):
+        if kind == "join" and m.get("target"):
+            require_open(str(m["target"]).strip().lstrip("WwOo-").zfill(3))
         if not work_order:
             raise ValueError(f"a {kind} proposal is accepted with --work-order NNN (author the order first)")
         nnn = str(work_order).strip().lstrip("WwOo-").zfill(3)
-        if nnn not in listing:
-            raise ValueError(f"no work-order {nnn} under {home / 'work-orders'}: author it first")
-        c = _canary()
-        order_path = next(pth for n, pth, _r in _wo_listing(home, c) if n == nnn)
-        if order_path.name == "order.md":
-            if not (new_slice and new_slice.strip()):
-                raise ValueError(f"WO-{nnn} is a folder order: an accept writes no box into it. Author a new order with "
-                                 f"`origin:` (default), decline with a reason, or, when its definition of done needs the "
-                                 f"work, accept with --new-slice NAME (a `proposed` slice with `origin:`); nothing was changed")
+        require_open(nnn)
+        rows = _proposal_rows(m)
+        if slice_name and slice_name.strip():
             sl = _slice_mod()
             try:
-                origin = _squash("; ".join(f"{i}: {item}" for i, _a, _s, item in _proposal_rows(m)))[:400]
-                sl.slice_add(home, nnn, new_slice.strip(), (), origin)
+                origin = _squash("; ".join(f"{i}: {item}" for i, _a, _s, item in rows))[:400]
+                sl.slice_add(home, nnn, slice_name.strip(), (), origin)
             except sl.SliceError as e:
                 raise ValueError(str(e))
-            return _drain_dispose(home, pid, "accepted", f"WO-{nnn} slice {new_slice.strip()}", f"WO-{nnn}")
-        if not (slice_name and slice_name.strip()):
-            raise ValueError(f"an accept into WO-{nnn} needs --slice NAME: the unit of its work (a Proposed fix scope "
-                             f"item, a Revision, the first unit of a new order, or the repo's own slice name) that "
-                             f"carries the items; nothing was changed")
-        name = _squash(slice_name)
-        if "(" in name or ")" in name:
-            raise ValueError("a slice name has no parentheses; nothing was changed")
-        _carry_boxes(order_path, _proposal_rows(m), name)
-        return _drain_dispose(home, pid, "accepted", f"WO-{nnn}", f"WO-{nnn}")
+            return _drain_dispose(home, m, route=f"WO-{nnn} slice {slice_name.strip()}")
+        text = _order_text(home, nnn)
+        missing = [i for i, _a, _s, _t in rows if not re.search(rf"\b{re.escape(i)}\b", text)]
+        if missing:
+            raise ValueError(f"WO-{nnn} does not name {', '.join(missing)}: accept with --slice NAME (a proposed slice "
+                             f"with origin:), or author the order naming the items (`origin: {', '.join(missing)}`); "
+                             "nothing was changed")
+        return _drain_dispose(home, m, route=f"WO-{nnn}")
+    le = _loose_ends()
     if kind == "park":
-        if not (parked and re.fullmatch(r"P\d+", parked)):
-            raise ValueError("a park proposal is accepted with --parked P<n> (park it in the INDEX first)")
-        return _drain_dispose(home, pid, "accepted", parked, parked)
+        try:
+            st = le._state_text(f"parked: {trigger or ''}")
+        except le.LooseEndsError:
+            raise ValueError("a park proposal is accepted with --trigger T (the event that restarts it)")
+        return _drain_dispose(home, m, state=st)
+    if kind == "ask":
+        st = le._state_text(f"waiting: {question or _ask_question(m)}")
+        return _drain_dispose(home, m, state=st)
     if not (reason and len(reason.split()) >= 3):
         raise ValueError("a close proposal is accepted with --reason (a few words: what makes it done)")
-    return _drain_dispose(home, pid, "accepted", f"closed: {_squash(reason)}", f"closed:{_squash(reason)}")
+    return _drain_dispose(home, m, route=f"closed: {_squash(reason)}")
 
 
 def drain_decline(home, pid: str, reason: "str | None", route: "str | None" = None) -> str:
-    """Decline a proposal. With `route` (WO-NNN | P<n> | brain:<page> | closed:<why>, checked like
-    `loose_ends.py drop`) the orchestrator has routed the items by hand and they leave the pile for good;
-    without it the items go back on the list with State `declined: <reason>`, which the drain never
-    proposes again."""
+    """Decline a proposal. With `route` (WO-NNN | WO-NNN/SN | brain:<page> | closed:<why>, checked like
+    `loose_ends.py drop`) the orchestrator has routed the items by hand and their rows leave the list; without it
+    the rows read `declined: <reason>`, which the drain never proposes again."""
     if not reason or not reason.strip():
         raise ValueError("decline needs --reason")
     home, why = Path(home), _squash(reason)
+    m = _pending(home, pid)
     if route:
         le = _loose_ends()
         try:
             dest = le.check_dest(home, route)
         except le.LooseEndsError as e:
             raise ValueError(str(e))
-        return _drain_dispose(home, pid, "declined", f"{why}; routed {dest}", dest)
-    return _drain_dispose(home, pid, "declined", why, back=f"declined: {why}")
+        return _drain_dispose(home, m, route=dest)
+    return _drain_dispose(home, m, state=f"declined: {why}")
 
 
 def drain_withdraw(home, pid: str) -> str:
-    """Take a pending proposal out of the pile: its items go back on the list as `new` (with their own ids and
-    dates) and the file is removed, so the next drain asks them again. The list is written first: a crash
-    leaves the items in both places, never in neither."""
-    home = Path(home)
-    if not _DRAIN_ID.fullmatch(pid or ""):
-        raise ValueError(f"{pid!r} is not a proposal id (12 hex characters)")
-    src = _drain_dirs(home)["pending"] / f"{pid}.md"
-    m = _read_proposal(src) if src.is_file() else None
-    if m is None:
-        raise ValueError(f"no pending proposal {pid}")
-    le = _loose_ends()
-    try:
-        routed = le.routed_ids(home)
-        back = le.restore_rows(home, [r for r in _proposal_rows(m) if r[0] not in routed], le.STATE_NEW)
-    except le.LooseEndsError as e:
-        raise ValueError(str(e))
-    src.unlink()
-    return ", ".join(back) or "nothing to put back"
+    """Take a pending proposal back: its rows read `new` again and the file is removed, so the next drain asks them
+    again."""
+    return _drain_dispose(Path(home), _pending(Path(home), pid), state="new")
 
 
 def _drain_cli(args) -> int:
@@ -1660,6 +1613,8 @@ def _drain_cli(args) -> int:
     priv.add_argument("rest", nargs="*")
     priv.add_argument("--work-order")
     priv.add_argument("--parked")
+    priv.add_argument("--trigger")
+    priv.add_argument("--question")
     priv.add_argument("--reason")
     priv.add_argument("--route")
     priv.add_argument("--slice")
@@ -1675,8 +1630,8 @@ def _drain_cli(args) -> int:
     for k in ("json", "fresh"):
         setattr(args, k, getattr(args, k) or getattr(ns, k))
     args.work_order, args.parked, args.reason, args.route = ns.work_order, ns.parked, ns.reason, ns.route
-    args.slice = ns.slice
-    args.new_slice = ns.new_slice
+    args.slice = ns.slice or ns.new_slice           # `--new-slice` is the older spelling of `--slice`
+    args.trigger, args.question = ns.trigger, ns.question
     rest = list(ns.rest)
     act = rest[0] if rest and rest[0] in ("accept", "decline", "defer", "withdraw", "status") else None
     try:
@@ -1695,13 +1650,14 @@ def _drain_cli(args) -> int:
             print(json.dumps(d) if args.json else
                   f"drain: {c['pending']} pending ({c['join']} join, {c['new-order']} new-order, {c['ask']} ask, "
                   f"{c['park']} park, {c['close']} close, {c['read']} read); {len(d['written'])} written, "
-                  f"{len(d['moved'])} moved off the list; {d['defaulted']} answers counted as unsure (missing or invalid)"
+                  f"{len(d['proposed'])} rows marked proposed; {d['defaulted']} answers counted as unsure (missing or invalid)"
                   + (f"; {len(d['unknown'])} unknown refs ignored" if d["unknown"] else ""))
             return 0
         if act is None:
             if len(rest) != 1:
-                print("drain: usage: drain <home> | accept ID --work-order NNN --slice NAME [ROOT] | decline ID --reason R "
-                      "[--route DEST] [ROOT] | withdraw ID [ROOT] | defer ID [ROOT] | status [ROOT]", file=sys.stderr)
+                print("drain: usage: drain <home> | accept ID (--work-order NNN [--slice NAME] | --trigger T | --question Q "
+                      "| --reason R) [ROOT] | decline ID --reason R [--route DEST] [ROOT] | withdraw ID [ROOT] | defer ID [ROOT] "
+                      "| status [ROOT]", file=sys.stderr)
                 return 2
             try:
                 d = drain(_resolve_home(rest[0]), fresh=args.fresh)
@@ -1714,7 +1670,8 @@ def _drain_cli(args) -> int:
             c = d["counts"]
             print(json.dumps(d) if args.json else
                   f"drain: {c['pending']} pending ({c['join']} join, {c['new-order']} new-order, {c['ask']} ask, "
-                  f"{c['park']} park, {c['close']} close, {c['read']} read); {len(d['written'])} written, {len(d['moved'])} moved off the list")
+                  f"{c['park']} park, {c['close']} close, {c['read']} read); {len(d['written'])} written, "
+                  f"{len(d['proposed'])} rows marked proposed")
             return 0
         if act == "status":
             if len(rest) > 2:
@@ -1735,11 +1692,11 @@ def _drain_cli(args) -> int:
             print(f"deferred: {rest[1]} (unchanged)")
             return 0
         if act == "withdraw":
-            print(f"withdrawn: {rest[1]} -> back on the list: {drain_withdraw(home, rest[1])}")
+            print(f"withdrawn: {rest[1]} -> {drain_withdraw(home, rest[1])}")
             return 0
         if act == "accept":
-            dest = drain_accept(home, rest[1], args.work_order, args.parked, args.reason, args.slice,
-                                args.new_slice)
+            dest = drain_accept(home, rest[1], args.work_order, args.trigger, args.reason, args.slice,
+                                args.question, args.parked)
         else:
             dest = drain_decline(home, rest[1], args.reason, args.route)
         print(f"{'accepted' if act == 'accept' else 'declined'}: {rest[1]} -> {dest}")
@@ -2063,67 +2020,11 @@ def _strip_keys(text: str, names: list) -> str:
     return json.dumps(want, indent=2) + "\n"
 
 
-def _migrate_waiting(home: Path, write: bool) -> list:
-    """Each `waiting: user — Q` row of the loose-ends list: [(list path, ["L4 waiting: user", ...])]. With
-    `write`, each becomes an `ask` proposal in the pile that carries the question (the pile file is written
-    first, then the row is removed, so a crash leaves it in both places, never neither)."""
-    le = _loose_ends()
-    path = le.list_path(home)
-    wait_re = re.compile(r"waiting:\s*user\s*(?:\u2014|\u2013|--|-)\s*(\S.*)")
-    rows = [(r, wait_re.fullmatch(r["state"].strip())) for r in le.rows_of(home)]
-    rows = [(r, m.group(1).strip()) for r, m in rows if m and le.ID_RE.fullmatch(r["id"])]
-    if not rows:
-        return []
-    if write:
-        for r, q in rows:
-            item = {"id": r["id"], "text": _squash(r["item"]), "source": r["source"], "added": r["added"],
-                    "age": le.age_days(r["added"])}
-            p = {"kind": "ask", "items": [r["id"]], "question": _squash(q)}
-            p["id"] = drain_id("ask", p["items"])
-            dest = _drain_dirs(home)["pending"] / f"{p['id']}.md"
-            if not dest.is_file():
-                now = _now()
-                _write_text_atomic(dest, _proposal_file(p, now, now, "migrate", {r["id"]: item}, [], {}))
-        le.remove_rows(home, [r["id"] for r, _q in rows])
-    return [(path, [f"{r['id']} waiting: user" for r, _q in rows])]
-
-
-def _migrate_carried(home: Path, write: bool) -> tuple:
-    """A hand-made carried section (a heading like "Taken from the loose-ends register") of an open order, or an
-    exact `## Carried loose ends` whose lines are not all boxes. Converted only where every line already parses as
-    a box: the heading becomes `## Carried loose ends` and nothing else changes. Anything else is reported by file
-    and line for the orchestrator and left alone: nothing is guessed. -> ([(path, ["WO-NNN carried section"])],
-    ["path:line: text"])."""
-    c = _canary()
-    done, left = [], []
-    for nnn, path, resolved in _wo_listing(home, c):
-        if resolved:
-            continue
-        raw = path.read_bytes().decode("utf-8", "replace")
-        info = c.parse_carried(raw, legacy=True)
-        if info["heading"] is None:
-            continue
-        lines = raw.splitlines(keepends=True)
-        exact = lines[info["heading"]].strip() == c.CARRIED_HEADING
-        if info["bad"]:
-            left += [f"{path}:{n}: {ln.strip()[:80]}" for n, ln in info["bad"]]
-        elif not exact:
-            done.append((path, [f"WO-{nnn} heading -> {c.CARRIED_HEADING}"]))
-            if write:
-                old = lines[info["heading"]]
-                lines[info["heading"]] = c.CARRIED_HEADING + old[len(old.rstrip("\r\n")):]
-                _write_text_atomic(path, "".join(lines))
-    return done, left
-
-
 def migrate(root=".", write: bool = False) -> list:
     """What `/gitos upgrade` converts: [(path, [names])]. The retired keys of the machine config and the repo's
     `system-one.json` (with `write`, removed atomically, every other key stays; a file that is missing,
-    unreadable or not an object is skipped), and each `waiting: user` loose end (with `write`, an `ask`
-    proposal in the pile that carries its question; the row leaves the list), and a hand-made carried section
-    whose lines are all boxes (its heading becomes `## Carried loose ends`; see `_migrate_carried`)."""
-    found = _migrate_waiting(_repo_home(root), write)
-    found += _migrate_carried(_repo_home(root), write)[0]
+    unreadable or not an object is skipped). The not-now stores move with `ledger_migrate.py`."""
+    found = []
     for path in (system_home() / CONFIG_NAME, _repo_home(root) / OPTOUT_NAME):
         try:
             text = path.read_text(encoding="utf-8")
@@ -2756,7 +2657,7 @@ def main(argv: "list | None" = None) -> int:
                                       "<home>/drain/pending/ (the one command that writes in the home); "
                                       "also: accept ID | decline ID | withdraw ID | defer ID | status")
     dr.add_argument("rest", nargs=argparse.REMAINDER,
-                    help="<home>; or accept ID --work-order NNN --slice NAME | --parked P<n> | --reason R [ROOT]; "
+                    help="<home>; or accept ID --work-order NNN [--slice NAME] | --trigger T | --question Q | --reason R [ROOT]; "
                          "decline ID --reason R [--route DEST] [ROOT]; withdraw ID [ROOT]; defer ID [ROOT]; status [ROOT]")
     dr.add_argument("--json", action="store_true")
     dr.add_argument("--fresh", action="store_true", help="ask every item again; skip the cache")
@@ -2797,10 +2698,6 @@ def main(argv: "list | None" = None) -> int:
             if found:
                 print(("migrated: " if args.write else "to migrate: ")
                       + "; ".join(f"{', '.join(n)} in {p}" for p, n in found))
-            left = _migrate_carried(_repo_home(args.root), False)[1]
-            if left:
-                print("not converted (the orchestrator rewrites these as boxes: "
-                      "`- [ ] L<n> (slice: <name>) <text>`): " + "; ".join(left))
             return 0
         if args.cmd == "setup":
             return _setup_cli(args)

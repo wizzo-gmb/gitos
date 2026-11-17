@@ -127,18 +127,16 @@ If the repo's stamp equals the skill's `ENGINE_VERSION`, report **"engine up to 
 
 **4. Adopt the latest directives.**
 Direct the running orchestrator to:
-- **offer optional model optimization once during adoption**, only if the repo has
-  no recorded preference. Follow `references/model-optimization.md` for the
-  Disabled (default) / Enabled question and persist the choice (unanswered → skipped,
-  off). Preserve existing mappings and lessons. The helper runs from the installed
-  skill; no home-tool copy is required. An absent setting stays off, and ordinary
-  resume never repeats this offer;
+- **ask every opt-in in ONE round, not one subsystem at a time** — model optimization, lenses, System One,
+  federation, legacy registers and the harness popup are never asked separately. **4q** computes which are
+  still unanswered and asks them once, after the other steps have run; a step below that used to ask its own
+  question says so and points there;
 - **re-read the canonical brief** (`SKILL.md` + `references/roles/orchestrator.md` +
   `references/agent-system.md`) and adopt any new behaviors — for example, the
   **implementer-notes accept/reject loop** (have each implementer fill the work-order's
   `## Implementer notes` on completion; on landing, harvest and adjudicate them: ACCEPT —
   route durable facts to the brain, lessons into dispatch, follow-ups into new
-  work-orders — DEFER to a Parked row or the loose-ends list, or REJECT with a one-line reason) and the **per-reply canary marker**
+  work-orders — DEFER to the loose-ends list, or REJECT with a one-line reason) and the **per-reply canary marker**
   (open every reply with `[gitos · <role> · <focus>]` — SKILL.md → *Canary*);
 - **re-point any stale role pointers** — if a role pointer or the memory pointer still
   names an old skill path or the legacy `project_flow_role_brief.md`, repoint it to
@@ -211,75 +209,31 @@ Direct the running orchestrator to:
   *What never moves here:* a **standing rule** found in one of those files goes to the brain, not
   into `RESUME.md`. `RESUME.md` is replaced wholesale at every checkpoint, so a rule parked there
   is destroyed by the next rotation — `canary.py`'s `resume/standing-rule` reports it;
-- **refresh lens copies from the global library, and offer lens selection** — lenses are off by
-  default and a repo selects global lenses by name in `<home>/lenses.json` (SKILL.md → *Lenses*).
-  A repo with **no** `lenses.json` is asked once. The suggested answer keeps what the repo uses
-  today: if `<home>/agents/` holds lenses, suggest turning lenses on with those lenses; with no repo
-  lenses, suggest off. For each repo copy that is byte-identical to a global lens, suggest selecting
-  the global lens instead of keeping the copy; the copy is removed only if the operator agrees.
-  Write the answer with `scripts/lenses.py`. Upgrade never turns lenses off silently. The copy
-  refresh stays for deliberate local variants: for each lens in `<home>/agents/` whose name also
-  exists globally, byte-compare; where they differ, **report-and-ask** to refresh the repo copy
-  from the global (never silently clobber — a deliberately-forked local variant survives by
-  declining). Update the repo registry to match what was accepted. No global lenses / no
+- **refresh lens copies from the global library** — lenses are off by default and a repo selects global lenses by
+  name in `<home>/lenses.json` (SKILL.md → *Lenses*). Whether to turn them on is a question of the offer round
+  (**4q**), not asked here. For each repo copy that is byte-identical to a global lens, suggest selecting the
+  global lens instead of keeping the copy; the copy is removed only if the operator agrees. Write the answer with
+  `scripts/lenses.py`. Upgrade never turns lenses off silently. The copy refresh stays for deliberate local
+  variants: for each lens in `<home>/agents/` whose name also exists globally, byte-compare; where they differ,
+  **report-and-ask** to refresh the repo copy from the global (never silently clobber — a deliberately-forked
+  local variant survives by declining). Update the repo registry to match what was accepted. No global lenses / no
   `<home>/agents/` → skip, no-op;
-- **offer System One, once** — System One is opt-in per repo (`<home>/system-one.json`, SKILL.md →
-  *System One*). A repo with **no** `system-one.json` is asked once, and only when
-  `~/.claude/gitos-system-one/config.json` exists or
-  `python <SKILL_DIR>/scripts/system_one.py setup --detect` prints a line (then offer
-  `system_one.py setup --write` first). With no machine config and no server found, this step does not
-  exist: no question and no output. Ask with the harness's question UI: say in one sentence what it does
-  (it drains the loose-ends list and nothing else) and that the repo's text goes to the configured endpoint; the default is no. Write the answer with
-  `system_one.py repo on|off <ROOT>`. A repo that already has a `system-one.json` is never asked again;
+- **System One is offered in the one round (4q)**, never here. Do run the data migration below first, so a repo
+  with retired keys is not asked about a setting it already has;
 - **migrate System One data** — run `python <SKILL_DIR>/scripts/system_one.py migrate <ROOT> --write`.
   It is the upgrade, so there is no question to ask. It removes the keys the engine no longer reads
   (`RETIRED_KEYS` in `system_one.py`) from the machine config and from the repo's `system-one.json`, keeping
-  every other key; and it turns each loose end whose State is `waiting: user — <question>` into an `ask`
-  proposal in `<home>/drain/pending/` that carries the question, removing the row from `loose-ends.md` (the
-  list's states are now `new` and `declined: <reason>`; an `ask` is raised from the pile). It also renames a hand-made carried-loose-ends section of an open
-  order to `## Carried loose ends`, but only where every line of it already parses as a box
-  (`- [ ] L<n> (slice: <name>) <text>`); any other line is printed by file and line, left alone, and is the
-  orchestrator's to rewrite as a box (nothing is guessed). It prints nothing when
-  there is nothing to do. Report what it did in one line; with no output, say nothing. Until it has run, System One reports itself down with the retired keys named;
-- **offer federation — the tool computes the ask; you ask it.** Federation lets independent gitos
-  instances **on one machine** reach each other, so work that belongs to a sibling repo can go
-  there instead of crossing the gap by copy-paste. Run:
-
-  ```text
-  python <SKILL_DIR>/scripts/federation.py offer [ROOT]
-  ```
-
-  **It prints nothing when there is nothing to offer** — no siblings on the machine, or a repo
-  already in every group that exists. In that case this step is over; say nothing.
-
-  When it prints, **ask with the harness's interactive question UI** — in Claude Code, the
-  `AskUserQuestion` tool. The full procedure, including the exact options and the two rounds, is
-  `references/federation.md` → *Asking is a PROMPT, not a paragraph*. Follow it there; do not
-  restate the join path here, and run no federation command other than the single one the
-  operator's answers select.
-
-  **Never render the choices as a prose list and wait for a typed reply.** That was measured: an
-  earlier version of this bullet said only "put its output to the operator as a question", and an
-  orchestrator satisfied it with a paragraph of bulleted options — a wall of text where a
-  two-click choice belonged. The offer is computed in code precisely so the ask is not prose.
-
-  **This is an offer, and the operator's answer is the only thing that can write.** `offer` itself
-  is read-only and creates nothing. A repo whose operator declines — or that is never asked,
-  because there was nothing to offer — is byte-for-byte the repo that never ran this step. The
-  *only* way `upgrade` writes a `federation.json` is an operator selecting a group in the prompt,
-  which is consent given at the moment of the write. Opting in is per checkout and it is the
-  operator's word, and it is the *first* of two consents (the exposure flags are the second, asked
-  in the same flow). A repo that came back federated because somebody asked for a directive
-  refresh would have spent a consent nobody gave — the precise surprise this subsystem was built
-  to avoid.
-
-  **Declining stores nothing**, deliberately: there is no "I said no" file, so the offer is
-  computed fresh every upgrade and the capability stays discoverable. The cost of that is one
-  keystroke; the cost of the alternative is a second inert state beside `federation.json`.
-
-  **Exposure flags are never re-litigated here.** `offer` asks a federated repo about new groups
-  and nothing else — changing `consultable` or `accept_proposals` is a deliberate act via
-  `/gitos federation`. A prompt people learn to skip has stopped being a checkpoint.
+  every other key. (A `waiting: user — <question>` row is a valid `waiting:` State again since v57, and carried
+  boxes move with `ledger_migrate.py`, step 4m.) It prints nothing when there is nothing to do. Report what it did in one line; with no output, say nothing. Until it has run, System One reports itself down with the retired keys named;
+- **federation is offered in the one round (4q)** — the tool computes the ask (`federation.py offer`, which
+  `offer.py` calls), you ask it. Federation lets independent gitos instances **on one machine** reach each other,
+  so work that belongs to a sibling repo can go there instead of crossing the gap by copy-paste. Its rules
+  stand unchanged: `federation.py offer` prints nothing when there is nothing to offer and never writes; the
+  operator's answer is the only thing that can write a `federation.json`; **declining stores nothing**, so the
+  offer is computed fresh each round and the capability stays discoverable; the two exposure flags are
+  asked only after a group is chosen and **never re-asked** on upgrade (changing them is a deliberate act via
+  `/gitos federation`). The group pick and the flags are federation's own follow-up (`references/federation.md`
+  → *Asking is a PROMPT, not a paragraph*), reached only when the operator chooses to pick a group.
 
 **4h. Harness.**
 **Measure on every upgrade, adopted or not.** Run `harness.py offer --measure --home <home>` (the
@@ -301,15 +255,13 @@ diff and let them approve (`update --approve NAME`), then `harness.py sync --hom
 run, show the plan, and apply with `--apply` only on their word. Never move a user skill without
 approval; user-scope baseline changes are proposals only. Policy: `references/harness.md`.
 
-**Run the popup on every upgrade (after the budget summary).** Run `harness.py popup --home <home>`
-and present its `questions` with `AskUserQuestion` (rules: `references/roles/orchestrator.md`,
-policy: `references/harness.md`). It always carries the two claude.ai sync questions (`Skill sync`,
-`Plugin sync`: current state, **Keep as is** / **Turn off** / **Turn back on**). It adds removal
-batches only when `audit --json` shows `removal.vouched` and a non-empty `removal.candidates`. Nothing
-is pre-selected and silence applies nothing. Only the ticked candidates go to `sync --confirm NAME`,
-and only a sync answer of Turn off or Turn back on goes to `sync` as the flag that `sync_flags` maps
-it to. Show the dry run first, then `--apply` on the operator's word. The popup is Claude-only: on
-another harness present the same options as a numbered text list.
+**The popup is part of the one round (4q).** `offer.py` includes the popup's questions (`harness.py popup`,
+rules: `references/roles/orchestrator.md`, policy: `references/harness.md`) when `audit` holds removal candidates,
+and the two claude.ai sync questions come with them. Nothing is pre-selected and silence applies nothing. Only the
+ticked candidates go to `sync --confirm NAME`, and only a sync answer of Turn off or Turn back on goes to `sync`
+as the flag that `sync_flags` maps it to. Show the dry run first, then `--apply` on the operator's word. On demand,
+`harness.py popup --home <home>` still prints the whole popup, sync questions alone included. The popup is
+Claude-only: on another harness present the same options as a numbered text list (`offer.py --text`).
 
 **Plugin update channels.** Report the `update` and `sync` lines about channels as they are: an
 `auto` plugin's `autoUpdate: true` for its marketplace is a user-scope **proposal**, never applied by
@@ -341,29 +293,27 @@ lays the section on a new repo. Work-orders resolved before engine v44 are exemp
 
 **4l. Legacy loose-ends registers.**
 The loose-ends list is **lazy**: upgrade does not lay `<home>/loose-ends.md` and a repo with no file has an
-empty list. The only step here is the legacy register question, asked **at most once per file**. Run
-`python <SKILL_DIR>/scripts/loose_ends.py legacy pending --root <repo-root>`. **If it prints nothing there
-is no question and no output.** Otherwise it lists files (a work-order or file under the home whose name or
-`# ` title says loose ends or register) not yet answered; for each, ask once, with the harness's question
-UI, whether to import it and drain, and record the answer: `loose_ends.py import --root <repo-root> <FILE>`
-(adds each table row as a `new` item with Source `import:<its id>`; never edits the file, never imports a
-row twice; rows that say done, fixed, closed, merged or superseded are listed as "probably done" and still
-imported; records `<!-- legacy: <path> imported -->` in the list header) or `loose_ends.py legacy decline
-<FILE> --root <repo-root>` (records `declined`; this is the one case the file is created without an item,
-and only after the operator answered). Then run the drain (`references/roles/orchestrator.md` -> *Draining
-the loose ends*). Sections of implementer notes inside a legacy register are not rows: say so, and
-adjudicate them by hand in the same pass (facts to the brain, follow-ups with `loose_ends.py add`).
+empty list. The legacy register question (a work-order or file under the home whose name or `# ` title says loose
+ends or register, not yet answered; **at most once per file**) is asked in the one round (**4q**), two files at a
+time; `loose_ends.py legacy pending --root <repo-root>` still lists them. Applying the answer: `loose_ends.py
+import --root <repo-root> <FILE>` (adds each table row as a `new` item with Source `import:<its id>`; never edits
+the file, never imports a row twice; rows that say done, fixed, closed, merged or superseded are listed as
+"probably done" and still imported; records `<!-- legacy: <path> imported -->` in the list header) or
+`loose_ends.py legacy decline <FILE> --root <repo-root>` (records `declined`; this is the one case the file is
+created without an item, and only after the operator answered). After an import, run the drain
+(`references/roles/orchestrator.md` -> *Draining the loose ends*). Sections of implementer notes inside a legacy
+register are not rows: say so, and adjudicate them by hand in the same pass (facts to the brain, follow-ups with
+`loose_ends.py add`).
 
-**4m. Migrate multi-slice single-file orders; retire `history/`.**
-Run `python <SKILL_DIR>/scripts/ledger_migrate.py <home>` (a dry run: it writes nothing). It lists each open
+**4m. Migrate the ledger: one not-now list, folder orders; retire `history/`.**
+Run `python <SKILL_DIR>/scripts/ledger_migrate.py <home>` (a dry run: it writes nothing). Its `not-now:` lines come
+first (step 4q). Then it lists each open
 single-file order with two or more `### S<n>` slice sections that it would convert to the folder form (`git mv` to
 `WO-NNN/order.md`, one `slices/SN-<name>.md` per slice; a slice with an adjudication or `## History` pointer naming a
 commit is `landed` with it, the rest `ready` with `depends_on` in order; `history/WO-NNN.md` content becomes the landed
 slices' notes), each order it will skip because the text cannot be split with confidence (with the reason: nothing
-is guessed), the **open carried boxes** (`- [ ] L<n> ...`) it will leave in `order.md`, and any `history/` file it
-cannot fold in. Show the operator that report, settle each listed box with the orchestrator (a proposed slice via
-`slice.py add` or `drain accept --new-slice`, a new order, or dropped), and only after the operator confirms run it
-again with `--write`. It stages its changes and commits nothing; review the diff, then commit. Single-slice orders and
+is guessed), and any `history/` file it cannot fold in. Show the operator that report, and only after the operator
+confirms run it again with `--write`. It stages its changes and commits nothing; review the diff, then commit. Single-slice orders and
 resolved orders are left alone. `work-orders/history/` is retired: an empty one (a `.gitkeep` only) is removed by
 `--write`; a history file left behind is read by hand, then deleted. Scaffold no longer lays the folder, the canary no
 longer checks it, and the whole-order size limit (`work-order-oversized`) is gone; the per-file limits of a folder
@@ -376,7 +326,8 @@ rows of the Open table (below its separator row), and `<!-- gitos:index resolved
 `<!-- /gitos:index -->` at the top of the Resolved table's rows, above the existing ones. Rows already in the
 Resolved table stay hand-kept below the markers and are never regenerated. Then run
 `python <SKILL_DIR>/scripts/ledger_index.py <home>`: it rewrites only what lies between the markers, from the
-orders' front matter (`severity`, `title`, `evidence`; resolved orders also `summary`, `landed`, `result`), and
+orders' front matter (`severity`, `title`, `evidence`; resolved orders also `summary`, `released` (or the older
+`landed`), `result`), and
 leaves every other byte of the file alone. An INDEX with no markers is left unchanged, and the canary's
 `index-drift` check is skipped for it. New repos get the markers from scaffold. Add the front matter to each
 open order first (`references/work-order-template.md`), or the row is built from its H1 and `## Severity`.
@@ -390,14 +341,53 @@ orchestrator's merge review is the backstop. Then run the canary: a single-file 
 section is a `order-needs-folder` finding; `slice.py add WO-NNN NAME <home>` converts it with `git mv`.
 Claude Code only, and `disableAllHooks` switches it off.
 
-**4p. Follow-ups on folder orders.**
-A folder order takes no `## Carried loose ends` boxes. `drain accept ID --work-order NNN` into one refuses, naming the
-alternatives (a new order with `origin:`, or decline with a reason); `--new-slice NAME` writes a `proposed` slice with
-`origin:` set to the items, only when the orchestrator decides the order's definition of done needs them. Single-file
-orders keep boxes; no order has a whole-order size limit any more. A folder order has per-file limits (200 lines for `order.md`,
-150 for a slice; `order.md` over its limit refuses new slices). The canary gates `slice-landed-no-commit` and a
-dangling or cyclic `depends_on`, and reports `order-ready-to-close`, `slice-stale`, `order-oversized` and `slice-oversized` and split advice at
-eight slices; it reads `ledger_index.py` from beside itself, the home `tools/` or `<SKILL_DIR>/scripts/`.
+**4p. Follow-ups on orders.**
+An order takes no `## Carried loose ends` boxes any more (v57). `drain accept ID --work-order NNN --slice NAME` writes
+a `proposed` slice with `origin:` set to the items (a single-file order becomes a folder); without `--slice` the
+order must already name the items (`origin: L3, L5`). No order has a whole-order size limit. A folder order has
+per-file limits (200 lines for `order.md`, 150 for a slice; `order.md` over its limit refuses new slices). The canary
+gates `slice-landed-no-commit` and a dangling or cyclic `depends_on`, and reports `order-ready-to-close`,
+`slice-stale`, `order-oversized` and `slice-oversized` and split advice at eight slices; it reads `ledger_index.py`
+from beside itself, the home `tools/` or `<SKILL_DIR>/scripts/`.
+
+**4q. One not-now list (v57).**
+Every item that is not yet an order becomes a row of `<home>/loose-ends.md` with a State: `new`, `proposed: <kind>`,
+`parked: <trigger>`, `waiting: <question>` or `declined: <reason>`. The dry run of step 4m prints one `not-now:` line
+per move: each item a pending drain proposal holds gets its row back as `proposed: <kind>` (the file stays as its
+attachment); each open hand-kept INDEX Parked row (`P<n>`) becomes a `parked: <trigger>` row with Source
+`import:P<n>` (a closed one goes) and the Parked section becomes the generated region `<!-- gitos:index parked -->`;
+each open carried box of an open order goes back on the list as `new` and the box is ticked `-> L<n>`;
+`drain/declined/`, `drain/accepted/` and `drain/routed.txt` are removed (a declined item is already a `declined:`
+row, an accepted or routed one is off the list); the front-matter key `landed:` of an order becomes `released:`.
+What it cannot move with confidence is printed as `LEFT` and stays (a Parked row with no trigger, a pile item whose
+row is in another state); settle those by hand, then run it again. A second run prints `not-now: nothing to move`.
+Until it has run, the canary prints the advisory `loose-ends-migration`; a fact left in two stores afterwards is the
+gating `loose-ends-two-stores`. `drop --to P<n>` and `drain accept --parked P<n>` are retired: park with
+`loose_ends.py state L<n> "parked: <trigger>"` or `drain accept ID --trigger T`.
+
+**4q. The one offer round.**
+Run `python <SKILL_DIR>/scripts/offer.py <repo-root>` **last in step 4**, after the data migrations and the home
+tools, so every question is computed against the repo as upgraded. It asks each subsystem's own check which
+opt-in is still unanswered (model optimization has no recorded preference; lenses have no `lenses.json` and a lens
+exists; System One has no repo choice in `<home>/system-one.json` and a machine config exists or
+`system_one.py setup --detect` prints a line; federation has something to offer;
+a legacy register is unanswered; the harness audit holds removal candidates) and prints **one question batch**,
+or **nothing** when nothing is unanswered. **If it prints nothing, this step is over: say nothing.** It writes
+nothing itself. A line `offer: X not read (reason)` on stderr means that check could not run and its question was
+not asked: report it, never treat it as an empty offer.
+
+When it prints, pass `questions` to `AskUserQuestion` as-is, in the groups `calls` names (a call takes at most four
+questions; the groups are still one round, so nothing runs between them). **Never render the choices as a prose
+list and wait for a typed reply** (`--text` is for a harness with no question UI). Then, per answered question, run
+exactly the commands its entry's `apply` names for the chosen label; a question left unanswered runs the entry's
+`if_unanswered` (model optimization: `skip`, recorded as off) and nothing else. Read `follow_up` for what a chosen
+option leads to (the lens pick, federation's group pick and exposure flags, the drain after a register import).
+
+**An answered question is never asked again**, because a question exists only while its store lacks the answer:
+`model-optimization.json`, `lenses.json`, `system-one.json`, the `<!-- legacy: ... -->` line in the list header.
+Declining federation stores nothing, by its own rule, so it is computed fresh each round; the harness popup is
+computed from the audit. The answers are the operator's alone: a repo that came back federated, or with System One
+on, because somebody asked for a directive refresh would have spent a consent nobody gave.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
@@ -412,8 +402,9 @@ from→to versions, which directives were adopted, and any pointers re-pointed. 
 **7. Report.**
 Show the `git diff` of what changed (the re-pointed pointers, the stamp, the ADR, any
 `<home>/tools/` copy that was newly copied **or refreshed** — name each refreshed tool and
-say the prior bytes are in git), and the `ledger_migrate.py` result (converted orders, skipped orders with their reason,
-the carried boxes settled, `work-orders/history/` removed) — confirm each explicitly in the report.
+say the prior bytes are in git), and the `ledger_migrate.py` result (the `not-now:` moves and anything `LEFT`,
+converted orders, skipped orders with their reason, `work-orders/history/` removed) — confirm each explicitly in the
+report.
 
 ## What it never does
 

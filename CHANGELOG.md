@@ -18,6 +18,28 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v57 — 2026-11-16
+breaking: yes
+
+- **One "not now" list (WO-115).** Every item that is not yet an order is one row of `loose-ends.md` with a state:
+  `new`, `proposed: <kind>`, `parked: <trigger>`, `waiting: <question>` or `declined: <reason>`. The row is the
+  authority; a drain file in `drain/pending/` is its attachment. INDEX `## Parked` is a generated view of the
+  `parked:` rows. Retired: hand-kept Parked rows and `P<n>` destinations, carried boxes, `drain/declined/`,
+  `drain/accepted/`, `drain/routed.txt`. One routing grammar: `WO-NNN | WO-NNN/SN | brain:<page> | closed:<reason>`.
+  The canary gates a fact kept in two stores (`loose-ends-two-stores`). Front matter `landed:` is `released:` (both
+  read). **Migration:** `ledger_migrate.py <home>` (dry run), then `--write`.
+- **One "waiting on you" view (WO-115).** Plain `loose_ends.py status` lists asks, `waiting:` rows, pending intake and
+  parked rows whose trigger may have fired (`scripts/waiting.py`); RESUME points at it. The orchestrator detects a
+  landing (Stop hook, `worktree.py status`) instead of being told.
+- **One consent round (WO-115).** `scripts/offer.py` asks every unanswered opt-in (model optimisation, lenses, System
+  One, federation, legacy registers, harness removals) in one batch at inception and upgrade (step 4q); an answered
+  question is never re-asked.
+- **SKILL.md is a router again (WO-115).** 454 -> 306 lines; Canary detail in `references/canary.md`, Lenses in
+  `references/lenses.md`, Federation in `references/federation.md`; one first-action summary; the orchestrator is the
+  "persistent coordinator".
+
+---
+
 ## v56 — 2026-11-16
 breaking: yes
 
