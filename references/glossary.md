@@ -20,8 +20,8 @@ names in it, comments included. **Tools** are byte-copies of engine scripts in `
 **Ledger**
 The work: `<home>/INDEX.md` plus `<home>/work-orders/`. The INDEX has five sections: Open, Parked, Resolved,
 Findings DISPROVED and Operator next-steps. Between its `<!-- gitos:index open|parked|resolved -->` markers
-`ledger_index.py` writes the rows (Open and Resolved from each order's front matter, Parked from the `parked:` rows of
-the loose-ends list); nobody types a row there.
+`ledger_index.py` writes the rows (Open, Parked and Resolved from each order's front matter; Parked from the orders
+with `status: parked`); nobody types a row there.
 
 **Brain**
 The orchestrator's long-term memory: typed, cross-linked pages (sources, entities, concepts, decisions) under
@@ -103,7 +103,8 @@ The orchestrator handing one work-order or slice to an implementer, with its sco
 model optimization on, its tier.
 
 **Helper**
-The cheapest-tier agent that answers a drain export when no local model is available. Not an implementer.
+The cheapest-tier agent that answers a drain export when no local model is available (down, off or not configured):
+the drain is the local model's or a helper's, never the orchestrator's by hand. Not an implementer.
 
 **Lens**
 An operator-imported domain technique pack (`<home>/agents/`, or the global library `<skill>/agents/`) that a role
@@ -206,7 +207,8 @@ Follow-ups. Each note is a claim until adjudicated.
 
 **Adjudication** (`### Adjudication`)
 The orchestrator's written ruling on each note, one of three verdicts: ACCEPT (`→ WO-NNN`, `→ WO-NNN/SN` or
-`→ brain: <page>`), DEFER (`→ L<n>`, parked or not) or REJECT (`→ rejected: <why>`). The same arrows are the one
+`→ brain: <page>`), DEFER (`→ WO-NNN`, a new or parked work-order; `→ L<n>` only as the last resort) or REJECT
+(`→ rejected: <why>`; a deferral with no out-of-scope reason is rejected and goes back into the order as a revision). The same arrows are the one
 routing grammar of `loose_ends.py drop --to` and `drain decline --route` (`closed: <reason>` in place of a verdict).
 
 **Worktree**
@@ -217,18 +219,32 @@ clean. A **slice marker** in a slice worktree's git dir arms the `slice_guard` h
 What the implementer may edit is what its order specifies, never what it designs; an approved plan of its own is not
 a substitute.
 
+**In-scope fix** (finish what you find)
+A finding the implementer makes while working an order and fixes in that order because it sits within the order's
+scope of work, however many lines: listed under *Deviations*, covered by the order's checks, reviewed like scope.
+Only a finding clearly out of scope, or crossing into a new scope (another subsystem, a design or operator decision,
+a file another in-flight order owns), is deferred, with that reason. Nothing is dropped. An unlisted out-of-scope
+edit is a defect.
+
 ---
 
 ## Loose ends and the drain
 
 **Loose end** (`L<n>`)
-A small item that came up and was not acted on, one or two sentences: one row of `<home>/loose-ends.md` (*the list*),
-the one place "not now" lives. Its **State** is one of `new` (written down, not looked at), `proposed: <kind>`,
-`parked: <trigger>`, `waiting: <question>` or `declined: <reason>`; a State that cannot be read is reported, never read
-as `new`. Routed or closed, it leaves the list: not on the list means routed.
+The last resort and the rarest form of deferred work: one row of `<home>/loose-ends.md` (*the list*). A finding is
+fixed in its order; only one out of scope becomes a work-order or a parked work-order; a loose end is what is left,
+and it passes all five tests: **concrete** (names a file, command, message or behaviour); **fix known and small** (no
+investigation, root cause, design or operator decision); **self-contained** (actionable from the row alone); **not
+owned** (not in an open order's scope, not fixed, not a duplicate); **a stated reason** it is out of scope now (e.g.
+a parallel slice owns the file). Ideas, experiments and trigger-waits are not loose ends. `loose_ends.py add` refuses
+a row without `--fix` and `--why-not-now`, and stores both in it. Its **State** is one of `new`, `proposed: <kind>`,
+`waiting: <question>` or `declined: <reason>`; a State that cannot be read is reported, never read as `new`. Routed or
+closed, it leaves the list: not on the list means routed. The canary says (advisory `loose-ends-last-resort`) when
+the list holds more than 3 open rows or one older than 14 days.
 
 **Drain**
-The pass that turns `new` rows into proposals (`system_one.py drain`, a helper, or by hand): after an order
+The pass that turns `new` rows into proposals (`system_one.py drain` on the local model, or a dispatched helper
+when it is down, off or not configured; never the orchestrator by hand): after an order
 resolves, at each checkpoint, on `loose-ends-stale`, or when the operator asks ("drain the loose ends").
 
 **Pile** (`<home>/drain/pending/`)
@@ -242,9 +258,11 @@ One pile file, of kind `join`, `new-order`, `ask`, `park`, `close` or `read`. No
 A drain proposal for the operator; accepted, its row reads `waiting: <question>`. Generally, any question put to the
 operator: a `waiting:` row, a popup, an owner-board card. The tool computes the ask; the orchestrator asks it.
 
-**Parked** (`parked: <trigger>`)
-A loose end waiting on a named restart trigger; re-read at each checkpoint and routed when its trigger fires. The INDEX
-`## Parked` table is its generated view. (The hand-kept `P<n>` row is retired in v57; `ledger_migrate.py` moves it.)
+**Parked work-order**
+Deferred, out-of-scope work that waits on a named event: an order file with front matter `status: parked` and
+`trigger: <restart trigger>`. The INDEX `## Parked` table is generated from these orders; at each checkpoint the ones
+whose trigger fired are opened. The loose-end state `parked:` (v57) and the hand-kept `P<n>` row are retired;
+`ledger_migrate.py` turns both into parked orders.
 
 **Carried box** (retired)
 A `- [ ] L<n> (slice: <name>)` row in an order's `## Carried loose ends`, retired in v57: a follow-up into an order is a
@@ -254,9 +272,9 @@ A `- [ ] L<n> (slice: <name>)` row in an order's `## Carried loose ends`, retire
 Adding an item to an open order; allowed only when the order's join test holds (`references/roles/orchestrator.md`).
 
 **Defer**
-"Write it down for later", in the same turn (the deferral rule). The DEFER verdict writes a loose end (`parked:` when
-a trigger is named); `intake --defer` keeps a foreign proposal pending and adds a loose end; `drain defer` leaves a
-pile file as it is.
+The exception, written down in the same turn (the deferral rule): only a finding clearly out of the order's scope,
+or crossing into a new scope, is deferred, as a work-order, a parked work-order or, last, a loose end. `intake
+--defer` keeps a foreign proposal pending; `drain defer` leaves a pile file as it is.
 
 **Close** / **decline** / **drop** / **withdraw** / **reject**
 Close: the item is done (a drain kind). Decline: refuse with a reason (drain, intake; a loose end then reads

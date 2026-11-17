@@ -7,8 +7,8 @@ the operator, one line each, from the stores that already hold it:
     ask      a drain proposal of kind `ask` in <home>/drain/pending/ (and a loose-ends row `proposed: ask`)
     row      a loose-ends row whose state starts `waiting:` (needs the operator)
     intake   proposals other repos filed into <home>/intake/ (a count; `federation.py intake` lists them)
-    parked   a Parked row (INDEX or loose-ends `parked:`) whose restart trigger may have fired: a work-order it
-             names is resolved, or a date it names has passed. A trigger in words is the orchestrator's to judge.
+    parked   a parked work-order (`status: parked`; or a hand-kept INDEX Parked row) whose `trigger:` may have
+             fired: a work-order it names is resolved, or a date it names has passed. A trigger in words is the orchestrator's to judge.
     board    an owner board RESUME names. Its store is read through the harness, never here: said as "not read".
 
 A view, never a store: nothing is written and nothing is remembered. A source that is missing is skipped; one that
@@ -167,10 +167,10 @@ def _parked_index(home: Path) -> list:
     return out
 
 
-def src_parked(home: Path, rows: list, now: "date | None" = None) -> dict:
+def src_parked(home: Path, now: "date | None" = None) -> dict:
     resolved = _resolved_orders(home)
-    cand = _parked_index(home) + [(r["id"], re.sub(r"^parked:\s*", "", r["state"].strip(), flags=re.IGNORECASE))
-                                  for r in rows if _state_is(r, "parked:")]
+    cand = _parked_index(home) + [(f"WO-{nnn}", meta.get("trigger", ""))
+                                  for nnn, meta in _sibling("_gitos_canary_w", "canary.py").parked_orders(home)]
     items = []
     for ref, trig in cand:
         why = trigger_check(trig, resolved, now)
@@ -208,7 +208,7 @@ def collect(home, rows=None, now: "date | None" = None) -> list:
     for name, fn in (("ask", lambda: src_asks(home, need_rows())),
                      ("row", lambda: src_rows(need_rows())),
                      ("intake", lambda: src_intake(home)),
-                     ("parked", lambda: src_parked(home, need_rows(), now)),
+                     ("parked", lambda: src_parked(home, now)),
                      ("board", lambda: src_board(home))):
         try:
             out.append(fn())

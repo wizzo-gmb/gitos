@@ -10,12 +10,13 @@ one line saying so (a repo opts in by laying the markers).
 
   * An order is a file `WO-NNN-slug.md` or, with two or more slices, a folder `WO-NNN/` whose `order.md` is
     read as the file would be.
-  * Open rows come from the order files in `work-orders/`: `| NNN | Severity | Title | evidence |`.
+  * Open rows come from the order files in `work-orders/` that are not parked: `| NNN | Severity | Title | evidence |`.
     Severity, title and evidence read from front matter (`severity`, `title`, `evidence`); with none, from
     the H1 (`# WO-NNN - Title`) and the first word of `## Severity`; evidence then reads an em dash.
     Sorted by severity (critical, high, medium, low, unconfirmed), then number.
-  * Parked rows are a view of `<home>/loose-ends.md`: each row whose State is `parked: <trigger>`, as
-    `| L<n> | Item | trigger | Source | Added |`, in id order. The list is the authority; nobody types a row here.
+  * Parked rows come from the parked orders (WO-116): an order file in `work-orders/` whose front matter says
+    `status: parked` and `trigger: <restart trigger>`, as `| NNN | Title | trigger | evidence |`, by number.
+    Nobody types a row here.
   * Resolved rows come from `work-orders/resolved/` files whose front matter carries `summary`, `released`
     (the engine version; the older key `landed` still reads) and `result`. Newest number first. A resolved order
     without them is skipped: its hand-kept row stays.
@@ -104,10 +105,21 @@ def _orders(d: Path) -> list[tuple[str, Path]]:
     return out
 
 
+def is_parked(meta: dict) -> bool:
+    return str(meta.get("status", "")).strip().lower() == "parked"
+
+
+def parked_orders(home: Path) -> list[tuple[str, Path, dict]]:
+    """[(NNN, file, info)] of the parked orders: open order files whose front matter says `status: parked`."""
+    return [(nnn, f, i) for nnn, f in _orders(home / "work-orders") for i in [_info(f)] if is_parked(i["meta"])]
+
+
 def open_rows(home: Path) -> list[str]:
     rows = []
     for nnn, f in _orders(home / "work-orders"):
         i = _info(f)
+        if is_parked(i["meta"]):
+            continue
         sev = i["severity"]
         rank = SEVERITY_ORDER.index(sev) if sev in SEVERITY_ORDER else len(SEVERITY_ORDER)
         rows.append((rank, nnn, f"| {nnn} | {sev} | {i['title']} | {i['evidence']} |"))
@@ -120,17 +132,9 @@ def released(meta: dict) -> str:
 
 
 def parked_rows(home: Path) -> list[str]:
-    """The `parked:` rows of the loose-ends list, as INDEX rows."""
-    import importlib.util as iu
-    spec = iu.spec_from_file_location("_gitos_index_loose_ends", Path(__file__).resolve().with_name("loose_ends.py"))
-    le = iu.module_from_spec(spec)
-    spec.loader.exec_module(le)
-    out = []
-    for r in le.rows_of(home):
-        st = le.parse_state(r["state"])
-        if st and st[0] == "parked":
-            out.append(f"| {r['id']} | {le._esc(r['item'])} | {le._esc(st[1])} | {le._esc(r['source'])} | {r['added']} |")
-    return out
+    """The parked orders, as INDEX rows."""
+    return [f"| {nnn} | {i['title']} | {i['meta'].get('trigger') or EM_DASH} | {i['evidence']} |"
+            for nnn, _f, i in parked_orders(home)]
 
 
 def resolved_rows(home: Path) -> list[str]:

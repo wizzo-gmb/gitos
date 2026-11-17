@@ -1,14 +1,14 @@
 # Loose ends
 
-Small things that came up while other work was going on. Written down in the turn they come up,
-drained after an order resolves, at each checkpoint, and on request ("drain the loose ends").
-This list is the one place "not now" lives: every item that is not yet an order is one row here.
+The last resort. A finding is fixed in the order that found it; one clearly out of that order's scope,
+or crossing into a new scope, becomes a work-order or a parked work-order (`status: parked`, `trigger:`).
+A row here is the rarest form: it passes all five tests (concrete; a known small fix; self-contained;
+not owned; a stated out-of-scope reason it cannot be done now) and fits none of those. Nothing is dropped.
 
-Only the orchestrator writes it (`scripts/loose_ends.py`). An item is one or two sentences, at most
-300 characters. This is never a work queue or a notebook: a finding that needs evidence, a cause, a
-fix or its own worker is a work-order; a session plan belongs in `RESUME.md`. State is one of
-`new`, `proposed: <kind>` (the drain's; its file in `drain/pending/` is an attachment),
-`parked: <trigger>`, `waiting: <question>` or `declined: <reason>`. A routed or closed item is
+Only the orchestrator writes it (`loose_ends.py add --fix ... --why-not-now ...`). A row is at most 300
+characters, its fix and reason included. Drained after an order resolves, at each checkpoint, and on
+request ("drain the loose ends"). State is one of `new`, `proposed: <kind>` (the drain's; its file in
+`drain/pending/` is an attachment), `waiting: <question>` or `declined: <reason>`. A routed or closed item is
 removed with `drop --to WO-NNN | WO-NNN/SN | brain:<page> | closed:<reason>` and git keeps the
 history: not on the list means routed.
 

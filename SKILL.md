@@ -256,12 +256,13 @@ data regeneration) are the operator's to run, never an implementer's. After a fi
 orchestrator verifies it (`git diff` / grep / read), the operator accepts it, and the orchestrator
 resolves it (`work-orders/resolved/`, `ledger_index.py`). Each implementer fills the work-order's
 **Implementer notes**; the orchestrator **adjudicates** each: ACCEPT (→ work-order or brain),
-DEFER (→ a `parked:` or `new` loose-end row) or REJECT with a one-line reason.
+DEFER (only what is out of the order's scope, with that reason: a new or parked work-order, a loose end
+last) or REJECT with a one-line reason. A finding within the order's scope is fixed in it; nothing is dropped.
 
 ## System One (optional)
 
 A local decision model that drains the loose-ends list and does nothing else. Down is a normal state (the GPU is in
-use): the drain waits, or the orchestrator drains by hand, and it is never raised to the operator as a problem. With no
+use): the drain waits, or a dispatched helper drains it (never the orchestrator by hand), and it is never raised to the operator as a problem. With no
 local model (not configured, off or down) the drain runs on a helper dispatched on the cheapest tier: `drain --export`,
 the helper answers the file, `drain --answers`.
 Opt-in per repo: it needs the machine config `~/.claude/gitos-system-one/config.json` and `<home>/system-one.json`

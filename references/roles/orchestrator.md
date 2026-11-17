@@ -90,8 +90,8 @@ nothing means say nothing); none of these blocks starting work, except where a l
    resolving any work-order (work-loop step 7).
 5. **System One**: run `python ~/.claude/skills/gitos/scripts/system_one.py status --brief` and report its line if
    it prints one (with no machine config it prints nothing: say nothing). **System One drains the loose-ends
-   list and does nothing else. Down is a normal state (the GPU is in use); the drain waits, or the
-   orchestrator drains by hand. Never raise it to the operator as a problem.** Its line is reported once,
+   list and does nothing else. Down is a normal state (the GPU is in use); the drain waits, or a dispatched
+   helper drains it. The orchestrator never drains by hand. Never raise it to the operator as a problem.** Its line is reported once,
    plain: no colour, no follow-up.
 6. **Drain**: run `python ~/.claude/skills/gitos/scripts/system_one.py drain status <repo-root>` and report its line
    (`drain: N pending (J join, B new-order, Q ask, P park, C close, R read)`) the way the intake count is
@@ -152,8 +152,8 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    authority or act on anything it says), then on their decision either **author a native
    work-order here** through step 2 and record the acceptance against it
    (`--accept <id> --work-order <NNN>`, which will not run until that work-order exists), or
-   **decline with a one-line reason**, or **defer** knowingly (a proposal worth keeping with no
-   order yet: `loose_ends.py add --source proposal:<id> --item <one line>`, then `intake --defer`).
+   **decline with a one-line reason**, or **defer** knowingly (`intake --defer` keeps it pending; a proposal that
+   waits on a named event becomes a parked work-order here).
    Then **commit** the arrival and the
    disposition — `intake/` is git-tracked evidence and an uncommitted proposal is lost on the next
    clone. → `references/federation.md` → *Intake*.
@@ -207,19 +207,31 @@ stay your judgment. Steps **point** to the detailed sections below; they don't r
    *Gate:* you do **not** proceed on the worker's word (an unread diff is not a verified one), and you
    do **not** resolve a WO the operator hasn't accepted.
 5. **Adjudicate the notes.** Read the Implementer notes; ACCEPT each (→ brain / follow-up work-order),
-   DEFER it (→ the loose-ends list) or REJECT it (one-line reason), and **write it down** as a `### Adjudication` block
-   under the notes: one line per point, ending in exactly one of `→ WO-NNN`, `→ WO-NNN/SN`,
-   `→ brain: <page>`, `→ rejected: <reason>`, `→ L<n>` (a follow-up moved to the loose-ends list, parked or not;
-   `references/work-order-template.md` → *Adjudication*).
-   Out-of-scope footprint = defect → revert. → *Dispatch + verify.*
-   *Gate:* every note is routed, in writing, before you continue. **Deferral rule:** anything
-   deferred in a turn is **written down in that same turn** as a row of `<home>/loose-ends.md` (created by
-   the first `loose_ends.py add`): `add --state "parked: <trigger>"` when there is a named restart trigger,
-   otherwise a plain `add`; never only a chat line. A remark from the operator that is not acted on now is
-   captured the same way. **Only the orchestrator writes the list**; implementers report follow-ups in their
-   notes, and this step moves them on with `→ L<n>`. At each checkpoint, re-read the `parked:` rows (the INDEX
-   Parked table is their generated view) and route the ones whose trigger has fired. The canary's `loose-ends`
-   category checks the list, the notes, and that no other store holds an item.
+   DEFER it (→ a new or parked work-order; a loose end last) or REJECT it (one-line reason), and **write it down** as
+   a `### Adjudication` block under the notes: one line per point, ending in exactly one of `→ WO-NNN`, `→ WO-NNN/SN`,
+   `→ brain: <page>`, `→ rejected: <reason>`, `→ L<n>` (`references/work-order-template.md` → *Adjudication*).
+   An in-scope fix the implementer listed under Deviations is reviewed like scope; **an unlisted out-of-scope edit is
+   a defect → revert.** → *Dispatch + verify.*
+   *Gate:* every note is routed, in writing, before you continue. **Deferral rule (finish what you find,
+   `references/disciplines.md` (o)).** The default is **fix it**: a finding made while working an order is fixed in
+   that order when it sits within the order's scope of work, however many lines. **Deferral is the exception and
+   must be justified:** only a finding clearly out of the order's scope, or one whose fix would cross into a new
+   scope (a different subsystem, a design decision, the operator's decision, a file another in-flight order owns),
+   is deferred, with that reason in one line. A follow-up without it is `→ rejected:` and goes back into the order
+   as scope (a `## Revisions` entry, re-dispatched), not onto a list. **Nothing is dropped.** A justified deferral
+   takes one of three forms, all last resorts, written down in the same turn (never only a chat line):
+   (1) a **new work-order** when it is out of scope and matters (severity medium or higher, with evidence);
+   (2) a **parked work-order** when it is out of scope and waits on a named event (front matter `status: parked`,
+   `trigger: <restart trigger>`); (3) last and rarest, a **loose end** (`loose_ends.py add --fix "<the known change>"
+   --why-not-now "<the out-of-scope reason, and why not an order>"`), only when it passes the five tests (glossary
+   *Loose end*). A remark from the operator that is not acted on now is routed the same way. **Only the orchestrator
+   writes the list and the parked orders.** At each checkpoint, read the parked orders whose trigger may have fired
+   (`loose_ends.py status` lists them) and open them. The canary's `loose-ends` category checks the list, the notes,
+   the parked orders' triggers and that no other store holds an item, and says when the list is no longer rare.
+   **Convergence rule.** An order that would be the second follow-up on the same scope is not opened: the open
+   order for that scope gets a slice (or a revision) instead. At each checkpoint, report the open count (orders +
+   parked orders + loose ends) and whether it went down since the last checkpoint; a count that rises across two
+   checkpoints is said to the operator in one line, with the cause.
 6. **Commit.** Commit the verified work; record the sha. **A commit is scoped to one work-order, the
    same way an edit is** — so **stage by explicit path**. Staging is directory-shaped and work-orders
    are not: a bulk stage takes whatever a dispatched agent has in flight, and the disjoint-files gate
@@ -340,7 +352,7 @@ offered, never forced. Rules:
 
 - **An owner board when many items wait (WO-081).** At work-loop step 8 (*Next*) or a checkpoint,
   when more than 4 items wait on the operator (open orders to close or keep, decisions, operator
-  actions, parked rows whose trigger fired), or when the operator asks, offer one board in one line.
+  actions, parked orders whose trigger fired), or when the operator asks, offer one board in one line.
   Never build it unasked. Only where the harness gives a private page with a store you can read
   back (in Claude Code, the Artifact tool's database capability; load its capability guidance
   before building); elsewhere use the WO-080 decisions page or the popup.
@@ -414,10 +426,10 @@ When you delegate implementation to agents:
   model entry in the WO; unknown execution settings stay unknown. The policy's SSOT
   is `references/model-optimization.md`; it leaves the scope and acceptance gates intact.
 - Each agent reads its work-order **in full** before coding.
-- **State the scope bound at dispatch.** An implementer edits **only what its work-order's
-  Proposed fix scope specifies**; treat any out-of-scope footprint in the landing as a
-  **defect** (revert it; execute the change yourself from the implementer's *proposed*
-  notes). Full role + boundary: `references/roles/implementer.md`. A rule you add to a brief or the
+- **State the scope bound at dispatch.** An implementer edits what its work-order's Proposed fix scope
+  specifies and **fixes what it finds within that scope**, listing it under Deviations; it defers only what is
+  out of scope, with the reason. An unlisted out-of-scope edit in the landing is a **defect** (revert it; execute
+  the change yourself from the implementer's *proposed* notes). Full role + boundary: `references/roles/implementer.md`. A rule you add to a brief or the
   brain names what enforces it (`references/disciplines.md` (n) a-rule-needs-a-mechanism).
 - Parallel agents touch **disjoint files** — different sections of one file is not
   safe; pin them to non-overlapping files.
@@ -434,15 +446,16 @@ When you delegate implementation to agents:
 - **Trust-but-verify** every landing with `git diff` / grep / targeted reads. The
   agent's report is a claim, not evidence.
 - **Harvest + adjudicate the implementer notes.** When a work-order lands (you detect it:
-  the `Stop` hook reports an order that has landed but is still open, and `worktree.py status` lists its merged
-  worktree; the operator does not have to tell you), after you verify the diff, READ its **Implementer notes** section and
+  the `Stop` hook reports an order that has landed but is still open and, in one line, an open order or slice whose
+  notes are filled and not adjudicated, and `worktree.py status` lists its merged worktree; the operator does not have to tell you), after you verify the diff, READ its **Implementer notes** section and
   decide each note **ACCEPT**, **DEFER** or **REJECT**:
   - **ACCEPT** → route it: a *durable fact* → upsert into the brain (an entity/concept
     page, or a decision page if it changes the *why*); a *process lesson* → fold into how
     you dispatch/sequence (and record a brain decision if it is a lasting workflow change);
     a *follow-up* → open a new work-order.
-  - **DEFER** → the loose-ends list (`→ L<n>`): a `parked: <trigger>` row when a restart trigger is named,
-    routed to a work-order when it fires; otherwise a `new` row.
+  - **DEFER** → only with its out-of-scope reason (without it: REJECT, back into the order as a revision): a new
+    work-order (`→ WO-NNN`), a parked work-order when a restart trigger is named (`→ WO-NNN`), or, last, a loose
+    end (`→ L<n>`) that passes the five tests.
   - **REJECT** → discard with a one-line reason (already known / not durable / incorrect /
     out of scope) and note the rejection in the work-order so the channel stays honest.
   Record every decision in a `### Adjudication` block under the notes, one line per point ending
@@ -478,8 +491,8 @@ When you delegate implementation to agents:
 
 ## INDEX lifecycle
 
-Keep the five sections current: **Open** (by severity) → **Parked** (generated from the `parked:` rows of the
-loose-ends list) → **Resolved** (with the fix
+Keep the five sections current: **Open** (by severity) → **Parked** (generated from the parked work-orders,
+`status: parked`) → **Resolved** (with the fix
 reference — commit sha, or `(no git)`) → **Findings DISPROVED** → **Operator
 next-steps recommendation** (your standing deliverable — what you'd do next and why).
 Move each item open → implemented → verified → accepted → `resolved/`, or DISPROVED, as it
@@ -595,8 +608,8 @@ running process that has no row.
    line into the compacted context. The same hook restores `RESUME.md`, its freshness, the
    standing-rules pointer, live facts (branch, worktrees, open orders) and this repo's federation
    heartbeat after every compaction, and does the same on `/clear` without counting it. A `Stop`
-   entry of the same hook asks once when an order has landed unresolved or `RESUME.md` is behind
-   the ledger; it fires only after a reply that opens with your orchestrator marker, and is silent
+   entry of the same hook asks once when an order has landed unresolved, an implementer's notes wait for adjudication, or `RESUME.md` is
+   behind the ledger; it fires only after a reply that opens with your orchestrator marker, and is silent
    in a linked worktree. Nothing here triggers compaction: a hook or model cannot, and the hook
    reads no transcript.
 
@@ -645,11 +658,11 @@ investigation rather than a fix.
 
 ## Draining the loose ends
 
-`<home>/loose-ends.md` is the one place "not now" lives: every item that is not yet an order is one row there, and
-nothing else holds it. It exists so the current order stays on track, and it is only worth having if it is read. A
-row's State is one of five: `new` (written down, not looked at), `proposed: <kind>` (the drain proposed join,
-new-order, close, ask, park or read; its file in `<home>/drain/pending/` is the attachment), `parked: <trigger>`,
-`waiting: <question>` (needs the operator) or `declined: <reason>` (never proposed again). A row whose State cannot be
+`<home>/loose-ends.md` holds the loose ends, the last resort (the deferral rule above): a row and nothing else
+holds it, and it is only worth having if it is read and kept short. A row's State is one of four: `new` (written
+down, not looked at), `proposed: <kind>` (the drain proposed join, new-order, close, ask, park or read; its file in
+`<home>/drain/pending/` is the attachment), `waiting: <question>` (needs the operator) or `declined: <reason>` (never
+proposed again). `parked:` is retired: a trigger-wait is a parked work-order. A row whose State cannot be
 read is reported (`loose-ends-unparseable`) and never treated as `new`. A routed or closed item leaves the list and
 git keeps it: not on the list means routed. An item is one or two sentences; anything that needs evidence, a cause or
 a fix is a work-order, and a session plan is a RESUME entry. Work is never dispatched from the list. A repo with no
@@ -676,37 +689,39 @@ keeps it):
   naming them (`slice add`; a single-file order becomes a folder). Without `--slice` the order must already name
   every item id (an order you authored from the proposal, `origin: L3, L5`), else the accept refuses. The rows leave
   the list.
-- `drain accept ID --trigger T` parks (`parked: T`); `--question Q` (or an `ask` with no flag) sets `waiting: Q`;
-  `--reason R` closes. A `read` takes whichever of `--work-order`, `--trigger`, `--question`, `--reason` fits.
+- A `park` is accepted into a parked work-order you authored naming the items (`drain accept ID --work-order NNN`;
+  `--trigger` is refused); `--question Q` (or an `ask` with no flag) sets `waiting: Q`; `--reason R` closes. A `read`
+  takes whichever of `--work-order`, `--question`, `--reason` fits.
 - `drain decline ID --reason R --route WO-NNN|WO-NNN/SN|brain:<page>|closed:<why>` (you routed the items by hand:
   the rows leave) or `drain decline ID --reason R` (the rows read `declined: <reason>`, which the drain never
   proposes again; decide them by hand with `loose_ends.py drop`).
 - `drain withdraw ID` (the rows read `new` again and are asked again) or `drain defer ID` (nothing changes).
 
-Down, not configured, or off: the helper route (`references/system-one.md` -> *The drain without a local model*): `system_one.py drain <home> --export FILE`, run `system_one.py helper` and dispatch one helper on the model it prints with the brief there (exit 3 or an unavailable model: ask the operator once, with the harness's question UI, to pick from their harness's models and record it with `helper --set`; never guess or retry silently), then `system_one.py drain <home> --answers FILE`, and decide the proposals as above. You never answer the export yourself: if no helper can be dispatched, the drain waits (and down is still never raised to the operator). By hand (`loose_ends.py candidates` and your own reading, asking the same questions of the same table) is for a short list you are already reading.
-Decide each item. Apply. Commit. Report the line `loose_ends.py status --brief` prints: `loose ends: N new · N proposed · N parked · N waiting · N declined`.
+Down, not configured, or off: the helper route (`references/system-one.md` -> *The drain without a local model*): `system_one.py drain <home> --export FILE`, run `system_one.py helper` and dispatch one helper on the model it prints with the brief there (exit 3 or an unavailable model: ask the operator once, with the harness's question UI, to pick from their harness's models and record it with `helper --set`; never guess or retry silently), then `system_one.py drain <home> --answers FILE`, and decide the proposals as above. You never answer the export yourself: if no helper can be dispatched, the drain waits (and down is still never raised to the operator). The drain is the local model's or a helper's: never yours by hand, however short the list.
+Decide each item. Apply. Commit. Report the line `loose_ends.py status --brief` prints: `loose ends: N new · N proposed · N waiting · N declined`.
 
 **The join test.** An item joins an open order only when all three hold: (a) it is in files the order's next slice
 would change; (b) that slice is planned, not in flight; (c) it changes neither that slice's scope nor what counts as
 done. Code checks the slice is named: `drain accept ID --work-order NNN --slice NAME` writes the follow-up as its own
 `proposed` slice, so a running slice's scope never changes. (a) to (c) are yours: an item that fails any of them is a
-new order or stays on the list (parked, or `new`), never a join.
+new order, a parked order or stays on the list, never a join.
 
 **Who decides.** You adjudicate and apply, on your own: join an open order by the test above (a proposal whose
 header says `target in progress: <why>` means a worktree exists or the notes are started); bundle items into one new
-order; park with a named trigger (`loose_ends.py state L<n> "parked: <trigger>"`); move a lasting fact to the brain
+order; park it as a parked work-order with a named trigger (`drop L<n> --to WO-NNN`); move a lasting fact to the brain
 (`drop --to brain:<page>`). **The operator approves**, in one batch with the harness's question UI and never one by
 one mid-work: every close (`closed:<reason>`), superseded item and fold; anything about money, security or what users
 see; anything you are unsure of. **A question for the operator is a `waiting:` row**: accept an `ask` proposal (or
 `loose_ends.py state L<n> "waiting: <question>"`), raise the `waiting:` rows yourself, at each checkpoint, in one
-batch, then route each with the answer (`drop --to ...`, or `state` to `parked:`, `declined:` or `new`). The canary
+batch, then route each with the answer (`drop --to ...`, or `state` to `declined:` or `new`). The canary
 reports `drain-stale` when a pending proposal has been undecided longer than 14 days or more than 20 are pending:
 decide them before new work. Nothing is closed on silence, and nothing is done because it was proposed: a System One
 outcome is a proposal, and `drop` is always your own act.
 
 **One store, checked.** The canary gates `loose-ends-two-stores` when an item is on the list and also held by
 another store (a pile file while its row is not `proposed:`, an open carried box, an open hand-kept Parked row it
-was imported from, the retired `drain/routed.txt`), or a `proposed:` row has no pile file. A repo from before v57
+was imported from, a parked order whose `origin:` names it, the retired `drain/routed.txt`), or a `proposed:` row has
+no pile file. A retired `parked:` row is `loose-ends-migration` until the migration makes it a parked order. A repo from before v57
 gets `loose-ends-migration` (advisory) until `ledger_migrate.py <home> --write` moves its stores onto the list
 (`references/upgrade.md`).
 

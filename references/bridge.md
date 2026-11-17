@@ -76,7 +76,8 @@ so it must not be the one class the offer misses), **stamp** the synced version 
 `last_reconciled_engine`), **ADR + log**,
 and **report** the `git diff` (engine files + stamp + ADR only; profile and state untouched;
 layout unchanged). If the repo's stamp already equals the skill's `ENGINE_VERSION`, report
-"engine up to date (vN)" and stop — the whole BRIDGE is a no-op when nothing upstream changed.
+"engine up to date (vN)", run the one offer round (`upgrade.md` step 3, then 4q) and stop — the whole BRIDGE is a no-op
+when nothing upstream changed.
 
 ## The `_meta.bridge` pointer convention
 

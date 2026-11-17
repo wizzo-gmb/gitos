@@ -18,12 +18,12 @@ Role briefs: `{{HOME}}/roles/` | Brain: `{{HOME}}/brain/` | Handoff: `{{HOME}}/H
 
 ## Parked (deferred, with restart trigger)
 
-<!-- A view of the loose-ends list: each row whose State is `parked: <trigger>`, written by ledger_index.py.
-     Park an item there (`loose_ends.py state L<n> "parked: <trigger>"`); nobody types a row here. When the
-     trigger fires, route the row (`loose_ends.py drop L<n> --to WO-NNN`) or set it back to `new`. -->
+<!-- A view of the parked work-orders: each order file whose front matter says `status: parked` and
+     `trigger: <restart trigger>`, written by ledger_index.py; nobody types a row here. When the trigger
+     fires, open the order (remove `status: parked`, write its Proposed fix scope) or resolve it. -->
 
-| ID | Item | Restart trigger | Source | Added |
-|----|------|-----------------|--------|-------|
+| NNN | Title | Restart trigger | Evidence |
+|-----|-------|-----------------|----------|
 <!-- gitos:index parked -->
 <!-- /gitos:index -->
 

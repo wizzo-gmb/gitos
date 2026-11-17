@@ -23,7 +23,7 @@ groups worked well:
 - **Close or keep open:** work-orders whose builds are done and only a proof or a look is left.
 - **Decisions:** a choice you cannot make.
 - **Your actions:** things only the operator can do (an account, a purchase, a restart).
-- **Parked work:** `parked:` loose-end rows whose restart trigger has fired.
+- **Parked work:** parked work-orders (`status: parked`) whose restart trigger has fired.
 
 Each card shows a ref (the work-order or loose-end row), a plain title, a short "why" in the operator's
 terms, a "where" line pointing into the ledger, option buttons with your pick marked "recommended" (a

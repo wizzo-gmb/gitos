@@ -1,7 +1,8 @@
 # System One: an optional local decision model
 
 > **System One drains the loose-ends list and does nothing else. Down is a normal state (the GPU is in use); the
-> drain waits, or the orchestrator drains by hand. Never raise it to the operator as a problem.**
+> drain waits, or a dispatched helper drains it; the orchestrator never drains by hand.
+> Never raise it to the operator as a problem.**
 
 The loose-ends drain makes many small, repeated judgments (an item's state, which open order it joins, which items bundle).
 **System One** lets the drain ask a small local model a typed question instead of spending a
@@ -35,8 +36,7 @@ lens applies and judging a hunk are the orchestrator's own reading. `lenses` onl
 is a code rule on the paths a work-order names; neither asks a model.
 
 **Down is normal.** The operator's GPU is often busy, so the server is often down. The drain waits until it is back, or
-the orchestrator drains with a helper's answers (*The drain without a local model*), or by hand (`loose_ends.py candidates` and its own reading, asking the same questions of the
-same table). Report it once in the first-action line and never raise it to the operator as a problem.
+a dispatched helper answers the same questions of the same table (*The drain without a local model*) and the proposals are made through the same path. The orchestrator never drains by hand. Report it once in the first-action line and never raise it to the operator as a problem.
 
 ## Config
 
@@ -199,7 +199,8 @@ progress: <why>`; it is the same kind.
   `origin:` naming them (`slice.py add`, which turns a single-file order into a folder), and their rows leave the list.
   Without `--slice` the order must already name every item id (`origin: L3, L5` in an order authored from the
   proposal), else it refuses. (`--new-slice NAME` is the older spelling of `--slice`.)
-- `drain accept ID --trigger T` (a `park`) sets `parked: T`; `--question Q` (an `ask`; with no flag, the proposal's
+- A `park` is accepted with `--work-order NNN` into a parked work-order (`status: parked`, `trigger:`) that names
+  the items (`--trigger` is refused: `parked:` is retired); `--question Q` (an `ask`; with no flag, the proposal's
   question or the item text) sets `waiting: Q`; `--reason R` (a `close`, a few words) routes the rows `closed:`. A
   `read` takes whichever form fits. `--parked P<n>` is retired and refused.
 - `drain decline ID --reason R` sets the rows `declined: <reason>`, which the drain never proposes again (the
@@ -363,26 +364,49 @@ line if a server answers, else nothing, 2-second timeout). Then `system_one.py s
 `{"endpoint": "http://127.0.0.1:8765", "model": "qwen3.5-9b"}`. When the engine runs on
 Windows and the server in WSL2, WSL2 forwards `localhost`, so the loopback URL works unchanged.
 
-**Auto-start.**
+**Auto-start (templates).** The setup that runs a server on a Windows machine through WSL2 ships as templates under
+`assets/system-one/`. Each machine-specific value is a fill-in marker written `@@NAME@@`; fill every one and leave
+nothing else changed. No file holds a token, an address, a host or a user name, and a selftest gate keeps it so.
 
-- *Linux, or WSL2 with systemd enabled* (`systemd=true` under `[boot]` in `/etc/wsl.conf`): a user unit
-  `~/.config/systemd/user/system-one.service` with `ExecStart=%h/system-one/venv/bin/python
-  %h/system-one/serve_general.py models/qwen3.5-9b --host 0.0.0.0 --port 8765 --token-env SYSTEM_ONE_TOKEN --warmup`
-  (with `WorkingDirectory=%h/system-one`; drop `--host 0.0.0.0` and `--token-env` to serve loopback only), `Restart=on-failure`, and
-  `WantedBy=default.target`; then `systemctl --user enable --now system-one` and, on a plain Linux machine,
-  `loginctl enable-linger $USER` so it runs without a login. Put a token in the unit with
-  `EnvironmentFile=` pointing at a file only you can read, never in the unit text.
-- *WSL2 on Windows:* the distro stops when nothing uses it. Add a Task Scheduler task that runs at logon:
-  `wsl.exe -d <distro> -- sleep infinity`, which starts the distro (and with it the user unit) and keeps it up.
+| Marker | Fill in |
+|---|---|
+| `@@SYSTEM_ONE_DIR@@` | the folder that holds `serve_general.py` and the models (in the unit, `%h/system-one`) |
+| `@@VENV_PYTHON@@` | the Python of the environment from the steps above (`%h/system-one/venv/bin/python`) |
+| `@@MODEL_DIR@@`, `@@MODEL_NAME@@` | the checkpoint folder (relative to `@@SYSTEM_ONE_DIR@@`, or absolute) and the model's name |
+| `@@PORT@@` | the server's TCP port (8765 unless you chose another) |
+| `@@TOKEN_ENV_FILE@@` | the path of a file only you can read, holding one line `SYSTEM_ONE_TOKEN=<token>`; create it yourself, the templates only name its path |
+| `@@DISTRO@@` | the WSL distro, as `wsl -l` lists it |
+| `@@WINDOWS_USER@@` | the Windows logon user, as `COMPUTER\name` |
+| `@@SCRIPT_DIR@@` | a Windows folder to keep the port-forward refresh script in |
+| `@@LAN_REMOTE_ADDRESS@@` | who may connect: `LocalSubnet`, or the client addresses or CIDR |
 
-**Serving other machines.** On the serving machine start with `--host 0.0.0.0 --token-env SYSTEM_ONE_TOKEN`
-(or the address of one interface) and the variable set. In WSL2 the distro sits behind a virtual network, so
-forward the port from Windows: `netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=8765
-connectaddress=<WSL2 address> connectport=8765` (the WSL2 address changes on restart; re-run the command from
-the logon task), and add a firewall rule for inbound TCP 8765 whose remote address is limited to the local
-subnet. On each client list the server in `trusted_hosts` (exact host or CIDR), set `endpoint` to its URL, and
-set `key_env` to the NAME of a variable that holds the token on that client. Plain HTTP on a LAN is
-unencrypted: the token and the state text are visible to anyone on that network (see *Other machines*).
+- *Linux, or WSL2 with systemd enabled* (`systemd=true` under `[boot]` in `/etc/wsl.conf`):
+  `assets/system-one/system-one.service` is the user unit. Fill it and save it as
+  `~/.config/systemd/user/system-one.service`, then `systemctl --user enable --now system-one`, and on a plain Linux machine
+  `loginctl enable-linger $USER` so it runs without a login. It restarts on failure (see *A dead GPU is not hidden*).
+  For a loopback-only server delete the `EnvironmentFile=` line and the `--host` and `--token-env` options. The token
+  stays in the file `@@TOKEN_ENV_FILE@@` names, never in the unit text.
+- *WSL2 on Windows:* the distro stops when nothing uses it, and its address changes on every start. From an elevated
+  PowerShell, fill the block at the top of `assets/system-one/windows/setup-windows.ps1` and run it once, with
+  `refresh-portproxy.ps1` next to it. It registers two logon tasks (the first runs `wsl.exe -d <distro> -- sleep infinity`,
+  which starts the distro and with it the user unit and keeps it up; the second, elevated and delayed, runs
+  `refresh-portproxy.ps1`, which re-points the port forward at the distro's current address), adds the firewall rule and
+  refreshes the forward now. Skip the forward and the rule for a loopback-only server: WSL2 forwards `localhost`.
+
+**Serving other machines.** On the serving machine run the unit with `--host 0.0.0.0 --token-env SYSTEM_ONE_TOKEN` (or
+the address of one interface) and the variable set (the template does). In WSL2 the distro sits behind a virtual
+network; `setup-windows.ps1` forwards the port from Windows (`netsh interface portproxy add v4tov4`, re-run by the logon
+task) and adds an inbound TCP rule limited to `@@LAN_REMOTE_ADDRESS@@`; use the local subnet, not `Any`. On each client list the
+server in `trusted_hosts` (exact host or CIDR), set `endpoint` to its URL, and set `key_env` to the NAME of a variable
+that holds the token on that client. Plain HTTP on a LAN is unencrypted: the token and the state text are visible to anyone
+on that network (see *Other machines*).
+
+**The `causal_conv1d` log line.** Starting a Qwen3.5 model, `transformers` logs ``causal_conv1d_fn is falling back to
+its reference PyTorch implementation because causal_conv1d is not installed. This is correct but much slower``. It comes from
+the model's own linear-attention layers inside `transformers`, not from this engine or from `serve_general.py`, which never
+names the package. It is a speed note, not an error, and every answer is correct without it. The package is optional and
+compiles a CUDA kernel, so it needs the CUDA toolchain in the model environment; installing it is a choice for that
+environment (the install is not a step here, and no speed-up is claimed: measure latency on your own card).
 
 **Windows settings when the GPU also drives a display.** A long job on the card can make Windows reset the
 driver and the server die with a CUDA error. Raise the timeout: registry `HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers`,

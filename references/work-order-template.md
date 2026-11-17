@@ -13,6 +13,12 @@ INDEX's Open row. With none, the row is built from the H1 and the first word of 
 reads `—`. At resolution the orchestrator adds `summary`, `released` (the engine version; the older key `landed` still reads) and `result` (the selftest
 line), and `ledger_index.py` writes the Resolved row.
 
+**A parked work-order** is deferred work that waits on a named event: an ordinary order file in `work-orders/`
+whose front matter adds `status: parked` and `trigger: <restart trigger>` (and `origin: L<n>` when it took items).
+`ledger_index.py` writes it into the INDEX `## Parked` table instead of Open; the canary gates one with no trigger
+(`parked-no-trigger`), and `loose_ends.py status` lists one whose trigger names a resolved order or a passed date.
+When the trigger fires, remove `status: parked` and write its Proposed fix scope.
+
 Legacy homes carry the same file as `outputs/debug/bug_<NNN>_<slug>.md`; that path still reads
 correctly and needs no retrofit. New work-orders use the `<home>/work-orders/` convention above.
 
@@ -297,7 +303,8 @@ how work is dispatched; rejected notes are discarded with a reason — so be hon
 Everything here is **proposed**, never self-executed: surface follow-ups and out-of-scope
 observations, and the orchestrator decides and acts on them.
 
-- **Deviations** — where you departed from the Proposed fix scope, and why.
+- **Deviations** — where you departed from the Proposed fix scope, and why; every finding you fixed in this
+  order because it sat within its scope of work.
 - **Surprises** — anything that contradicted the work-order's assumptions (the code wasn't where it
   said; a guard already existed; the fix revealed a second issue).
 - **Durable facts** — reasons, limits, rules and traps a later change must know (why something is
@@ -306,8 +313,9 @@ observations, and the orchestrator decides and acts on them.
   candidates.
 - **Process notes** — anything about HOW the work went that could improve future dispatch (an
   under- or over-scoped work-order, a missing precondition, a faster path).
-- **Follow-ups** — work this surfaced that should become its own work-order (name it; do NOT fix it
-  here).
+- **Follow-ups** — only what is clearly out of this order's scope or would cross into a new scope (a
+  different subsystem, a design or operator decision, a file another in-flight order owns), each with that reason
+  in one line. Anything within scope is fixed here, not listed; nothing is dropped.
 
 Write the notes **under these five labels** (a bold or heading label above a run of bullets, or a
 label at the start of a bullet); the labels help the orchestrator read them. One top-level bullet per
@@ -325,9 +333,11 @@ follow-up, each ending in exactly one destination:
 - `→ WO-NNN/SN` — becomes (or already is) that slice of a folder order;
 - `→ brain: <page>` — a durable fact, upserted to that brain page;
 - `→ rejected: <one-line reason>` — discarded;
-- `→ L<n>` — deferred to the loose-ends list (`<home>/loose-ends.md`): a `parked: <trigger>` row when a restart
-  trigger is named, else a `new` row drained with the rest. (`→ P<n>`, the INDEX Parked row, is retired: in an open
-  order the canary still checks it against the rows imported from Parked.)
+- `→ L<n>` — the last resort: a loose end (`<home>/loose-ends.md`) that passes the five tests (glossary *Loose
+  end*). Deferred work that waits on a trigger is `→ WO-NNN`, a parked work-order. (`→ P<n>`, the INDEX Parked row,
+  is retired: in an open order the canary still checks it against the rows imported from Parked.)
+
+A deferred point without its out-of-scope reason is `→ rejected:` and goes back into this order as a revision.
 
 The canary's `loose-ends` category reads it: a resolved order (engine v44 or later) with notes
 and no block is `order-notes-unadjudicated` (any content other than a "nothing notable" answer counts,

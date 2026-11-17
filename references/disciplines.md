@@ -22,6 +22,7 @@ For each: what the rule is, the failure it prevents, where it tends to bite hard
 | (l) | Name-the-clock | Every time value says which clock it is on. |
 | (m) | Evidence-or-name-the-gap | Ship one field short with the gap named; never fill it with something plausible. |
 | (n) | A-rule-needs-a-mechanism | A rule with no enforcement where it must hold is a wish. |
+| (o) | Finish-what-you-find | Fix what you find within the order's scope; defer only what is out of it; drop nothing. |
 
 ---
 
@@ -230,3 +231,19 @@ A disproof records the conditions it was tested under (data, versions, environme
 **Software instance:** Implementers were told to describe a pattern's shape in shipped text, never its source. One still wrote seven private repository names into comments in a shipped file, and a person caught it by eye. The publish step now scans the shipped files against a private list and halts on any hit.
 
 **Quant instance:** A rule that the hold-out be read once, under a pre-registered protocol, held only after the read harness refused to run unless the pre-registration page existed, was accepted, and its frozen values matched the code's constants, with a second explicit confirmation required to spend the read.
+
+---
+
+## (o) Finish-what-you-find
+
+**The rule:** A finding made while working an order is fixed in that order when it sits within the order's scope of work, however many lines it takes, and is covered by the order's checks. Defer only what is clearly out of the order's scope or would cross into a new scope (another subsystem, a design or operator decision, a file another in-flight order owns), and say which. Nothing is dropped.
+
+**The failure it prevents:** The self-feeding backlog. Each deferred finding later pays a full cycle (dispatch, setup, the full check run, review, merge), each cycle finds more, and the project ends up servicing its own list instead of its work.
+
+**Where it bites:** Scope rules read as "touch nothing unnamed", deferral rules that make writing it down easier than fixing it, and lists that accept any "not now" without a reason.
+
+**How to apply it:** Fix it, list it under the order's deviations, and let the reviewer review it like scope. A deferral carries its out-of-scope reason; one without it goes back into the order. The deferral forms are all last resorts, in order: a new order (out of scope and it matters), a parked order (out of scope and waits on a named event), a loose end (the rarest: a known small fix that passes the five tests). Mechanism: the list refuses a row without its fix and its reason, and the canary says when the list grows past a handful of rows or holds an old one.
+
+**Software instance:** Several one-line fixes found during an engine change were each written down as follow-ups, and each cost a full dispatch, review and release cycle of its own, longer than the fix.
+
+**Quant instance:** A backtest run exposes a mislabelled column in the data loader it already reads. Fixing the label in the same change and adding it to the run's checks costs minutes; filing it means the next study runs on the same mislabel.

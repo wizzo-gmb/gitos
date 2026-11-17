@@ -1525,19 +1525,22 @@ def drain_accept(home, pid: str, work_order: "str | None" = None, trigger: "str 
     `join` / `new-order` (and a `read` or `ask` given `--work-order`): the open order WO-NNN takes the items. With
     `--slice NAME` they become a `proposed` slice with `origin:` naming them (`slice add`, which turns a single-file
     order into the folder form); without it the order must already name every item id (an order authored from the
-    proposal, `origin: L3, L5`). The rows leave the list. `park` -> `parked: <--trigger>`; `ask` -> `waiting:
+    proposal, `origin: L3, L5`). The rows leave the list. `park` -> a parked work-order (`status: parked`, `trigger:`)
+    takes them with `--work-order NNN`, as a `new-order` (`--trigger` is refused: `parked:` is retired); `ask` -> `waiting:
     <--question, else the proposal's question>`; `close` -> routed `closed: <--reason>`. A `read` takes any one of
     `--work-order`, `--trigger`, `--question`, `--reason`."""
     home = Path(home)
     m = _pending(home, pid)
     if parked:
-        raise ValueError("--parked P<n> is retired: a parked item is a loose-end row; accept with --trigger T")
+        raise ValueError("--parked P<n> is retired: a parked item is a parked work-order; accept with --work-order NNN")
     kind = m["kind"]
+    if kind == "park" and work_order:
+        kind = "new-order"                         # a parked work-order (WO-116) takes the items
     if kind in ("read", "ask"):
         kind = ("new-order" if work_order else "park" if trigger else "close" if reason else
                 "ask" if (question or kind == "ask") else None)
         if kind is None:
-            raise ValueError("a read proposal is accepted with --work-order NNN, --trigger T, --question Q or --reason R")
+            raise ValueError("a read proposal is accepted with --work-order NNN, --question Q or --reason R")
     listing = {n: r for n, _p, r in _wo_listing(home, _canary())}
 
     def require_open(nnn: str) -> None:
@@ -1571,11 +1574,9 @@ def drain_accept(home, pid: str, work_order: "str | None" = None, trigger: "str 
         return _drain_dispose(home, m, route=f"WO-{nnn}")
     le = _loose_ends()
     if kind == "park":
-        try:
-            st = le._state_text(f"parked: {trigger or ''}")
-        except le.LooseEndsError:
-            raise ValueError("a park proposal is accepted with --trigger T (the event that restarts it)")
-        return _drain_dispose(home, m, state=st)
+        raise ValueError("a park proposal is accepted with --work-order NNN: `parked:` is retired, a parked item is "
+                         "a parked work-order (front matter `status: parked`, `trigger: <restart trigger>`, `origin:` "
+                         "naming the items); author it first, nothing was changed")
     if kind == "ask":
         st = le._state_text(f"waiting: {question or _ask_question(m)}")
         return _drain_dispose(home, m, state=st)
@@ -1655,7 +1656,7 @@ def _drain_cli(args) -> int:
             return 0
         if act is None:
             if len(rest) != 1:
-                print("drain: usage: drain <home> | accept ID (--work-order NNN [--slice NAME] | --trigger T | --question Q "
+                print("drain: usage: drain <home> | accept ID (--work-order NNN [--slice NAME] | --question Q "
                       "| --reason R) [ROOT] | decline ID --reason R [--route DEST] [ROOT] | withdraw ID [ROOT] | defer ID [ROOT] "
                       "| status [ROOT]", file=sys.stderr)
                 return 2
@@ -2657,7 +2658,7 @@ def main(argv: "list | None" = None) -> int:
                                       "<home>/drain/pending/ (the one command that writes in the home); "
                                       "also: accept ID | decline ID | withdraw ID | defer ID | status")
     dr.add_argument("rest", nargs=argparse.REMAINDER,
-                    help="<home>; or accept ID --work-order NNN [--slice NAME] | --trigger T | --question Q | --reason R [ROOT]; "
+                    help="<home>; or accept ID --work-order NNN [--slice NAME] | --question Q | --reason R [ROOT]; "
                          "decline ID --reason R [--route DEST] [ROOT]; withdraw ID [ROOT]; defer ID [ROOT]; status [ROOT]")
     dr.add_argument("--json", action="store_true")
     dr.add_argument("--fresh", action="store_true", help="ask every item again; skip the cache")

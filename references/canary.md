@@ -35,7 +35,7 @@ worktree: `new NNN` makes `<parent>/<repo name>.worktrees/wo-NNN` (outside the r
 `reap NNN` / `reap --merged` removes a merged, clean one (merged into HEAD, the default branch or a declared integration branch; git's own refusals are the safety; never
 `--force` or `unlock`), `status` classes each as in flight / reapable / abandoned / dirty. The
 canary reports `worktree-reapable` and `worktree-abandoned` leftovers; it never deletes.
-The `loose-ends` category (report-only) flags Parked rows with no trigger, resolved orders whose notes were never adjudicated, and a malformed, oversized or stale loose-ends list. That list (`<home>/loose-ends.md`, created by the first `scripts/loose_ends.py add`) is the inbox for small items that came up and were not acted on; the drain ("drain the loose ends") empties it, moving each proposed item to the pile (`<home>/drain/pending/`), and nothing leaves the list or the pile without the orchestrator's or the operator's decision. A pending proposal undecided for 14 days, or more than 20 pending, is `drain-stale`. An item accepted into an order is a box in its `## Carried loose ends` (`drain accept ID --work-order NNN --slice NAME` writes it; a resolved order with an open box is `carried-open`).
+The `loose-ends` category (report-only) flags a parked work-order with no `trigger:`, a list that is no longer rare (advisory `loose-ends-last-resort`: more than 3 open rows or one older than 14 days), resolved orders whose notes were never adjudicated, and a malformed, oversized or stale loose-ends list. That list (`<home>/loose-ends.md`, created by the first `scripts/loose_ends.py add`) holds the loose ends, the last resort for a finding that is out of an order's scope; the drain ("drain the loose ends") empties it, moving each proposed item to the pile (`<home>/drain/pending/`), and nothing leaves the list or the pile without the orchestrator's or the operator's decision. A pending proposal undecided for 14 days, or more than 20 pending, is `drain-stale`. An item accepted into an order is a `proposed` slice with `origin:` naming it (`drain accept ID --work-order NNN --slice NAME`); a resolved order still holding an old open carried box is `carried-open`.
 
 ## Category descoping
 
@@ -78,7 +78,7 @@ A `SessionStart` hook matched on `compact|clear` (`scripts/compact_restore.py`, 
 `upgrade`) restores state after every compaction and every `/clear`: the marker line, `RESUME.md` with
 its freshness, live facts (branch, worktrees, open orders), the standing-rules pointer, a per-session
 compaction count (compaction only) and this repo's federation heartbeat. A `Stop` entry of the same hook
-asks once when a work-order has landed unresolved or `RESUME.md` is behind the ledger, and only after an
+asks once when a work-order has landed unresolved, an implementer's notes wait for adjudication, or `RESUME.md` is behind the ledger, and only after an
 orchestrator-marked reply. Claude Code only, and hooks can be switched off (`disableAllHooks`), so it is
 a guardrail, not a proof.
 

@@ -1,8 +1,8 @@
 """Restore working state after a compaction or a `/clear`, and back-stop a missed resolution.
 
 Two hooks in one file, one entry: `SessionStart` matched on `compact|clear` restores, and `Stop`
-asks once when a work-order has landed unresolved or RESUME is behind the ledger (see
-`stop_output`). The text below describes the restore half.
+asks once when a work-order has landed unresolved, an implementer's notes wait for adjudication, or RESUME
+is behind the ledger (see `stop_output`). The text below describes the restore half.
 
 See references/roles/orchestrator.md, *Rotation triggers*. Compaction summarizes the conversation
 and everything a hook added earlier, so the state the engine depends on (the live resume, the
@@ -377,7 +377,8 @@ ORCHESTRATOR_MARKER_RE = re.compile(r"\[gitos[^A-Za-z0-9\]]{1,8}orchestrator\b",
 
 
 def stop_state(home, canary):
-    """The unresolved-state findings for a home. -> (state key, instruction) or None."""
+    """The unresolved-state findings for a home. -> (state key, instruction) or None. Four sources: an order landed
+    and still open, RESUME.md behind the ledger, notes waiting for adjudication, a reapable worktree."""
     keys, asks = [], []
     for item in canary.landed_unresolved(home):
         keys.append(f"landed:{item['wo']}")
@@ -387,6 +388,16 @@ def stop_state(home, canary):
         keys.append(f"stale:{stale['newer']}@{stale.get('newer_mtime', 0)}")
         asks.append(f"RESUME.md is older than {stale['newer']}")
     resolve_asks = list(asks)
+    # An implementer's report that landed: Implementer notes filled, no adjudication yet (the canary's own test).
+    # An advisory line only; a check that cannot look says nothing.
+    try:
+        waiting = [f["wo"] for f in canary.open_notes_waiting(home)]
+    except Exception:
+        waiting = []
+    if waiting:
+        shown = ", ".join(waiting[:3]) + (f" and {len(waiting) - 3} more" if len(waiting) > 3 else "")
+        keys.append("notes:" + ",".join(waiting))
+        asks.append(f"{shown} {'has' if len(waiting) == 1 else 'have'} notes waiting for adjudication")
     # A reapable worktree that is still on disk. Branch-only leftovers are the canary's to report
     # (it also covers abandoned ones, which need the operator and are never raised here).
     reap = []
@@ -402,6 +413,8 @@ def stop_state(home, canary):
     if resolve_asks:
         tail.append("finish the resolution now: move the order to work-orders/resolved/, update its "
                     "INDEX row, replace RESUME.md wholesale, then run canary.py")
+    if waiting:
+        tail.append("adjudicate each note point now, in this turn (ACCEPT, DEFER or REJECT, then route it)")
     if reap:
         target = reap[0]["wo"].replace("WO-", "") if len(reap) == 1 and reap[0]["wo"] else "--merged"
         tail.append(f"reap {'it' if len(reap) == 1 else 'them'} with "

@@ -44,8 +44,13 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    matches this work-order, read it and apply its guidance **within this role's boundary**
    (see SKILL.md → *Lenses*). A lens may inform **how** you edit; it never widens scope beyond the
    work-order's Proposed fix scope.
-2. **Edit only what the Proposed fix scope names.** Different sections of one named file is fine;
-   files the work-order did not name are not — even an "obvious" adjacent fix.
+2. **Edit what the Proposed fix scope names, and finish what you find in it.** A finding you make while working
+   the order is **fixed in this order** when it sits within the order's scope of work, even when it takes more than
+   a few lines: list it under *Deviations* and cover it with the order's checks (add a check where one is needed).
+   **Defer only what is clearly out of the order's scope, or would cross into a new scope** (a different
+   subsystem, a design decision, the operator's decision, or a file another in-flight order owns), and say which in
+   one line under *Follow-ups*; the orchestrator rejects a deferral without that line and hands the item back as
+   scope. Nothing is dropped. An out-of-scope edit you did not list is a defect.
    **A follow-up routed into your slice is part of your scope:** a slice whose `origin:` names loose-end items lands
    them; say in the notes which you closed and which you did not.
    **Disciplines at the step they apply** (`references/disciplines.md`): (a) a gate or check you add or change
@@ -72,14 +77,15 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
 ## Role boundary
 
 The boundary is **specified-vs-self-designed**: you may edit any file — including operator
-directives — **iff the work-order specifies that edit**; never by your own design. An approved
+directives — **iff the work-order specifies that edit**, or it fixes a finding within the order's scope that
+you list under *Deviations*; never by your own design. An approved
 plan you authored is **not** a substitute for the work-order's spec.
 
 | You DO | You DO NOT |
 |---|---|
-| Edit exactly the files the work-order's Proposed fix scope names | Touch files the work-order didn't name — even an "obvious" adjacent fix |
+| Edit the files the scope names; fix what you find within the order's scope and list it under Deviations | Make an out-of-scope edit you do not list, or cross into a new scope (another subsystem, a design or operator decision, a file another open order owns) |
 | Land the specified change; make it correct and complete | Self-direct INDEX lifecycle, brain edits, VERSION/CHANGELOG, or other work-orders |
-| *Propose* follow-ups + out-of-scope observations in Implementer notes | *Execute* those follow-ups — proposing ≠ doing; the orchestrator decides |
+| *Propose* follow-ups for what is out of scope, each with its one-line reason | Defer what is in scope, or drop a finding — nothing is dropped |
 | Report deviations / surprises honestly for adjudication | Run shared-state-mutating scripts (deploys / migrations / data regen) — operator's |
 | Treat the Proposed fix scope as a hard boundary | Mark your own landing "done" — a separate reviewer + the orchestrator verify it |
 
@@ -99,7 +105,8 @@ this mechanically, but it can only catch names someone already knew to list.
 - **The work-order is your contract.** Its **Proposed fix scope** is the boundary; its
   **Implementer notes** section is your only write-back channel.
 - **Your notes are adjudicated, not auto-trusted.** The orchestrator ACCEPTs (→ brain / dispatch
-  change / new work-order), DEFERs (→ a `parked:` or `new` loose-end row) or REJECTs each note. Every code edit thus traces to a specified
+  change / new work-order), DEFERs (→ a new or parked work-order; a loose end only as the last resort) or REJECTs
+  each note; a follow-up that is in scope goes back to you as a revision. Every code edit thus traces to a
   work-order — the find/fix separation, completed from the implementer side.
 
 ## Reference index

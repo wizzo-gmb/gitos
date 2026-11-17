@@ -10,9 +10,11 @@ It is idempotent: run again after a crash, or after `--write`, it finds what is 
 
   * a pending drain proposal (`drain/pending/<id>.md`) stays as the attachment; each item it holds gets its row back
     (own id, Added, Source, text) as `proposed: <kind>`, or a `new` row it holds becomes `proposed: <kind>`;
-  * an open hand-kept INDEX Parked row (`P<n>`, no `->` in it) becomes a row `parked: <trigger>` with Source
-    `import:P<n>`; a closed one (`-> WO-NNN`, `-> dropped ...`) is routed and goes; the section becomes the generated
-    region `<!-- gitos:index parked -->` (`ledger_index.py` writes it from the list);
+  * a `parked: <trigger>` row (retired by WO-116) becomes a parked work-order: a new order file with front matter
+    `status: parked`, `trigger: <trigger>` and `origin: L<n>`, and the row leaves the list;
+  * an open hand-kept INDEX Parked row (`P<n>`, no `->` in it) becomes a parked work-order the same way
+    (`origin: P<n>`); a closed one (`-> WO-NNN`, `-> dropped ...`) is routed and goes; the section becomes the
+    generated region `<!-- gitos:index parked -->` (`ledger_index.py` writes it from the parked orders);
   * an open carried box (`- [ ] L<n> (slice: ..) ..`) of an open order goes back on the list as `new` (own id) and
     the box is ticked `-> L<n>`;
   * `drain/declined/`, `drain/accepted/` and `drain/routed.txt` are removed: a declined item is already a
@@ -290,6 +292,19 @@ def _shorten(text: str, n: int = 300) -> str:
     return s if len(s) <= n else s[:n - 3].rstrip() + "..."
 
 
+def _parked_order(nnn: str, item: str, trigger: str, origin: str, evidence: str) -> tuple:
+    """(file name, text) of a parked work-order made from a retired parked item (WO-116)."""
+    item = " ".join(item.split())
+    title = _shorten(item, 90).replace("[", "(").replace("]", ")")
+    slug = "-".join(re.findall(r"[a-z0-9]+", title.lower())[:6]) or "parked"
+    text = (f"---\nstatus: parked\ntrigger: {' '.join(trigger.split())}\nseverity: low\ntitle: {title}\n"
+            f"evidence: {evidence}\norigin: {origin}\n---\n# WO-{nnn} — {title}\n\n## Severity\n\n"
+            f"low — parked until its trigger fires.\n\n## Objective\n\n{item}\n\n## Proposed fix scope\n\n"
+            "Written when the trigger fires and the order is opened (remove `status: parked`).\n\n"
+            "## Implementer notes\n")
+    return f"WO-{nnn}-{slug}.md", text
+
+
 def migrate_not_now(home: Path, write: bool, out=print) -> int:
     """The WO-115 moves (see the module docstring). -> how many moves were found."""
     le, cn, s1 = _load("loose_ends"), _load("canary"), _load("system_one")
@@ -332,7 +347,18 @@ def migrate_not_now(home: Path, write: bool, out=print) -> int:
     idx = home / "INDEX.md"
     idx_text = _read(idx) if idx.is_file() else ""
     imported = {r["source"][len("import:"):] for r in rows.values() if r["source"].startswith("import:P")}
-    parked_new, parked_left = [], []
+    origins = {o: nnn for nnn, meta in cn.parked_orders(home) for o in re.findall(r"\b[LP]\d+\b", meta.get("origin", ""))}
+    parked_new, parked_left, parked_gone = [], [], []
+    # 2a. the retired `parked:` rows (WO-116)
+    for lid, r in rows.items():
+        if state[lid] != "parked":
+            continue
+        if lid in origins:
+            say(f"{lid} `parked:` is already held by the parked order WO-{origins[lid]}: the row goes")
+        else:
+            parked_new.append((lid, r["item"], le.parse_state(r["state"])[1],
+                               f"loose end {lid} ({r['source']}), added {r['added']}"))
+        parked_gone.append(lid)
     block = cn.section_lines(idx_text, cn.PARKED_HEADING) if idx_text else None
     for row in (cn._table_rows(block) or []) if block is not None else []:
         pid = cn.clean_cell(row[0]) if row else ""
@@ -350,11 +376,21 @@ def migrate_not_now(home: Path, write: bool, out=print) -> int:
             out(f"not-now: LEFT Parked {pid}: no item or no restart trigger; name one, then run again")
             continue
         when = re.search(r"\d{4}-\d\d-\d\d", cn.clean_cell(row[4]) if len(row) > 4 else "")
-        parked_new.append((f"import:{pid}", item, when.group(0) if when else "", f"parked: {trig}"))
-        say(f"Parked {pid} -> a list row `parked: {trig[:60]}{'...' if len(trig) > 60 else ''}`")
-    region = idx_text and "<!-- gitos:index parked -->" not in idx_text and block is not None and not parked_left
+        if pid in origins:
+            continue
+        when = when.group(0) if when else ""
+        parked_new.append((pid, item, trig, f"INDEX Parked {pid}" + (f", parked {when}" if when else "")))
+    nums = [int(n) for d in (home / "work-orders", home / "work-orders" / "resolved") for n in cn._wo_files(d)[0]]
+    made = []
+    for k, (origin, item, trig, evidence) in enumerate(parked_new):
+        name, text = _parked_order(f"{max(nums + [0]) + 1 + k:03d}", item, trig, origin, evidence)
+        made.append((name, text))
+        say(f"{'Parked ' if origin.startswith('P') else ''}{origin} -> a parked order work-orders/{name} "
+            f"(trigger: {trig[:60]}{'...' if len(trig) > 60 else ''})")
+    region = idx_text and block is not None and not parked_left and (
+        "<!-- gitos:index parked -->" not in idx_text or "| ID | Item | Restart trigger |" in idx_text)
     if region:
-        say("INDEX Parked section -> the generated region `<!-- gitos:index parked -->` (a view of the list)")
+        say("INDEX Parked section -> the generated region `<!-- gitos:index parked -->` (a view of the parked orders)")
     # 3. carried boxes of open orders
     boxes = []
     wod = home / "work-orders"
@@ -401,13 +437,18 @@ def migrate_not_now(home: Path, write: bool, out=print) -> int:
             say(f"{f.relative_to(home).as_posix()}: front matter `landed:` -> `released:`")
     if not write or not moves:
         return moves
-    # write: the list first (the authority), then the stores that copied it
-    if back or parked_new or [b for _f, b in boxes if b["id"] not in rows]:
+    # write: the list first (the authority), then the stores that copied it; a parked order before its row leaves
+    if back or [b for _f, b in boxes if b["id"] not in rows]:
         le.insert_rows(home, back + [(b["id"], "", "WO-" + re.search(r"(\d{3})", f.parent.name if f.name == "order.md" else f.name).group(1),
                                       _shorten(b["text"]), "new") for f, b in boxes if b["id"] not in rows])
-        if parked_new:
-            text = le._text_or_template(home)
-            le._write(home, le._append_rows(text, [(s, i, a, st) for s, i, a, st in parked_new]))
+    for name, text in made:
+        dest = wod / name
+        dest.write_bytes(text.encode("utf-8"))
+        top = (_git(wod, "rev-parse", "--show-toplevel") or "").strip()
+        if top:
+            _git(top, "add", "--", str(dest))
+    if parked_gone:
+        le.remove_rows(home, parked_gone)
     if marks:
         le.set_states(home, marks)
     for f in sorted({f for f, _b in boxes}):

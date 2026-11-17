@@ -2,30 +2,32 @@
 """loose_ends.py - the loose-ends list every repo has (WO-093). Standard library only.
 
 `<home>/loose-ends.md` is a tracked table of small things that came up while other work was going
-on: written down in the turn they come up, drained at the seams. It is never a work queue or a
-notebook: an item is one or two sentences (at most MAX_ITEM characters); anything that needs
-evidence, a cause, a fix or its own worker is a work-order, and a session plan belongs in the
-resume file. Work is never dispatched from the list (an item is first dropped `--to WO-NNN`).
+on. A loose end is the last resort (WO-116): a finding is fixed in the order that found it; only one clearly out of
+that order's scope, or crossing into a new scope, is deferred, as a work-order, a parked work-order (`status:
+parked`, `trigger:`) or, rarest, a row here that passes the five tests (concrete, a known small fix,
+self-contained, not owned, a reason it cannot be done now). Nothing is dropped. `add` stores the fix and the
+out-of-scope reason in the row (`<item> · fix: <fix> · not now: <why>`, at most MAX_ITEM characters). Work is never dispatched from the list (an item is first dropped `--to WO-NNN`).
 
     | ID | Added | Source | Item | State |
 
 `ID` is `L<n>`, never reused (the next id lives in `<!-- next: L<n> -->` under the table).
 `Source` is `WO-NNN`, `P<n>`, `chat`, `proposal:<id>` or `import:<old id>`. The list is the one place "not now"
-lives (WO-115); a row's State is one of five:
+lives (WO-115); a row's State is one of four:
 
     new                   written down, not looked at (the drain asks only these)
     proposed: <kind>      the drain proposed join | new-order | close | ask | park | read; the pile file
                           `<home>/drain/pending/<id>.md` is its attachment (what the model saw), not its home
-    parked: <trigger>     waiting on a named restart trigger (the INDEX Parked table is a view of these rows)
     waiting: <question>   needs the operator
     declined: <reason>    looked at and refused; never proposed again
 
-A row whose State is none of these is reported, never read as `new`. An item that is routed or closed is REMOVED
+`parked: <trigger>` is retired (WO-116): deferred work with a restart trigger is a parked work-order, and
+`ledger_migrate.py` turns an old `parked:` row into one. A row whose State is none of these is reported, never
+read as `new`. An item that is routed or closed is REMOVED
 (git keeps it): not on the list means routed. One routing grammar, the adjudication arrows:
 `WO-NNN | WO-NNN/SN | brain:<page> | closed:<reason>`.
 
-    loose_ends.py add        [--root R] --source S --item TEXT [--state STATE]
-    loose_ends.py state      [--root R] L<n> STATE      (new, parked: T, waiting: Q or declined: R)
+    loose_ends.py add        [--root R] --source S --item TEXT --fix CHANGE --why-not-now REASON [--state STATE]
+    loose_ends.py state      [--root R] L<n> STATE      (new, waiting: Q or declined: R)
     loose_ends.py drop       [--root R] L<n> --to WO-NNN | WO-NNN/SN | brain:<page> | closed:<reason>
     loose_ends.py list       [--root R] [--json]
     loose_ends.py status     [--brief] [ROOT]     (one line: the rows by state; then everything waiting on you: waiting.py)
@@ -73,7 +75,7 @@ PICK_OPTIONS = 26                 # open orders offered to the title pick (the b
 PICK_TOP = 2                      # orders the pick adds to an item's candidates
 JOIN_MIN_COVER = 0.0              # share of the item's words an order must hold when nothing is shared; none
 DEST_RE = re.compile(r"(?:WO-(\d{3,})(?:/S(\d+))?|brain:\s*(\S.*)|closed:\s*(\S.*))")
-SETTABLE = {"new": "", "parked": "trigger", "waiting": "question", "declined": "reason"}   # `proposed:` is the drain's
+SETTABLE = {"new": "", "waiting": "question", "declined": "reason"}   # `proposed:` is the drain's
 DONE_CELL_RE = re.compile(r"^[\s*_`~>\-]*(?:done|fixed|closed|merged|superseded|resolved)\b", re.IGNORECASE)
 UNESC_PIPE = re.compile(r"(?<!\\)\|")
 TOO_LONG = ("this is a work-order or a RESUME entry, not a loose end: author one, or shorten it "
@@ -274,7 +276,28 @@ def _append_rows(text: str, new_rows: list) -> str:
 
 
 # ------------------------------------------------------------------ operations
-def add(home, source: str, item: str, state: "str | None" = None) -> str:
+PARKED_RETIRED = ("`parked:` is retired: deferred work with a restart trigger is a parked work-order (an order file "
+                  "with front matter `status: parked` and `trigger: <restart trigger>`); author one, then "
+                  "`drop L<n> --to WO-NNN`")
+
+
+def specified(item: str, fix: str, why_not_now: str) -> str:
+    """The Item cell of a loose end: the item, its known fix and why it cannot be done now. A LooseEndsError when
+    the fix or the reason is missing or a word or two: a row that cannot say both is not a loose end."""
+    for flag, text in (("--fix", fix), ("--why-not-now", why_not_now)):
+        if len(" ".join(str(text or "").split()).split()) < 3:
+            raise LooseEndsError(f"{flag} is required (a few words): a loose end is the last resort and names its "
+                                 "known small fix and why it is out of the order's scope or crosses into a new "
+                                 "scope; otherwise fix it in the order")
+    return f"{' '.join(str(item).split())} · fix: {' '.join(fix.split())} · not now: {' '.join(why_not_now.split())}"
+
+
+def add(home, source: str, item: str, state: "str | None" = None, fix: "str | None" = None,
+        why_not_now: "str | None" = None) -> str:
+    """Append a row. With `fix` or `why_not_now` both are required and stored in the Item cell (`specified`); the
+    CLI always passes both. Without either it is the internal path (the import and tests write bare items)."""
+    if fix is not None or why_not_now is not None:
+        item = specified(item, fix, why_not_now)
     src, it = _source(source), _item(item)
     st = _state_text(state) if state else STATE_NEW
     text = _text_or_template(home)
@@ -324,10 +347,10 @@ def _state_text(state: str) -> str:
     s = " ".join(str(state).split())
     st = parse_state(s)
     if st is None or st[0] not in SETTABLE:
-        raise LooseEndsError(f"State {s!r} is not one of: new, parked: <trigger>, waiting: <question>, "
+        if s.startswith("parked"):
+            raise LooseEndsError(PARKED_RETIRED)
+        raise LooseEndsError(f"State {s!r} is not one of: new, waiting: <question>, "
                              "declined: <reason> (`proposed:` is written by the drain)")
-    if st[0] == "parked" and _canary().PLACEHOLDER_TRIGGER_RE.fullmatch(st[1]):
-        raise LooseEndsError("parked: needs a restart trigger (the event that restarts it)")
     return s
 
 
@@ -382,7 +405,7 @@ def set_states(home, states: dict) -> list:
 
 
 def set_state(home, lid: str, state: str) -> str:
-    """The `state` command: a row to `new`, `parked: T`, `waiting: Q` or `declined: R`. The row is written first,
+    """The `state` command: a row to `new`, `waiting: Q` or `declined: R`. The row is written first,
     then any pile file holding it is released, so a crash leaves a pile file beside a row that is not `proposed:`
     (the canary reports it; `state` run again clears it)."""
     s = _state_text(state)
@@ -469,8 +492,9 @@ def brief(home, now=None) -> "str | None":
     n = state_counts(home)
     if n is None:
         return None
-    line = (f"loose ends: {n['new']} new · {n['proposed']} proposed · {n['parked']} parked · "
+    line = (f"loose ends: {n['new']} new · {n['proposed']} proposed · "
             f"{n['waiting']} waiting · {n['declined']} declined")
+    line += f" · {n['parked']} parked (retired: run ledger_migrate.py)" if n["parked"] else ""
     return line + (f" · {n['unreadable']} unreadable (fix the State)" if n["unreadable"] else "")
 
 
@@ -951,11 +975,14 @@ def main(argv=None) -> int:
         sp = sub.add_parser(name, help=help_)
         sp.add_argument("--root", default=None, help="the repo root or the home directory (default: here)")
         return sp
-    s = cmd("add", "append a new item; prints its id")
+    s = cmd("add", "append a loose end (the last resort); prints its id")
     s.add_argument("--source", required=True)
     s.add_argument("--item", required=True)
-    s.add_argument("--state", default=None, help="new (default), parked: T, waiting: Q or declined: R")
-    s = cmd("state", "set an item's State: new, parked: <trigger>, waiting: <question> or declined: <reason>")
+    s.add_argument("--fix", default=None, help="the known small change (required)")
+    s.add_argument("--why-not-now", default=None,
+                   help="why it is out of the order's scope or crosses into a new scope, and why not an order (required)")
+    s.add_argument("--state", default=None, help="new (default), waiting: Q or declined: R")
+    s = cmd("state", "set an item's State: new, waiting: <question> or declined: <reason>")
     s.add_argument("id")
     s.add_argument("state")
     s = cmd("drop", "remove an item that was routed or closed")
@@ -978,7 +1005,7 @@ def main(argv=None) -> int:
     home = _root(a)
     try:
         if a.cmd == "add":
-            print(add(home, a.source, a.item, a.state))
+            print(add(home, a.source, a.item, a.state, a.fix or "", a.why_not_now or ""))
         elif a.cmd == "state":
             print(set_state(home, a.id, a.state))
         elif a.cmd == "drop":

@@ -121,9 +121,12 @@ re-cloning / re-copying, see the README's *Updating*) — skip the pull and proc
 Then read `~/.claude/skills/gitos/VERSION` (the current `ENGINE_VERSION`) and the canonical brief
 (`~/.claude/skills/gitos/SKILL.md` + the role briefs under `~/.claude/skills/gitos/references/`).
 
-**3. If already current → stop (idempotent).**
+**3. If already current → run the one offer round, then stop (idempotent).**
 If the repo's stamp equals the skill's `ENGINE_VERSION`, report **"engine up to date
-(vN)"** and stop. Running again with no upstream change is a no-op.
+(vN)"**, run **4q** on its own (`python <SKILL_DIR>/scripts/offer.py <repo-root>`; ask what it prints and apply
+the answers as 4q says), and then stop. An opt-in that became available after the last upgrade (a machine config
+for System One, a new federation group) is offered this way. With nothing on offer 4q is silent, and running again
+with no upstream change is the same no-op as before: nothing else in step 4 runs and nothing is re-stamped.
 
 **4. Adopt the latest directives.**
 Direct the running orchestrator to:
@@ -285,8 +288,8 @@ Scaffold has already made sure `.claude/worktrees/` is in `.gitignore` (new work
 
 **4k. Parked section.**
 If `<home>/INDEX.md` has no `## Parked` heading, run `python <SKILL_DIR>/scripts/scaffold.py <root>
---git skip`: it inserts the empty `## Parked (deferred, with restart trigger)` section (columns `ID |
-Item | Restart trigger | Source | Parked on`) before `## Resolved`, and rewrites nothing else. An INDEX
+--git skip`: it inserts the empty `## Parked (deferred, with restart trigger)` section (columns `NNN |
+Title | Restart trigger | Evidence`, generated from the parked work-orders) before `## Resolved`, and rewrites nothing else. An INDEX
 that already has the heading is left byte-identical, so re-running is a no-op. The same pass is what
 lays the section on a new repo. Work-orders resolved before engine v44 are exempt from the canary's
 `loose-ends` check; do not backfill adjudications onto them.
@@ -302,12 +305,12 @@ the file, never imports a row twice; rows that say done, fixed, closed, merged o
 `loose_ends.py legacy decline <FILE> --root <repo-root>` (records `declined`; this is the one case the file is
 created without an item, and only after the operator answered). After an import, run the drain
 (`references/roles/orchestrator.md` -> *Draining the loose ends*). Sections of implementer notes inside a legacy
-register are not rows: say so, and adjudicate them by hand in the same pass (facts to the brain, follow-ups with
-`loose_ends.py add`).
+register are not rows: say so, and adjudicate them by hand in the same pass (facts to the brain, follow-ups by
+the deferral rule: a work-order, a parked work-order or, last, `loose_ends.py add`).
 
 **4m. Migrate the ledger: one not-now list, folder orders; retire `history/`.**
 Run `python <SKILL_DIR>/scripts/ledger_migrate.py <home>` (a dry run: it writes nothing). Its `not-now:` lines come
-first (step 4q). Then it lists each open
+first (below). Then it lists each open
 single-file order with two or more `### S<n>` slice sections that it would convert to the folder form (`git mv` to
 `WO-NNN/order.md`, one `slices/SN-<name>.md` per slice; a slice with an adjudication or `## History` pointer naming a
 commit is `landed` with it, the rest `ready` with `depends_on` in order; `history/WO-NNN.md` content becomes the landed
@@ -350,20 +353,23 @@ gates `slice-landed-no-commit` and a dangling or cyclic `depends_on`, and report
 `slice-stale`, `order-oversized` and `slice-oversized` and split advice at eight slices; it reads `ledger_index.py`
 from beside itself, the home `tools/` or `<SKILL_DIR>/scripts/`.
 
-**4q. One not-now list (v57).**
+**4m, the not-now lines (v57; parked orders v58).**
 Every item that is not yet an order becomes a row of `<home>/loose-ends.md` with a State: `new`, `proposed: <kind>`,
-`parked: <trigger>`, `waiting: <question>` or `declined: <reason>`. The dry run of step 4m prints one `not-now:` line
+`waiting: <question>` or `declined: <reason>`; deferred work with a restart trigger becomes a parked work-order. The dry run of step 4m prints one `not-now:` line
 per move: each item a pending drain proposal holds gets its row back as `proposed: <kind>` (the file stays as its
-attachment); each open hand-kept INDEX Parked row (`P<n>`) becomes a `parked: <trigger>` row with Source
-`import:P<n>` (a closed one goes) and the Parked section becomes the generated region `<!-- gitos:index parked -->`;
+attachment); each `parked: <trigger>` row and each open hand-kept INDEX Parked row (`P<n>`) becomes a parked
+work-order (a new order file, `status: parked`, `trigger:`, `origin: L<n>` or `P<n>`; the row leaves the list, a
+closed `P<n>` goes) and the Parked section becomes the generated region `<!-- gitos:index parked -->` with the
+columns `NNN | Title | Restart trigger | Evidence`;
 each open carried box of an open order goes back on the list as `new` and the box is ticked `-> L<n>`;
 `drain/declined/`, `drain/accepted/` and `drain/routed.txt` are removed (a declined item is already a `declined:`
 row, an accepted or routed one is off the list); the front-matter key `landed:` of an order becomes `released:`.
 What it cannot move with confidence is printed as `LEFT` and stays (a Parked row with no trigger, a pile item whose
 row is in another state); settle those by hand, then run it again. A second run prints `not-now: nothing to move`.
 Until it has run, the canary prints the advisory `loose-ends-migration`; a fact left in two stores afterwards is the
-gating `loose-ends-two-stores`. `drop --to P<n>` and `drain accept --parked P<n>` are retired: park with
-`loose_ends.py state L<n> "parked: <trigger>"` or `drain accept ID --trigger T`.
+gating `loose-ends-two-stores`. `drop --to P<n>`, `drain accept --parked P<n>`, the `parked:` State and
+`drain accept --trigger` are retired: park by authoring a parked work-order, then `drop L<n> --to WO-NNN` or
+`drain accept ID --work-order NNN`.
 
 **4q. The one offer round.**
 Run `python <SKILL_DIR>/scripts/offer.py <repo-root>` **last in step 4**, after the data migrations and the home
@@ -388,6 +394,12 @@ option leads to (the lens pick, federation's group pick and exposure flags, the 
 Declining federation stores nothing, by its own rule, so it is computed fresh each round; the harness popup is
 computed from the audit. The answers are the operator's alone: a repo that came back federated, or with System One
 on, because somebody asked for a directive refresh would have spent a consent nobody gave.
+
+**4r. Consolidate the backlog (once, on the upgrade to v58).**
+List every open order, parked order and loose end, group them by scope of work (the same subsystem, the same
+files), and propose to the operator a smaller set: follow-up and "part 2" orders folded as slices into the order
+that owns that scope (or one order per scope); items already fixed closed with the commit named; everything left
+given an explicit finish order. Report `N open before -> M after`. Nothing changes without the operator's word.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:

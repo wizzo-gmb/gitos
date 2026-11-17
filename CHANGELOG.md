@@ -18,6 +18,40 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v58 — 2026-11-16
+breaking: yes
+
+- **An order finishes what it finds (WO-116).** A finding made while working an order is fixed in that order when it
+  sits within the order's scope of work, listed under Deviations and covered by the order's checks; an unlisted
+  out-of-scope edit is still a defect. **Nothing is dropped.** A finding may be deferred only when it is clearly out of
+  the order's scope or its fix would cross into a new scope (another subsystem, a design or operator decision, a file
+  another in-flight order owns), with that reason stated; at review a deferral without the reason is rejected and goes
+  back into the order. Discipline (o) finish-what-you-find.
+- **Deferral forms are last resorts.** A new work-order, a parked work-order, or (rarest) a loose end. A loose end must
+  pass five tests (concrete; fix known and small; self-contained; not owned; a reason it cannot be done now), and
+  `loose_ends.py add` refuses a row without `--fix` and `--why-not-now`. The canary reports (advisory
+  `loose-ends-last-resort`) more than 3 open rows or one older than 14 days.
+- **Parked work-orders replace the `parked:` list state** (breaking, reverses part of v57). A parked order is an order
+  file with front matter `status: parked` and `trigger:`; INDEX `## Parked` is generated from those orders;
+  `parked:` rows and `drain accept --trigger` are refused; a parked order with no trigger is `parked-no-trigger`.
+  **Migration:** `ledger_migrate.py <home>` (dry run), then `--write`, turns `parked:` rows and hand-kept `P<n>` rows
+  into parked orders.
+- **Convergence.** A second follow-up order on the same scope is not opened (the open order gets a slice); each
+  checkpoint reports the open count and says when it rose twice. Upgrade step **4r** consolidates an existing backlog
+  once: group open orders, parked orders and loose ends by scope, fold follow-ups into the owning order, close what is
+  fixed, propose a finish order; nothing changes without the operator's word.
+
+- **Unreviewed notes are flagged at Stop (WO-117).** The Stop hook prints one line naming an open order or slice
+  whose Implementer notes are filled and not adjudicated.
+- **A current repo still gets the offer round (WO-120).** Upgrade step 3 at the current version runs the one offer
+  round (4q) before stopping, so an opt-in that appeared later is offered.
+- **The drain is never by hand.** When the local model is down, a dispatched helper drains through the same path.
+- **System One machine setup ships as templates (WO-119)** under `assets/system-one/` (systemd unit, Windows logon
+  tasks, port forward, firewall rule), every machine-specific value a `@@MARKER@@`.
+- **The decisions page was checked in a real browser engine (WO-118):** desktop and phone, light and dark, copy output.
+
+---
+
 ## v57 — 2026-11-16
 breaking: yes
 
