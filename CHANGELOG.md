@@ -18,6 +18,17 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v55 — 2026-11-17
+breaking: no
+
+- **Small engine fixes (WO-111).** `selftest.py --gate NAME` runs one gate (exact name, or a `woNNN` prefix for every
+  gate of that order; an unknown name exits 2). `worktree.py reap --merged ROOT` parses as `reap ROOT --merged` does. A
+  directory under a worktree that cannot be listed refuses the reap and names it, before anything is unlinked, instead
+  of being skipped. `loose_ends.py legacy pending` no longer scans `work-orders/resolved/` (a resolved order is never a
+  register). `slice.py`'s convert refusal names `ledger_migrate.py`.
+
+---
+
 ## v54 — 2026-11-16
 breaking: yes
 

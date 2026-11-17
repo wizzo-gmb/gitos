@@ -681,17 +681,26 @@ def _link_kind(path):
     return None
 
 
+class UnreadableDir(OSError):
+    """A directory under a worktree could not be listed, so a link under it could not be checked."""
+
+    def __init__(self, path, why):
+        super().__init__(f"{path}: {why}")
+        self.path = path
+
+
 def _walk_links(top):
     """Every link under `top`, found without following any: -> [path]. A link is reported and not
-    entered; only real directories are."""
+    entered; only real directories are. A directory that cannot be listed raises UnreadableDir naming it:
+    skipping it would leave a link under it unchecked."""
     found, stack = [], [str(top)]
     while stack:
         cur = stack.pop()
         try:
             with os.scandir(cur) as it:
                 children = [(e.path, e.name) for e in it]
-        except OSError:
-            continue
+        except OSError as e:
+            raise UnreadableDir(cur, e.strerror or e) from e
         for full, name in children:
             if cur == str(top) and name == ".git":
                 continue
@@ -716,7 +725,8 @@ def _unlink(path):
 
 def link_guard(worktree):
     """Unlink every link inside `worktree` whose target resolves outside it.
-    -> (unlinked paths, paths that could not be unlinked)."""
+    -> (unlinked paths, paths that could not be unlinked). Raises UnreadableDir, before anything is
+    unlinked, when a directory in it cannot be listed."""
     base = os.path.normcase(os.path.realpath(worktree))
     done, failed = [], []
     for link in _walk_links(worktree):
@@ -783,7 +793,12 @@ def _reap_one(root, it, current, home=None):
                     return False, [f"worktree: {name} NOT reaped: {bad}"]
                 if copied:
                     msgs.append(f"archived {', '.join(copied)} to {posix(Path(home) / ARCHIVE_DIR)}")
-            gone, stuck = link_guard(it["path"])
+            try:
+                gone, stuck = link_guard(it["path"])
+            except UnreadableDir as e:
+                return False, [f"worktree: {name} NOT reaped: cannot read the directory {posix(e.path)}"
+                               f" under it, so a link in it could not be checked -> make it readable "
+                               f"(or remove it by hand), then retry"]
             if stuck:
                 return False, [f"worktree: {name} NOT reaped: cannot unlink {posix(stuck[0])}, a link "
                                f"that points outside the worktree -> remove that link by hand, then retry"]
@@ -859,7 +874,7 @@ def main(argv=None):
                     help="new: bind the worktree to slice SN of a folder order (the edit hook reads the marker)")
     ap.add_argument("--merged", action="store_true", help="reap: every reapable worktree/branch")
     ap.add_argument("--json", action="store_true", help="status: machine-readable")
-    a = ap.parse_args(argv)
+    a = ap.parse_intermixed_args(argv)  # so `reap --merged ROOT` reads ROOT as the argument, as `reap ROOT --merged`
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")

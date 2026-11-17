@@ -184,7 +184,7 @@ def convert(home: Path, path: Path, nnn: str):
             in_slices.append(i)
     if len(in_slices) > 1:
         raise SliceError(f"{path.name} has {len(in_slices)} slice sections; split it by hand into the folder form "
-                         f"(or the migration tool); nothing was changed")
+                         f"(or run ledger_migrate.py); nothing was changed")
     if in_slices:
         i = in_slices[0]
         end = _section(lines, i, "### ")

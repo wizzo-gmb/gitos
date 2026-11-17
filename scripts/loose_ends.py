@@ -656,12 +656,17 @@ def legacy_decline(home, path) -> None:
 
 
 def legacy_pending(home) -> list:
-    """Repo-relative paths of files under the home (top level, work-orders/, work-orders/resolved/) whose
-    file name or `# ` title says loose ends or register, minus those already answered. Empty when none."""
+    """Repo-relative paths of `*.md` files in the home's top level and in work-orders/ whose file name or `# `
+    title says loose ends or register, minus those already answered. Empty when none.
+
+    Two limits, both deliberate. `work-orders/resolved/` is not scanned: a resolved order is history and never a
+    register, yet its title often mentions loose ends. The rest of the home is not walked either: briefs, audit
+    logs, archives and slice folders sit there and would match the name and title test far more often than a real
+    register would; a register kept elsewhere is imported by naming it (`import FILE`)."""
     home = Path(home)
     done = legacy_recorded(home)
     out = []
-    for d in (home, home / "work-orders", home / "work-orders" / "resolved"):
+    for d in (home, home / "work-orders"):
         if not d.is_dir():
             continue
         for f in sorted(d.glob("*.md")):
