@@ -11,7 +11,7 @@ cover:
   - engine-version stamp    (a stamp AHEAD of the installed skill VERSION = impossible state)
   - lens registries         (both layers: registry rows <-> lens files, name = filename,
                              required frontmatter keys, applies-to list-form)
-  - link rot                (relative markdown links in INDEX.md + open WO files resolve)
+  - dead links              (relative markdown links in INDEX.md + open work-order files resolve)
   - brain delegation        (if a brain exists, run brain_lint and fold its findings in)
   - durable anchor          (repo-root CLAUDE.md carries the gitos block — the canary's own
                              recovery seed; missing/stale block is a finding, no CLAUDE.md a skip)
@@ -22,7 +22,7 @@ cover:
                              instead of a pointer to one, which the next checkpoint would destroy)
   - lingering worktrees     (a merged, clean `wo-NNN` / `worktree-*` / declared (`worktrees.json`)
                              worktree or branch still
-                             present = `worktree-reapable`; unmerged work whose work order is
+                             present = `worktree-reapable`; unmerged work whose work-order is
                              resolved or missing = `worktree-abandoned`. Classified by
                              worktree.py; the canary never deletes anything)
   - loose ends              (the INDEX Parked list and the adjudication of implementer notes:
@@ -48,7 +48,7 @@ orchestrator/implementer work.
 Usage:
     python canary.py <HOME> [--skill-dir DIR] [--stale-days N] [--registry DIR] [--json]
 
-<HOME> is the gitos home dir, e.g. `<repo>/.gitos`.
+<HOME> is the home directory, e.g. `<repo>/.gitos`.
 Exit codes: 0 = CLEAN (or nothing to check), 1 = findings, 2 = usage error.
 (Deliberate divergence from brain_lint, which exits 0 with findings: the orchestrator's
 resolution gate — no work-order resolved while the canary is red — needs 0/1 semantics.)
@@ -258,7 +258,7 @@ IDENT_NNN = r"(\d{3})(?!\d)"
 # does carry an identity (`notes_007_draft.md`) IS adopted as WO-007. No filename signal
 # separates it from `task_007_real-work.md`, and a name-shaped heuristic to tell them apart
 # would re-import the enumeration this rule removes. What is guaranteed is that adoption is
-# never SILENT: with no INDEX row it surfaces as orphan-file; against a real WO-007 it
+# never SILENT: with no INDEX row it surfaces as order-file-orphan; against a real WO-007 it
 # surfaces as duplicate-file naming BOTH files. The cost is a finding with a different LABEL,
 # never a missed one — and it is bounded by a directory that holds nothing but work-orders.
 WO_FILE_RE = re.compile(rf"^(?:[A-Za-z]+[-_.]?)?{IDENT_NNN}[-_.][A-Za-z0-9][\w.-]*\.md$")
@@ -374,6 +374,20 @@ def section_lines(text: str, heading_prefix: str) -> list[str] | None:
     return None
 
 
+# The implementer's boundary heading. The forward form once carried `## Proposed scope`; it is read as an alias
+# and never written (references/glossary.md, *Proposed fix scope*).
+PROPOSED_SCOPE_HEADINGS = ("## Proposed fix scope", "## Proposed scope")
+
+
+def proposed_scope_lines(text: str) -> list[str] | None:
+    """The `## Proposed fix scope` section, or the retired `## Proposed scope` heading's; None when neither exists."""
+    for heading in PROPOSED_SCOPE_HEADINGS:
+        block = section_lines(text, heading)
+        if block is not None:
+            return block
+    return None
+
+
 def prose_row_nnns(block: list[str]) -> list[str]:
     """Line-head identity NNNs of a PROSE/blockquote ledger section: one per line that LEADS
     with an NNN at the identity position (see PROSE_NNN), fenced code skipped. This is the
@@ -412,7 +426,7 @@ def prose_nnns(block: list[str]) -> list[str]:
     (2) contributes only NNNs (1) did not already see, so a row that both leads with its NNN
     and links its own file counts ONCE — one row, never a phantom duplicate. Duplicates
     WITHIN (1) are preserved: a real duplicate-NNN collision in a prose ledger must still be
-    caught. Empty -> the caller reports cannot-parse (no false-CLEAN).
+    caught. Empty -> the caller reports index-unparseable (no false-CLEAN).
 
     The link top-up is EXCLUSIVE to a no-table section. A section that also has a table folds
     in only signal (1) via prose_row_nnns — see check_ledger — because in a table section a
@@ -544,7 +558,7 @@ def check_ledger(home: Path) -> list[dict]:
     # rule cannot read would otherwise be silently invisible to the orphan/link scans
     for where, bad in (("work-orders", bad_root), ("work-orders/resolved", bad_res)):
         for name in bad:
-            items.append({"kind": "nonconforming-wo-filename", "file": f"{where}/{name}",
+            items.append({"kind": "order-filename-nonconforming", "file": f"{where}/{name}",
                           "finding": f"{where}/{name} carries no work-order identity at the "
                                      f"identity position ({WO_FORM_NAMES}) -> rename it to "
                                      "carry one or move it out of the ledger dirs"})
@@ -555,7 +569,7 @@ def check_ledger(home: Path) -> list[dict]:
                 continue
             n = single_file_multi_slice(_read(wo_dir / name) or "")
             if n > 1:
-                items.append({"kind": "single-file-multi-slice", "nnn": nnn, "file": f"work-orders/{name}",
+                items.append({"kind": "order-needs-folder", "wo": f"WO-{nnn}", "file": f"work-orders/{name}",
                               "finding": f"work-orders/{name} is a single file with {n} slice sections; an order "
                                          f"with two or more slices is a folder -> run `slice add WO-{nnn} NAME "
                                          f"<home>` (it converts the order with git mv) or the migration tool"})
@@ -576,10 +590,10 @@ def check_ledger(home: Path) -> list[dict]:
     # citation-link top-up (prose_nnns), which would turn every cross-reference link in a cell
     # into a phantom row. A section with NO table at all keeps the full prose fallback
     # (line-head rows + link-only rows), unchanged. Only a section that is neither a table nor
-    # a recognizable prose ledger is cannot-parse. (WO-029 class 3; WO-038)
+    # a recognizable prose ledger is index-unparseable. (WO-029 class 3; WO-038)
     #
     # UNION is the safe direction for orphans: adding NNNs to a section's tracked set can only
-    # REMOVE orphan-file findings, never add one. A genuinely stray file (no table row AND no
+    # REMOVE order-file-orphan findings, never add one. A genuinely stray file (no table row AND no
     # prose row) is still absent from the union and MUST still orphan. It CAN newly surface a
     # rows->files finding (a prose row whose file is missing / sits in the wrong dir) — that is
     # a real finding the XOR was hiding, not a false positive.
@@ -597,7 +611,7 @@ def check_ledger(home: Path) -> list[dict]:
             if NNN_RE.fullmatch(nnn):
                 open_nnns.append(nnn)
             else:
-                items.append({"kind": "cannot-parse", "section": "open", "cell": nnn,
+                items.append({"kind": "index-unparseable", "section": "open", "cell": nnn,
                               "finding": f"open row col-1 '{nnn}' is not a 3-digit NNN -> fix the row"})
         # fold in prose/blockquote rows the table did not already carry (dedup against the
         # TABLE set only — a prose-internal duplicate collision is preserved for the check below)
@@ -608,7 +622,7 @@ def check_ledger(home: Path) -> list[dict]:
         if open_prose:
             open_nnns = open_prose        # prose-only ledger — a legitimate shape
         else:
-            items.append({"kind": "cannot-parse", "section": OPEN_HEADING,
+            items.append({"kind": "index-unparseable", "section": OPEN_HEADING,
                           "finding": f"no '{OPEN_HEADING}...' section with a table or a "
                                      "recognizable prose ledger -> not a recognizable ledger; "
                                      "fix INDEX.md"})
@@ -620,7 +634,7 @@ def check_ledger(home: Path) -> list[dict]:
             if NNN_RE.fullmatch(nnn):
                 res_nnns.append(nnn)
             elif nnn != EMDASH:   # em-dash = legitimate numberless row (inception deliverable)
-                items.append({"kind": "cannot-parse", "section": "resolved", "cell": nnn,
+                items.append({"kind": "index-unparseable", "section": "resolved", "cell": nnn,
                               "finding": f"resolved row col-1 '{nnn}' is neither a 3-digit NNN "
                                          "nor an em-dash -> fix the row"})
         seen_res = set(res_nnns)
@@ -630,7 +644,7 @@ def check_ledger(home: Path) -> list[dict]:
         if res_prose:
             res_nnns = res_prose          # prose-only ledger — a legitimate shape
         else:
-            items.append({"kind": "cannot-parse", "section": RESOLVED_HEADING,
+            items.append({"kind": "index-unparseable", "section": RESOLVED_HEADING,
                           "finding": f"no '{RESOLVED_HEADING}...' section with a table or a "
                                      "recognizable prose ledger -> not a recognizable ledger; "
                                      "fix INDEX.md"})
@@ -639,23 +653,23 @@ def check_ledger(home: Path) -> list[dict]:
     for section, nnns in (("Open", open_nnns), ("Resolved", res_nnns)):
         for nnn, n in sorted(Counter(nnns).items()):
             if n > 1:
-                items.append({"kind": "duplicate-nnn", "nnn": nnn,
+                items.append({"kind": "index-duplicate-row", "wo": f"WO-{nnn}",
                               "finding": f"NNN {nnn} appears {n}x in {section} -> keep exactly one row"})
     for nnn in sorted(set(open_nnns) & set(res_nnns)):
-        items.append({"kind": "duplicate-nnn", "nnn": nnn,
+        items.append({"kind": "index-duplicate-row", "wo": f"WO-{nnn}",
                       "finding": f"NNN {nnn} appears in both Open and Resolved -> keep exactly one row"})
 
     # duplicate files — two WO-NNN-*.md sharing an NNN in one dir, or across dirs
     for where, files in (("work-orders", on_root), ("work-orders/resolved", on_res)):
         for nnn, names in sorted(files.items()):
             if len(names) > 1:
-                items.append({"kind": "duplicate-file", "nnn": nnn, "files": names,
+                items.append({"kind": "order-duplicate-file", "wo": f"WO-{nnn}", "files": names,
                               "finding": f"{len(names)} files share NNN {nnn} in {where}/ -> keep exactly one"})
     for nnn in sorted(set(on_root) & set(on_res)):
-        items.append({"kind": "wo-in-both", "nnn": nnn,
+        items.append({"kind": "order-in-both-dirs", "wo": f"WO-{nnn}",
                       "finding": f"WO-{nnn} present in both work-orders/ and resolved/ -> keep exactly one"})
 
-    # rows -> files (per side, only when that side parsed — no cascades on cannot-parse).
+    # rows -> files (per side, only when that side parsed — no cascades on index-unparseable).
     # "parsed" = a table OR a recognized prose ledger; a prose side is a real row set. A table
     # side that folded in prose rows is still parsed (open_rows is not None).
     open_parsed = open_rows is not None or bool(open_nnns)
@@ -665,18 +679,18 @@ def check_ledger(home: Path) -> list[dict]:
             if nnn in on_root:
                 continue
             if nnn in on_res:
-                items.append({"kind": "open-row-file-in-resolved", "nnn": nnn,
+                items.append({"kind": "index-open-row-file-in-resolved", "wo": f"WO-{nnn}",
                               "finding": f"open row {nnn}'s file is in resolved/ -> "
                                          "mark the row Resolved (or restore the file)"})
             else:
-                items.append({"kind": "open-row-missing-file", "nnn": nnn,
+                items.append({"kind": "index-open-row-file-missing", "wo": f"WO-{nnn}",
                               "finding": f"open row {nnn} has no work-order file for NNN {nnn} "
                                          "under work-orders/ -> restore the file or drop the row"})
     if res_parsed:
         for nnn in res_nnns:
             # a resolved row may legitimately have NO file (landed as commit/decision page)
             if nnn in on_root and nnn not in on_res:
-                items.append({"kind": "resolved-row-file-in-root", "nnn": nnn,
+                items.append({"kind": "index-resolved-row-file-in-root", "wo": f"WO-{nnn}",
                               "finding": f"resolved row {nnn}'s file is still in work-orders/ -> "
                                          "move it to resolved/"})
 
@@ -685,7 +699,7 @@ def check_ledger(home: Path) -> list[dict]:
         known = set(open_nnns) | set(res_nnns)
         for where, files in (("work-orders", on_root), ("work-orders/resolved", on_res)):
             for nnn in sorted(set(files) - known):
-                items.append({"kind": "orphan-file", "file": f"{where}/{files[nnn][0]}",
+                items.append({"kind": "order-file-orphan", "file": f"{where}/{files[nnn][0]}",
                               "finding": f"{where}/{files[nnn][0]} has no INDEX row -> "
                                          "add a row (or remove the stray file)"})
     return items
@@ -703,7 +717,7 @@ def check_brainmeta(home: Path, installed: int | None) -> tuple[list[dict], list
     if wiki.is_dir():
         for d in sorted(p for p in wiki.iterdir() if p.is_dir()):
             if d.name not in PAGE_TYPES and any(d.glob("*.md")):
-                counts_items.append({"kind": "unknown-page-type", "dir": d.name,
+                counts_items.append({"kind": "brainmeta-page-type-unknown", "dir": d.name,
                                      "finding": f"wiki/{d.name}/ holds .md page(s) but is not a "
                                                 f"known page type ({', '.join(PAGE_TYPES)}) -> "
                                                 "relocate the pages or extend the schema"})
@@ -720,13 +734,13 @@ def check_brainmeta(home: Path, installed: int | None) -> tuple[list[dict], list
         if not isinstance(meta, dict):
             raise ValueError("top level is not an object")
     except ValueError as e:
-        counts_items.append({"kind": "cannot-parse",
+        counts_items.append({"kind": "brainmeta-unparseable",
                              "finding": f".brainmeta.json is not valid JSON ({e}) -> repair it"})
         return counts_items, stamp_items, "brainmeta unparseable"
 
     counts = meta.get("counts")
     if not isinstance(counts, dict):
-        counts_items.append({"kind": "counts-missing",
+        counts_items.append({"kind": "brainmeta-counts-missing",
                              "finding": "brainmeta has no counts object -> add counts per page type"})
     else:
         for t in PAGE_TYPES:
@@ -735,17 +749,17 @@ def check_brainmeta(home: Path, installed: int | None) -> tuple[list[dict], list
             expected = counts.get(t)
             if expected is None:
                 if actual:
-                    counts_items.append({"kind": "count-missing-key", "key": t, "actual": actual,
+                    counts_items.append({"kind": "brainmeta-counts-key-missing", "key": t, "actual": actual,
                                          "finding": f"counts.{t} absent, files={actual} -> set {actual}"})
             elif not isinstance(expected, int) or isinstance(expected, bool):
-                counts_items.append({"kind": "cannot-parse", "key": t,
+                counts_items.append({"kind": "brainmeta-counts-unparseable", "key": t,
                                      "finding": f"counts.{t}='{expected}' is not an integer -> set {actual}"})
             elif expected != actual:
-                counts_items.append({"kind": "count-mismatch", "key": t,
+                counts_items.append({"kind": "brainmeta-counts-mismatch", "key": t,
                                      "expected": expected, "actual": actual,
                                      "finding": f"counts.{t}={expected}, files={actual} -> set {actual}"})
         for key in sorted(set(counts) - set(PAGE_TYPES)):
-            counts_items.append({"kind": "unknown-page-type", "key": key,
+            counts_items.append({"kind": "brainmeta-page-type-unknown", "key": key,
                                  "finding": f"counts.{key} is not a known page type "
                                             f"({', '.join(PAGE_TYPES)}) -> remove the key "
                                             "or fix the type name"})
@@ -757,7 +771,7 @@ def check_brainmeta(home: Path, installed: int | None) -> tuple[list[dict], list
     if installed is None:
         return counts_items, stamp_items, "no installed VERSION to compare"
     if not isinstance(ev, int) or isinstance(ev, bool):
-        stamp_items.append({"kind": "cannot-parse",
+        stamp_items.append({"kind": "stamp-unparseable",
                             "finding": f"engine_version '{ev}' is not an integer -> "
                                        "stamp the installed version"})
     elif ev > installed:
@@ -805,14 +819,14 @@ def check_lens_layer(layer_dir: Path, layer: str) -> list[dict]:
     row_names: list[str] = []
     if reg_text is None:
         if files:
-            items.append({"kind": "registry-missing", "layer": layer,
+            items.append({"kind": "lens-registry-missing", "layer": layer,
                           "finding": f"{layer} agents/ has lens files but no index.md registry -> "
                                      "add the registry"})
     else:
         rows = _table_rows(reg_text.splitlines())
         if rows is None:
             if files:
-                items.append({"kind": "cannot-parse", "layer": layer,
+                items.append({"kind": "lens-registry-unparseable", "layer": layer,
                               "finding": f"{layer} agents/index.md has no registry table -> "
                                          "add the | Lens | ... | table"})
         else:
@@ -821,26 +835,26 @@ def check_lens_layer(layer_dir: Path, layer: str) -> list[dict]:
                 if name:
                     row_names.append(name)
                 else:
-                    items.append({"kind": "cannot-parse", "layer": layer,
+                    items.append({"kind": "lens-registry-unparseable", "layer": layer,
                                   "finding": f"{layer} registry row with an empty Lens cell -> fix the row"})
             for name, n in sorted(Counter(row_names).items()):
                 if n > 1:
-                    items.append({"kind": "duplicate-row", "layer": layer, "name": name,
+                    items.append({"kind": "lens-registry-duplicate-row", "layer": layer, "name": name,
                                   "finding": f"{layer} registry lists '{name}' {n}x -> keep exactly one row"})
             stems = {f.stem for f in files}
             for name in sorted(set(row_names) - stems):
-                items.append({"kind": "registry-row-no-file", "layer": layer, "name": name,
+                items.append({"kind": "lens-registry-row-file-missing", "layer": layer, "name": name,
                               "finding": f"{layer} registry row '{name}' has no {name}.md in agents/ -> "
                                          "remove the row or restore the file"})
             for stem in sorted(stems - set(row_names)):
-                items.append({"kind": "lens-file-no-row", "layer": layer, "name": stem,
+                items.append({"kind": "lens-file-row-missing", "layer": layer, "name": stem,
                               "finding": f"{layer} agents/{stem}.md has no registry row -> "
                                          "add its row to index.md"})
 
     for f in files:
         fm = parse_frontmatter(_read(f) or "")
         if fm is None:
-            items.append({"kind": "no-frontmatter", "layer": layer, "file": f.name,
+            items.append({"kind": "lens-frontmatter-missing", "layer": layer, "file": f.name,
                           "finding": f"{layer} agents/{f.name} has no frontmatter -> "
                                      "add the lens frontmatter block"})
             continue
@@ -849,25 +863,25 @@ def check_lens_layer(layer_dir: Path, layer: str) -> list[dict]:
         if not any(k in fm for k in LENS_PROVENANCE):
             missing.append(" or ".join(LENS_PROVENANCE))
         if missing:
-            items.append({"kind": "missing-keys", "layer": layer, "file": f.name, "keys": missing,
+            items.append({"kind": "lens-frontmatter-keys-missing", "layer": layer, "file": f.name, "keys": missing,
                           "finding": f"{layer} agents/{f.name} missing frontmatter key(s): "
                                      f"{', '.join(missing)} -> add them"})
         name = fm.get("name")
         if name is not None and name != f.stem:
-            items.append({"kind": "name-mismatch", "layer": layer, "file": f.name,
+            items.append({"kind": "lens-name-mismatch", "layer": layer, "file": f.name,
                           "finding": f"{layer} agents/{f.name}: name '{name}' != filename stem "
                                      f"'{f.stem}' -> set name: {f.stem}"})
         at = fm.get("applies-to")
         # list-form or the schema-legal bare 'any' (references/agent-import.md)
         if at is not None and at != "any" and not (at.startswith("[") and at.endswith("]")):
-            items.append({"kind": "applies-to-scalar", "layer": layer, "file": f.name,
+            items.append({"kind": "lens-applies-to-scalar", "layer": layer, "file": f.name,
                           "finding": f"{layer} agents/{f.name}: applies-to '{at}' is scalar -> "
                                      f"use list form [{at}] (or 'any')"})
     return items
 
 
 def check_links(home: Path) -> list[dict]:
-    """Link rot in INDEX.md + open work-order files.
+    """Dead links in INDEX.md + open work-order files.
 
     A target is resolved against BOTH the containing file's dir AND the repo root, and is
     only reported when NEITHER resolves. CommonMark itself resolves relative to the
@@ -891,7 +905,7 @@ def check_links(home: Path) -> list[dict]:
         for tgt in extract_links(_read(src) or ""):
             if (src.parent / tgt).exists() or (repo_root / tgt).exists():
                 continue
-            items.append({"kind": "dead-link", "file": rel, "link": tgt,
+            items.append({"kind": "link-dead", "file": rel, "link": tgt,
                           "finding": f"{rel} -> {tgt} resolves neither beside the file nor at "
                                      "the repo root -> fix the link or restore the target"})
     return items
@@ -901,7 +915,7 @@ def check_brain_delegate(home: Path, stale_days: int, today: date) -> list[dict]
     items: list[dict] = []
     brain = home / "brain"
     if not (brain / "wiki").is_dir():
-        items.append({"kind": "not-a-brain",
+        items.append({"kind": "brain-wiki-missing",
                       "finding": "brain/ exists but has no wiki/ -> not a brain; "
                                  "re-scaffold or remove"})
         return items
@@ -929,7 +943,7 @@ def check_brain_delegate(home: Path, stale_days: int, today: date) -> list[dict]
     for key in BRAIN_LINT_KEYS:
         found = rep.get(key, [])
         if found:
-            items.append({"kind": f"brain-{key}", "count": len(found), "items": found,
+            items.append({"kind": "brain-" + key.replace("_", "-"), "count": len(found), "items": found,
                           "finding": f"brain_lint {key}: {len(found)} item(s) -> "
                                      "fix inline or open a consolidation work-order"})
     return items
@@ -1012,7 +1026,7 @@ def check_tools(home: Path, skill_dir: Path | None) -> tuple[list[dict], str | N
         except OSError as e:
             # An unreadable copy is a FINDING, never a skip — a compare that could not run must
             # not read as a compare that passed.
-            items.append({"kind": "cannot-read", "tool": name,
+            items.append({"kind": "tool-unreadable", "tool": name,
                           "finding": f"<home>/{TOOL_HOME_DIR}/{name} or the skill's copy could "
                                      f"not be read ({type(e).__name__}) -> fix permissions, then "
                                      "re-run; an unreadable tool copy cannot be verified"})
@@ -1165,7 +1179,7 @@ def check_intake(home: Path, fed, cfg: dict, registry: "str | None",
         # surface renders it. For one release this line copied a name that was bounded but BARE,
         # and ~100 characters of attacker-chosen prose reached this report at every bootstrap.
         items.append(mark(
-            kind=E("intake-malformed"), file=bad["file"],
+            kind=E("intake-file-unparseable"), file=bad["file"],
             finding=M(E(f"a file in <home>/{INTAKE_DIRNAME}/ is not a conforming proposal — "),
                       bad["reason"],
                       E(" -> refused and reported BY NAME, never interpreted; delete it, or ask "
@@ -1292,7 +1306,7 @@ def check_federation(home: Path, skill_dir: Path | None,
         # (`carries no usable id ({tenant_id!r})`), and a bootstrap finding is the unbidden
         # surface - so the fault class is reported and the file's own bytes are not.
         items.append(mark(
-            kind=E("cannot-parse"), file=E(FEDERATION_FILENAME),
+            kind=E("federation-config-unparseable"), file=E(FEDERATION_FILENAME),
             finding=E(f"<home>/{FEDERATION_FILENAME} exists but could not be read "
                       f"({type(e).__name__}) -> repair it, or `federation disable` then "
                       f"`federation enable` to start clean. A corrupt opt-in file is a finding, "
@@ -1381,7 +1395,7 @@ def check_federation(home: Path, skill_dir: Path | None,
         # exist for. Reported as its own kind rather than as a foreign path: nothing was observed
         # about another checkout, only that WHOSE record this is cannot be established at all.
         items.append(mark(
-            kind=E("own-record-path-invalid"), id=E(cfg["id"]), record_home=F(rec_home),
+            kind=E("own-record-path-missing"), id=E(cfg["id"]), record_home=F(rec_home),
             this_home=E(own_path),
             finding=M.template(
                 "this repo's tenant record carries no usable home_path ({rh}) -> the heartbeat "
@@ -1411,7 +1425,7 @@ def check_federation(home: Path, skill_dir: Path | None,
     stamp = _parse_stamp(fed.emission_text(record.get("last_seen")))
     if stamp is None:
         items.append(mark(
-            kind=E("cannot-parse"), id=E(cfg["id"]),
+            kind=E("own-record-unparseable"), id=E(cfg["id"]),
             finding=M.template(
                 "this repo's tenant record has no readable `last_seen` ({ls}) -> the freshness "
                 "of the heartbeat cannot be derived from it; run `federation heartbeat` to "
@@ -1568,7 +1582,7 @@ def resume_stale_item(home: Path) -> dict | None:
     return None
 
 
-# A work order whose branch merged but whose file never left work-orders/. The one DETERMINISTIC
+# A work-order whose branch merged but whose file never left work-orders/. The one DETERMINISTIC
 # signal used is a merge commit on the current branch whose subject names a `wo-NNN` branch.
 # Chosen over "Implementer notes filled with no resolved row": in the normal flow the notes are
 # filled BEFORE the orchestrator verifies, so that state is a landing awaiting review and not a
@@ -1579,7 +1593,7 @@ LANDED_SCAN = 400               # how many recent merge commits are read
 
 
 def landed_unresolved(home: Path) -> list[dict]:
-    """Open work orders whose `wo-NNN` branch has a merge commit on the current branch.
+    """Open work-orders whose `wo-NNN` branch has a merge commit on the current branch.
 
     Read-only, git optional: any git failure returns [] (the check did not look, and a canary
     that cannot look says nothing rather than inventing a finding). Shared with the `Stop` hook.
@@ -1600,7 +1614,7 @@ def landed_unresolved(home: Path) -> list[dict]:
     out: list[dict] = []
     for nnn in sorted(set(on_root) & merged):
         name = on_root[nnn][0]
-        out.append({"kind": "landed-not-resolved", "nnn": nnn, "file": f"work-orders/{name}",
+        out.append({"kind": "order-landed-not-resolved", "wo": f"WO-{nnn}", "file": f"work-orders/{name}",
                     "finding": f"WO-{nnn} has a merge commit for its branch on this branch but "
                                f"work-orders/{name} is still open -> resolve it: move it to "
                                f"resolved/, update the INDEX row, replace RESUME.md wholesale, "
@@ -1609,7 +1623,7 @@ def landed_unresolved(home: Path) -> list[dict]:
 
 
 # ------------------------------------------------------------- the worktree category (WO-077)
-# A worktree made for a work order (scripts/worktree.py) and left behind after it landed is a leak:
+# A worktree made for a work-order (scripts/worktree.py) and left behind after it landed is a leak:
 # a directory, a branch, and sooner or later a `git add -A` that records it as a gitlink. The
 # CLASSIFICATION lives in worktree.py and is IMPORTED here (loaded by path, the way
 # compact_restore.py loads this file), not copied: the tool, this category and the `Stop` hook
@@ -1619,7 +1633,7 @@ def landed_unresolved(home: Path) -> list[dict]:
 #   worktree-reapable   merged into the current branch and clean, still present -> `reap`.
 #   worktree-abandoned  unmerged work with nobody to finish it -> the OPERATOR decides (merge it, or
 #                       remove it by hand). This category never suggests forcing anything.
-# In flight, and dirty with an open work order, are live work and are not findings.
+# In flight, and dirty with an open work-order, are live work and are not findings.
 #
 # READ-ONLY AND GIT-OPTIONAL, like landed_unresolved: git absent or failing is a VISIBLE skip (the
 # check did not look), never a finding and never a crash. It deletes nothing, here or anywhere.
@@ -1708,7 +1722,7 @@ def check_resume(home: Path) -> tuple[list[dict], str | None]:
     # 1b. size — the target existed only as prose; a resume past it is no longer a pointer file
     n_lines = len(text.splitlines())
     if n_lines > RESUME_LINE_LIMIT:
-        items.append({"kind": "resume-too-long", "lines": n_lines,
+        items.append({"kind": "resume-oversized", "lines": n_lines,
                       "finding": f"{RESUME_FILENAME} is {n_lines} lines, over the "
                                  f"{RESUME_LINE_LIMIT}-line limit -> it is replaced wholesale at "
                                  f"every checkpoint, so keep volatile state and pointers only and "
@@ -1806,7 +1820,7 @@ def check_dispatch_gate(root: Path, skill_dir: Path | None) -> tuple[list[dict],
         return items, f"the installed dispatch_guard.py could not be read ({type(e).__name__})"
     settings = root / ".claude" / "settings.json"
     if not settings.is_file():
-        items.append({"kind": "gate-missing",
+        items.append({"kind": "dispatch-gate-missing",
                       "finding": "a scaffolded repo with no .claude/settings.json -> the "
                                  "dispatch tier gate is absent, so a dispatch that names no "
                                  "task tier is not refused; re-run scaffold.py or "
@@ -1817,7 +1831,7 @@ def check_dispatch_gate(root: Path, skill_dir: Path | None) -> tuple[list[dict],
     except (OSError, ValueError) as e:
         # Unreadable is a FINDING, not a skip: a compare that could not run must not read as a
         # compare that passed.
-        items.append({"kind": "cannot-read",
+        items.append({"kind": "settings-unparseable",
                       "finding": f".claude/settings.json could not be read as JSON "
                                  f"({type(e).__name__}) -> the dispatch tier gate cannot be "
                                  f"verified; fix the file, then re-run"})
@@ -1829,7 +1843,7 @@ def check_dispatch_gate(root: Path, skill_dir: Path | None) -> tuple[list[dict],
                 if isinstance(g, dict) and isinstance(g.get("hooks"), list)
                 for h in g["hooks"])
     if not found:
-        items.append({"kind": "gate-missing",
+        items.append({"kind": "dispatch-gate-missing",
                       "finding": ".claude/settings.json registers no gitos dispatch tier gate "
                                  "on the dispatch tool -> an unrouted dispatch is not refused "
                                  "in this repo; re-run scaffold.py or `/gitos upgrade`. Note "
@@ -1866,7 +1880,7 @@ def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict
     settings = root / ".claude" / "settings.json"
     fix = "run `/gitos upgrade` to lay it"
     if not settings.is_file():
-        items.append({"kind": "restore-missing",
+        items.append({"kind": "restore-hook-missing",
                       "finding": f"a scaffolded repo with no .claude/settings.json -> the "
                                  f"post-compaction restore hook is absent, so working state is "
                                  f"not restored after a compaction; {fix}"})
@@ -1874,7 +1888,7 @@ def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict
     try:
         doc = json.loads(settings.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as e:
-        items.append({"kind": "cannot-read",
+        items.append({"kind": "settings-unparseable",
                       "finding": f".claude/settings.json could not be read as JSON "
                                  f"({type(e).__name__}) -> the post-compaction restore hook "
                                  f"cannot be verified; fix the file, then re-run"})
@@ -1887,7 +1901,7 @@ def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict
                 and isinstance(g.get("hooks"), list)
                 for h in g["hooks"])
     if not found:
-        items.append({"kind": "restore-missing",
+        items.append({"kind": "restore-hook-missing",
                       "finding": f".claude/settings.json registers no gitos post-compaction "
                                  f"restore hook on SessionStart/compact -> working state is not "
                                  f"restored after a compaction; {fix}. Repo layer only; hooks "
@@ -1903,7 +1917,7 @@ def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict
 # `-> rejected: <reason>`, or `-> L<n>`: moved to the loose-ends list, shape only). REPORT-ONLY, and it opens only the INDEX and the work-order files.
 #
 # THE EXEMPTION is by engine version, so it works in any repo with no per-repo setting: a
-# resolved row is checked for `notes-unadjudicated` only when the version its "Fix landed in" cell
+# resolved row is checked for `order-notes-unadjudicated` only when the version its "Fix landed in" cell
 # names (`v44`, `engine **v44**`) is at or past LOOSE_ENDS_FROM_VERSION. A row that names no
 # version is older than the habit and is exempt, so adopting the check never floods an existing
 # ledger; backfilling is not asked for.
@@ -1936,7 +1950,7 @@ LOOSE_HEADER = ["id", "added", "source", "item", "state"]
 LOOSE_ID_RE = re.compile(r"L\d+")
 LOOSE_NEXT_RE = re.compile(r"<!--\s*next:\s*L\d+\s*-->")
 LOOSE_DECLINED_RE = re.compile(r"declined:\s*\S.*")
-LOOSE_PILE_DIR = ("drain", "pending")  # the pile: one file per suggestion, each carries `- created: <iso>`
+LOOSE_PILE_DIR = ("drain", "pending")  # the pile: one file per proposal, each carries `- created: <iso>`
 LOOSE_PILE_CREATED_RE = re.compile(r"(?m)^- created: (\d{4}-\d\d-\d\d)")
 LOOSE_PILE_NAME_RE = re.compile(r"[0-9a-f]{12}\.md")
 _LOOSE_PIPE = re.compile(r"(?<!\\)\|")
@@ -1972,7 +1986,7 @@ def parse_loose_list(text: str) -> dict:
 
 
 def check_drain_pile(home: Path, today: "date | None" = None) -> list[dict]:
-    """`drain-stale` when a pending suggestion in `<home>/drain/pending/` has been undecided longer than
+    """`drain-stale` when a pending proposal in `<home>/drain/pending/` has been undecided longer than
     LOOSE_STALE_DAYS, or more than LOOSE_STALE_COUNT are pending. One finding for the pile."""
     d = home.joinpath(*LOOSE_PILE_DIR)
     if not d.is_dir():
@@ -1994,8 +2008,8 @@ def check_drain_pile(home: Path, today: "date | None" = None) -> list[dict]:
     if (old is not None and old[0] > LOOSE_STALE_DAYS) or n > LOOSE_STALE_COUNT:
         oldest = f", oldest {old[1]} at {old[0]} days" if old else ""
         return [{"kind": "drain-stale",
-                 "finding": f"{n} pending drain suggestion(s){oldest} (limits: {LOOSE_STALE_DAYS} days, "
-                            f"{LOOSE_STALE_COUNT} suggestions) -> decide them: `system_one.py drain accept | "
+                 "finding": f"{n} pending drain proposal(s){oldest} (limits: {LOOSE_STALE_DAYS} days, "
+                            f"{LOOSE_STALE_COUNT} proposals) -> decide them: `system_one.py drain accept | "
                             "decline | withdraw ID`; an ask is raised to the operator from the pile"}]
     return []
 
@@ -2009,7 +2023,7 @@ def check_loose_list(home: Path, today: "date | None" = None) -> list[dict]:
     items: list[dict] = []
     parsed = parse_loose_list(text)
     if not parsed["table"]:
-        return [{"kind": "loose-ends-malformed", "file": LOOSE_LIST_NAME,
+        return [{"kind": "loose-ends-unparseable", "file": LOOSE_LIST_NAME,
                  "finding": f"{LOOSE_LIST_NAME} has no `| ID | Added | Source | Item | State |` table "
                             "-> restore it from assets/loose-ends.md.tmpl"}]
     seen: set[str] = set()
@@ -2017,33 +2031,33 @@ def check_loose_list(home: Path, today: "date | None" = None) -> list[dict]:
     for lid, added, source, item, state, ncells in parsed["rows"]:
         name = lid or "(no id)"
         if ncells != 5:
-            items.append({"kind": "loose-ends-malformed", "id": name,
+            items.append({"kind": "loose-ends-unparseable", "id": name,
                           "finding": f"loose end {name} has {ncells} columns, not 5 -> fix the row"})
         if not LOOSE_ID_RE.fullmatch(lid):
-            items.append({"kind": "loose-ends-malformed", "id": name,
+            items.append({"kind": "loose-ends-unparseable", "id": name,
                           "finding": f"loose end {name} has a bad id (want L<n>) -> fix the id"})
         elif lid in seen:
-            items.append({"kind": "loose-ends-malformed", "id": lid,
+            items.append({"kind": "loose-ends-unparseable", "id": lid,
                           "finding": f"loose end {lid} appears twice -> ids are never reused: renumber the new one"})
         seen.add(lid)
         try:
             age = max(0, (today - date.fromisoformat(added)).days)
         except ValueError:
             age = None
-            items.append({"kind": "loose-ends-malformed", "id": name,
+            items.append({"kind": "loose-ends-unparseable", "id": name,
                           "finding": f"loose end {name} has no valid Added date (want YYYY-MM-DD) -> fix the row"})
         if state != "new" and not LOOSE_DECLINED_RE.fullmatch(state):
-            items.append({"kind": "loose-ends-malformed", "id": name,
+            items.append({"kind": "loose-ends-unparseable", "id": name,
                           "finding": f"loose end {name} has State {state!r}: it is `new` or "
-                                     "`declined: <reason>` (a `waiting: user` row is turned into an ask in the "
-                                     "pile by `system_one.py migrate --write`) -> fix the State; a routed or "
-                                     "closed item is removed from the list"})
+                                     "`declined: <reason>` -> fix the State (a row left by an older engine: "
+                                     "`system_one.py migrate --write`); a routed or closed item is "
+                                     "removed from the list"})
         elif state == "new" and age is not None:
             new_ages.append((age, name))
         if len(item) > LOOSE_ITEM_MAX:
             items.append({"kind": "loose-ends-oversized", "id": name,
                           "finding": f"loose end {name} is {len(item)} characters (limit {LOOSE_ITEM_MAX}) "
-                                     "-> author a work order for it and drop the row `--to WO-NNN`"})
+                                     "-> author a work-order for it and drop the row `--to WO-NNN`"})
     if parsed["outside"]:
         items.append({"kind": "loose-ends-oversized", "file": LOOSE_LIST_NAME,
                       "finding": f"{LOOSE_LIST_NAME} has text outside its header and table "
@@ -2055,7 +2069,7 @@ def check_loose_list(home: Path, today: "date | None" = None) -> list[dict]:
         oldest = f", oldest {old[1]} at {old[0]} days" if old else ""
         items.append({"kind": "loose-ends-stale",
                       "finding": f"{n_new} new loose end(s){oldest} (limits: {LOOSE_STALE_DAYS} days, "
-                                 f"{LOOSE_STALE_COUNT} items) -> drain the list (say *triage the loose ends*)"})
+                                 f"{LOOSE_STALE_COUNT} items) -> drain the list (say *drain the loose ends*)"})
     return items
 
 
@@ -2201,9 +2215,9 @@ def _slice_age_days(home: Path, path: Path, today: date) -> "int | None":
 
 def check_slices(home: Path, skill_dir: "Path | None", today: "date | None" = None) -> list[dict]:
     """The folder orders' slices (WO-110). Gating: `slice-landed-no-commit` (a landed slice with an empty `commit:`),
-    `slice-depends-dangling` (a `depends_on` naming no slice), `slice-depends-cycle`. Advisory: `ready-to-close` (an
+    `slice-depends-dangling` (a `depends_on` naming no slice), `slice-depends-cycle`. Advisory: `order-ready-to-close` (an
     open order whose slices are all landed or dropped), `slice-stale` (in-progress, no commit touching the file for
-    SLICE_STALE_DAYS), `file-oversized` (order.md or a slice over its per-file limit), `order-split-advice` (an open
+    SLICE_STALE_DAYS), `order-oversized` and `slice-oversized` (order.md or a slice over its per-file limit), `order-split-advice` (an open
     order with SPLIT_ADVICE_SLICES or more slices). Read-only; nothing to check without ledger_index.py."""
     today = today or date.today()
     src = _ledger_index_src(home, skill_dir)
@@ -2271,7 +2285,7 @@ def check_slices(home: Path, skill_dir: "Path | None", today: "date | None" = No
         mine = {k: v for k, v in slices.items() if v["nnn"] == nnn}
         rel = (folder / ORDER_FILE).relative_to(home).as_posix()
         if mine and all(v["status"] in ("landed", "dropped") for v in mine.values()):
-            items.append({"kind": "ready-to-close", "advisory": True, "wo": f"WO-{nnn}", "file": rel,
+            items.append({"kind": "order-ready-to-close", "advisory": True, "wo": f"WO-{nnn}", "file": rel,
                           "finding": f"WO-{nnn}: every slice is landed or dropped and the order is still open -> "
                                      "close it (adjudicate, move it to resolved/)"})
         if len(mine) >= li.SPLIT_ADVICE_SLICES:
@@ -2279,12 +2293,12 @@ def check_slices(home: Path, skill_dir: "Path | None", today: "date | None" = No
                           "finding": f"WO-{nnn} has {len(mine)} slices -> consider splitting the rest into a new order"})
         n = len((_read(folder / ORDER_FILE) or "").splitlines())
         if n > li.ORDER_MAX_LINES:
-            items.append({"kind": "file-oversized", "advisory": True, "wo": f"WO-{nnn}", "file": rel,
+            items.append({"kind": "order-oversized", "advisory": True, "wo": f"WO-{nnn}", "file": rel,
                           "finding": f"{rel} is {n} lines; limit {li.ORDER_MAX_LINES} (new slices are refused) -> trim it"})
         for sid, v in sorted(mine.items()):
             n = len((_read(v["path"]) or "").splitlines())
             if n > li.SLICE_MAX_LINES:
-                items.append({"kind": "file-oversized", "advisory": True, "wo": f"WO-{nnn}", "file": v["file"],
+                items.append({"kind": "slice-oversized", "advisory": True, "wo": f"WO-{nnn}", "file": v["file"],
                               "finding": f"{v['file']} is {n} lines; limit {li.SLICE_MAX_LINES} -> trim it or split the slice"})
             if v["status"] == "in-progress":
                 age = _slice_age_days(home, v["path"], today)
@@ -2355,7 +2369,7 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
         body = [s for s in (ln.strip() for ln in notes)
                 if s and not NOTE_PLACEHOLDER_RE.match(s) and not s.startswith("<!--")]
         if body and not NOTE_NONE_RE.match(" ".join(body)):
-            items.append({"kind": "notes-unadjudicated", "wo": f"WO-{nnn}",
+            items.append({"kind": "order-notes-unadjudicated", "wo": f"WO-{nnn}",
                           "file": path.name,
                           "finding": f"WO-{nnn} is resolved with Implementer notes and no "
                                      "'### Adjudication' block -> route each point "
@@ -2400,7 +2414,7 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
 # `federation`: no machine config, or a repo that opted out, means the category is ABSENT from the
 # report entirely. The logic lives in system_one.py and is IMPORTED here by path, not copied; a
 # machine that has a config but no readable system_one.py gets a VISIBLE skip.
-# Only an engine defect gates: `registry-invalid` (the question registry does not load: a table gap, a
+# Only an engine defect gates: `question-registry-unparseable` (the question registry does not load: a table gap, a
 # duplicate id, ...) counts into `total` and fails the exit code. `endpoint-down` (configured, repo not
 # opted out, the health probe fails, or the config is unusable) is ADVISORY: printed and present in
 # `--json`, flagged `"advisory": true`, never counted, never changing the exit code. Down is the normal
@@ -2439,16 +2453,20 @@ def check_system_one(home: Path, skill_dir: "Path | None") -> tuple[list[dict], 
         ok, detail = mod.health(cfg["endpoint"], cfg)
         if not ok:
             items.append({"kind": "endpoint-down", "advisory": True,
-                          "finding": f"System One is down ({detail}); the drain waits until it is back, "
-                                     f"or the orchestrator drains by hand"})
+                          "finding": f"System One is down ({detail}) -> nothing to fix here: the drain waits until "
+                                     f"it is back, or the orchestrator drains by hand"})
     except Exception as e:
         items.append({"kind": "endpoint-down", "advisory": True,
-                      "finding": f"System One is down (config unusable: {e}); the drain waits until it is "
-                                 f"back, or the orchestrator drains by hand"})
+                      "finding": f"System One is down (config unusable: {e}) -> repair the config, or "
+                                 f"let the drain wait until it is back, or have the orchestrator "
+                                 f"drain by hand"})
     problems = mod.registry_problems()
     for msg in problems:
-        items.append({"kind": "registry-invalid",
-                      "finding": f"the System One question registry does not load: {msg}"})
+        items.append({"kind": "question-registry-unparseable",
+                      "finding": f"the System One question registry does not load: {msg} -> an engine "
+                                 "defect, not this repo's: run `/gitos upgrade` to refresh "
+                                 "the tool copies, and if it persists author a work-order "
+                                 "against scripts/system_one_questions.py"})
     return items, None, True
 
 
@@ -2475,11 +2493,11 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         if v.isdigit():
             r["installed_version"] = int(v)
         else:
-            r["stamp"].append({"kind": "cannot-parse",
+            r["stamp"].append({"kind": "skill-version-unparseable",
                                "finding": f"no readable integer VERSION under {skill_dir} -> "
                                           "point --skill-dir at a skill install"})
 
-    # ledger + link rot
+    # ledger + dead links
     if (home / "INDEX.md").is_file() or (home / "work-orders").is_dir():
         r["ledger"].extend(check_ledger(home))
         r["ledger"].extend(landed_unresolved(home))
@@ -2515,7 +2533,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
     # at least one global lens (<home>/lenses.json, WO-091; a missing file means lenses are off)
     lens_cfg = lens_setting(home)
     if lens_cfg["error"]:
-        r["lenses"].append({"kind": "config-malformed", "layer": "repo",
+        r["lenses"].append({"kind": "lens-config-unparseable", "layer": "repo",
                             "finding": f"lenses.json: {lens_cfg['error']} -> fix the file "
                                        "(lenses stay off until it is valid)"})
         checked.add("lenses")
@@ -2528,7 +2546,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
     if lens_cfg["on"]:
         for n in sorted(set(lens_cfg["repo_off"])):
             if not (repo_agents / f"{n}.md").is_file():
-                r["lenses"].append({"kind": "repo-off-missing", "layer": "repo", "name": n,
+                r["lenses"].append({"kind": "lens-repo-off-missing", "layer": "repo", "name": n,
                                     "finding": f"lenses.json repo_off names '{n}' but <home>/agents/{n}.md "
                                                "does not exist -> remove the name"})
     if lens_cfg["on"] and lens_cfg["global"]:
@@ -2536,7 +2554,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
             global_agents = skill_dir / "agents"
             for n in sorted(set(lens_cfg["global"])):
                 if not (global_agents / f"{n}.md").is_file():
-                    r["lenses"].append({"kind": "selected-missing", "layer": "global", "name": n,
+                    r["lenses"].append({"kind": "lens-selected-missing", "layer": "global", "name": n,
                                         "finding": f"lenses.json selects global lens '{n}' but the global "
                                                    f"library has no {n}.md -> deselect it or restore the lens"})
             if global_agents.is_dir():
@@ -2735,6 +2753,16 @@ def check_index_drift(home: Path, skill_dir: Path | None) -> tuple[list[dict], s
             for name in regions], None
 
 
+def _finding_line(it: object) -> str:
+    """One finding as one readable line: `[advisory] kind: what is wrong -> what to do`. The sentence
+    is the finding's own `finding` text; the machine surface (`--json`) keeps the whole item."""
+    if not isinstance(it, dict):
+        return " ".join(str(it).split())
+    text = " ".join(str(it.get("finding", "")).split())
+    lead = ("[advisory] " if it.get("advisory") else "") + str(it.get("kind", "finding"))
+    return f"{lead}: {text}" if text else lead
+
+
 def print_report(r: dict) -> None:
     # THE HUMAN SURFACE, THROUGH THE CHOKE POINT. Everything foreign in the federation category
     # is capped and delimited here, at the moment of emission, rather than wherever somebody
@@ -2748,7 +2776,7 @@ def print_report(r: dict) -> None:
         ("Brainmeta counts vs disk", "counts"),
         ("Engine-version stamp", "stamp"),
         ("Lens registries (repo + global)", "lenses"),
-        ("Link rot (INDEX + open WOs)", "links"),
+        ("Dead links (INDEX + open work-orders)", "links"),
         ("Brain (delegated brain_lint)", "brain"),
         ("Durable anchor (CLAUDE.md recovery seed)", "anchor"),
         ("Engine tool copies (<home>/tools/ vs skill)", "tool"),
@@ -2785,7 +2813,7 @@ def print_report(r: dict) -> None:
             flag = "OK" if not gating else "!!"
             print(f"[{flag}] {title}: {len(gating)}")
             for it in items:
-                print(f"       - {json.dumps(it, ensure_ascii=False)}")
+                print(f"       - {_finding_line(it)}")
         elif not skips.get(key):
             print(f"[--] {title}: skipped (not applicable)")
         # every skipped sub-check gets its OWN [--] line — a skip folded into an
@@ -2797,12 +2825,12 @@ def print_report(r: dict) -> None:
     info = dispatch_distribution(Path(r["home"]), Path(r["skill_dir"]) if r["skill_dir"] else None)
     if info:
         print(info)
-    print(f"\n{'CLEAN - nothing flagged.' if total == 0 else f'{total} item(s) flagged. The canary reports; fixes are normal orchestrator/implementer work - resolution stays gated while red.'}")
+    print(f"\n{'canary: CLEAN' if total == 0 else f'canary: {total} finding(s). The canary reports; fixes are normal orchestrator/implementer work - resolution stays gated while red.'}")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Read-only state canary for a GitOS home.")
-    ap.add_argument("home", help="the gitos home dir, e.g. <repo>/.gitos")
+    ap.add_argument("home", help="the home directory, e.g. <repo>/.gitos")
     ap.add_argument("--skill-dir", default=None,
                     help="installed skill root override (default: auto-resolve)")
     ap.add_argument("--stale-days", type=int, default=60,
@@ -2821,7 +2849,7 @@ def main() -> int:
     home = Path(args.home).resolve()
     if not home.is_dir():
         # a missing/typo'd home is a USAGE error — the resolution gate must never read it as green
-        print(f"canary: no gitos home at {home} -> pass the gitos home dir, e.g. <repo>/.gitos",
+        print(f"canary: no home at {home} -> pass the home directory, e.g. <repo>/.gitos",
               file=sys.stderr)
         if args.json:
             print(json.dumps({"home": str(home), "error": "no such home"},

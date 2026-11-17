@@ -61,7 +61,7 @@ Properties this module is built to hold:
     forbids it. `read_proposal_body` exists, is named for what it does, and is reached only by
     the explicit `--show` action and by disposition (which preserves the body verbatim).
   * COOPERATIVE, NOT A SANDBOX. Groups and flags are graduated-sharing policy that
-    participants honor; they are not an enforcement boundary and they keep no secrets.
+    siblings honor; they are not an enforcement boundary and they keep no secrets.
     Federation is machine-local by construction (no network, no daemon), and the machine is
     the only isolation involved. Anything that must not see something else belongs on a
     different machine - that is a topology decision, made before federation is reached.
@@ -108,7 +108,7 @@ this repo's board item.
 Exit codes: 0 = done (including "not federated" AND every consult/file refusal - a refusal is
 an outcome, not a tool failure), 1 = error, 2 = usage error.
 STDLIB ONLY. No network. No daemon - the registry is a lazy cache maintained as a side
-effect of participants running gitos, and it is eventually consistent by design.
+effect of siblings running gitos, and it is eventually consistent by design.
 """
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA = 1                       # format version of both artifacts (they are read by peers)
+SCHEMA = 1                       # format version of both artifacts (they are read by siblings)
 FEDERATION_FILENAME = "federation.json"
 DEFAULT_GROUP = "default"
 REGISTRY_REL = (".claude", "gitos-federation", "tenants")
@@ -217,7 +217,7 @@ DECLINED_DIRNAME = "declined"
 # reason the registry is per-tenant: a shared file has no per-row write, so two sessions sending
 # at once would silently lose each other's entries.
 OUTBOX_DIRNAME = "outbox"
-# Wire format of the proposal file. Versioned because peers read it: a proposal written by a
+# Wire format of the proposal file. Versioned because siblings read it: a proposal written by a
 # NEWER engine is refused by name rather than half-parsed.
 PROPOSAL_SCHEMA = 1
 PROPOSAL_OPEN = "<!-- gitos-proposal v1 -->"
@@ -3226,7 +3226,7 @@ def ensure_gitignore(root: Path, home: Path) -> "tuple[str, str | None]":
 
     Opt-in is per checkout, so the truth file must not travel in git - and a federated repo
     must not show a permanently untracked file either. Exactly ONE path is ignored: the
-    pipeline home itself stays tracked, because the ledger and the brain are the repo's audit
+    home itself stays tracked, because the ledger and the brain are the repo's audit
     trail. Append-only and idempotent; it never removes or rewrites an existing line.
 
     -> (status, pattern) with status in {'present', 'appended', 'created', 'skipped'}.
@@ -3511,7 +3511,7 @@ def _print_fleet(view: dict) -> None:
           f"at read time, never stored")
     if not view["groups"] and not view["unreadable"]:
         print("    no tenant records match -> nobody else has registered yet, or the registry "
-              "was cleared (it rebuilds itself as participants run)")
+              "was cleared (it rebuilds itself as siblings run)")
     for group, members in view["groups"].items():
         # A GROUP LABEL IS A SIBLING'S STRING TOO, AND IT IS THIS DICT'S KEY - which is why the
         # serializer walks keys. By here it has already been capped and delimited.
@@ -4220,7 +4220,7 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("target", help="the tenant to act on: its id, or its display name")
         p.add_argument("root", nargs="?", default=".", help="repo root (default: .)")
         p.add_argument("--home", default=None,
-                       help="gitos home override (default: auto-detect .gitos/ -> .pipeline/ "
+                       help="the home directory (default: auto-detect .gitos/ -> .pipeline/ "
                             "-> outputs/debug/ -> docs/agents/)")
         p.add_argument("--registry", default=None,
                        help="tenants directory override (default: "

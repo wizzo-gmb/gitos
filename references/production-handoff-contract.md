@@ -70,6 +70,15 @@ rollback:
   confirmation: <FILL — how you know rollback succeeded>
 ```
 
+**Writes with an unknown outcome.** A write to an external system (a payment, an order, a message, a migration step) that times out or loses its connection may or may not have happened. Classify every such write as `not-sent`, `sent-ok` or `sent-unknown`. A `sent-unknown` write is never retried or reclassified blind: settle it by reading the authoritative state first. Record the intent durably before sending, tagged so that a restarted process can tell its own writes from anyone else's.
+
+```
+ambiguous_writes:
+  - write: <FILL — which external write can end with an unknown outcome>
+    resolution: <FILL — the authoritative read that settles it before any retry>
+    intent_record: <FILL — where intent is recorded before sending, and the ownership tag>
+```
+
 ### 5. Observability — logs, metrics, alerts
 
 *What to document here:* What the system emits, where it goes, and what you watch. For logs: format (structured JSON is better than free text), path or stream, rotation policy, what a healthy log looks like vs. an unhealthy one. For metrics: which counters/gauges/histograms are emitted, what their normal ranges are, and what's a warning vs. a page. For alerts: who gets paged for what, and what the on-call response should be.
@@ -92,7 +101,7 @@ observability:
 
 ### 6. Performance budget
 
-*What to document here:* The latency, throughput, and resource ceilings the system is expected to operate within. These should match (or be derived from) the acceptance criteria in `handoff.md §Acceptance`. Include both the steady-state expectation and the degraded-mode floor: how slow is too slow, how much memory is too much, and what triggers a scale-up vs. an incident.
+*What to document here:* The latency, throughput, and resource ceilings the system is expected to operate within. These should match (or be derived from) the acceptance criteria in `HANDOFF.md §Acceptance criteria`. Include both the steady-state expectation and the degraded-mode floor: how slow is too slow, how much memory is too much, and what triggers a scale-up vs. an incident.
 
 ```
 performance:
@@ -124,7 +133,10 @@ dependencies:
   libraries: <FILL — version-pinned list or pointer to lockfile>
   external_services: <FILL — APIs, databases, queues — their SLAs and your fallback>
   unavailability_behavior: <FILL — what happens if each dependency is down>
+  test_doubles: <FILL — each fake of an external system, what it is checked against, and where it is kinder than the real one>
 ```
+
+**Test doubles are no kinder than the real system.** A fake or stub for an external system follows the real system's documented behaviour, never a kinder reading of it: message ordering, partial failures, rejections and delays included. Where a fake is known to be kinder, list the difference under section 10. Keep the vendor's acceptance scenarios as data and run them against every implementation, fake and real, after each dependency upgrade and before replacing one implementation with another.
 
 ### 9. Runbook
 

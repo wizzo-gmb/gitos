@@ -2,7 +2,7 @@
 
 This is the single source of truth for the per-repo **brain**: a self-contained,
 code-adapted knowledge vault the orchestrator reads, queries, and grows as it
-builds with the user. It is the orchestrator's long-term memory — the thing that
+works with the operator. It is the orchestrator's long-term memory — the thing that
 lets a fresh or post-compaction session resume without re-learning the repo.
 
 The brain is **self-contained**: every repo carries its own brain under
@@ -101,7 +101,7 @@ system works" knowledge that spans files. Same frontmatter shape as an entity wi
 
 ### Decision page (`wiki/decisions/<slug>.md`) — the highest-value type
 
-An ADR-style record of a non-trivial choice made with the user: what was decided,
+An ADR-style record of a non-trivial choice made with the operator: what was decided,
 the context, the options weighed, and **why** this one won. This is the knowledge
 that most reliably survives compaction and onboards the next session — code shows
 *what*, decisions explain *why*.

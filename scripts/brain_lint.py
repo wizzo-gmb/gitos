@@ -48,6 +48,16 @@ RECORD_DATED_PTYPES = ("decisions",)
 FM_TRUE = {"true", "yes", "1"}
 WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 WORKORDER = re.compile(r"\b(?:WO-\d+|bug_\d{2,})\b", re.IGNORECASE)
+# A markdown link to an order (`[WO-164](work-orders/WO-164/order.md)`) is a pointer, not a
+# restatement: the whole link, text and target, is dropped before ids are counted. What is left
+# is prose, where DISTINCT ids are counted, so one order named several times is one order.
+MD_LINK = re.compile(r"\[[^\]]*\]\([^)]*\)")
+
+
+def wo_ids(body: str) -> set[str]:
+    return {m.upper() for m in WORKORDER.findall(MD_LINK.sub(" ", body))}
+
+
 # Upgrade ADR (references/upgrade.md step 6): `decisions/engine-upgrade-vN.md`. It cites the
 # ENGINE's work orders, which are not this repo's ids, so the id count is skipped for it alone.
 # The page name is the narrowest marker the procedure already mandates; a plain decision page
@@ -186,7 +196,7 @@ def lint(brain_dir: Path, stale_days: int, today: date) -> dict:
                               "age_days": (today - p.updated).days})
         # cross-layer: restates a work-order (in body, not the legit frontmatter field)
         engine_adr = p.ptype == "decisions" and UPGRADE_ADR.match(p.slug) is not None
-        wo_hits = 0 if engine_adr else len(WORKORDER.findall(p.body))
+        wo_hits = 0 if engine_adr else len(wo_ids(p.body))
         if wo_hits >= 2 and not p.fm_work_order:
             cross_layer.append({"page": str(p.path), "reason": f"restates work-order(s) x{wo_hits}"})
         elif wo_hits >= 3:

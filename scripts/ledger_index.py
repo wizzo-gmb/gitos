@@ -165,7 +165,7 @@ def drift(home: Path) -> list[str] | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generate the INDEX.md Open and Resolved tables from the order files.")
-    ap.add_argument("home", help="the gitos home dir, e.g. <repo>/.gitos")
+    ap.add_argument("home", help="the home directory, e.g. <repo>/.gitos")
     ap.add_argument("--check", action="store_true", help="write nothing; exit 1 when a region differs")
     args = ap.parse_args()
     home = Path(args.home).resolve()

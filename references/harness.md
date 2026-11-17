@@ -1,4 +1,4 @@
-# The harness profile — each repo declares what it loads
+# The harness file — each repo declares what it loads
 
 A repo's Claude Code harness (skills, plugins, MCP servers, connectors, hooks, subagent
 definitions) is **declared** in `<home>/harness.json`, **measured** by `harness.py audit`,
@@ -73,7 +73,7 @@ is `--restore-sync-skills` / `--restore-sync-plugins` and removes the local `fal
 `true`, because only `false` is honoured. A user-scope `false` is proposed for removal, never
 removed. Both flags for one switch are refused. Like a confirmed removal, the answer is its own
 consent and needs neither a `harness.json` nor `adopted: true`. Turning sync back on while the
-declaration says off makes drift report `sync-not-off` until the declaration changes.
+declaration says off makes drift report `harness-sync-not-off` until the declaration changes.
 
 Synced plugins are read from `<claude-home>/plugins/synced/` and load as `<name>@synced`. One with
 no observed use is an ordinary plugin candidate. Declaration-driven `sync` and drift leave synced
@@ -113,7 +113,7 @@ marketplaces added from claude.ai, and off for every other.
   `sync` says so instead.
 - `review` (the default): unchanged; drift reports version moves.
 - `pinned`: no write, because no per-plugin pin is documented. When the plugin's marketplace
-  auto-updates, drift reports `pinned-but-auto-updates`, with the consequence: turning that
+  auto-updates, drift reports `plugin-pinned-auto-updates`, with the consequence: turning that
   marketplace's `autoUpdate` off freezes **every** plugin from it. The operator decides; the engine
   never picks a side.
 - `known_marketplaces.json` is the client's own record. `harness.py` reads it and never writes it.
@@ -129,12 +129,12 @@ whole auto-update pass off unless `FORCE_AUTOUPDATE_PLUGINS` is set. `audit` rep
   lower bound against the 30-50 band; tool-search state (`ENABLE_TOOL_SEARCH`, forced-off
   conditions); hooks by scope and which reach every repo; subagent definitions; proposed edits;
   the limits below.
-- `drift` (read-only; findings gate, notices do not): `undeclared-skill`, `declared-skill-missing`,
-  `skill-pin-moved`, `undeclared-plugin`, `plugin-outside-baseline`, `declared-plugin-missing`,
-  `pin-moved`, `pinned-but-auto-updates`, `undeclared-mcp`, `undeclared-connector`, `sync-not-off`,
-  `connectors-not-off`,
-  `undeclared-hook`, `undeclared-agent`, `declared-agent-missing`, `agent-changed`,
-  `declaration-unreadable`.
+- `drift` (read-only; findings gate, notices do not): `skill-undeclared`, `skill-missing`,
+  `skill-pin-moved`, `plugin-undeclared`, `plugin-outside-baseline`, `plugin-missing`,
+  `plugin-pin-moved`, `plugin-pinned-auto-updates`, `mcp-undeclared`, `connector-undeclared`, `harness-sync-not-off`,
+  `harness-connectors-not-off`,
+  `hook-undeclared`, `agent-undeclared`, `agent-missing`, `agent-pin-moved`,
+  `harness-declaration-unparseable`.
 - `update` (report-only unless `--apply`; writes `harness.json` only).
 - `sync` (dry run unless `--apply`). Backs up first to `<claude-home>/backups/harness-<stamp>/`.
   Writes only: library skill copies into `<repo>/.claude/skills/`; in
@@ -152,7 +152,7 @@ subtract a user-scope entry.
 
 `.claude/agents/` definitions carry `model`, `effort`, `tools`, `skills`, `mcpServers` and `hooks`, so
 an undeclared or drifted one changes routing silently. **WO-055 writes the definitions; this order
-declares and audits them** (`agents[].sha256` pins the file; `agent-changed` fires on any edit).
+declares and audits them** (`agents[].sha256` pins the file; `agent-pin-moved` fires on any edit).
 `harness.py` never writes under `.claude/agents/`.
 
 Hooks at user or plugin scope **broadcast**: one edit to the user `settings.json` woke four live

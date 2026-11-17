@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """slice.py - the slice commands of a folder order (an order with two or more slices).
 
-    python slice.py add  WO-NNN NAME HOME [--depends-on WO-NNN/SN ...] [--origin TEXT]
+    python slice.py add  WO-NNN NAME HOME [--depends-on WO-NNN/SN ...] [--origin TEXT] [--s1-name NAME]
     python slice.py next [WO-NNN] HOME
     python slice.py brief WO-NNN/SN HOME
 
-HOME is the gitos home dir (`<repo>/.gitos`). An order is a single file `work-orders/WO-NNN-slug.md` while it
+HOME is the home directory (`<repo>/.gitos`). An order is a single file `work-orders/WO-NNN-slug.md` while it
 has one slice, and a folder once it has two:
 
     work-orders/WO-NNN/order.md              the spec, frozen at accept (amended only by appended, dated notes)
@@ -15,12 +15,14 @@ has one slice, and a folder once it has two:
 
   * `add` is the orchestrator's. On a single-file order it first converts the order with `git mv` (blame
     survives on `order.md`): the scope section becomes `S1`, the rest stays `order.md`; then it writes the new
-    slice as `proposed`. On a folder order it writes the next number. It refuses inside a worker's worktree
-    (one made by `worktree.py new NNN --slice SN`).
+    slice as `proposed`. S1 is named by `--s1-name NAME`, else from the first heading words of the scope (a `### S1`
+    slice heading, a heading inside the scope, or its first line), else `scope`; the log line says which. On a
+    folder order it writes the next number. It refuses inside an implementer's worktree (one made by
+    `worktree.py new NNN --slice SN`).
   * `next` prints the first `ready` slice whose `depends_on` are all `landed` (across orders: by severity,
     then number); with none it says so and exits 1, naming what waits on what.
-  * `brief` prints what a worker reads: `order.md`, the slice file, and the Durable facts of each *landed*
-    dependency, each under its path. Nothing else is inlined; a worker opens other files by path.
+  * `brief` prints what an implementer reads: `order.md`, the slice file, and the Durable facts of each *landed*
+    dependency, each under its path. Nothing else is inlined; the implementer opens other files by path.
 
 Status values: proposed | ready | in-progress | implemented | landed | dropped. Stdlib only; the front-matter
 parser is `ledger_index.parse_front_matter`.
@@ -44,6 +46,7 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 SLICE_FILE_RE = re.compile(r"^S(\d+)(?:-[^/]*)?\.md$")
 SLICE_HEAD_RE = re.compile(r"^###\s+S(\d+)\b\s*[—–:-]*\s*(.*)$")
 MARKER = "gitos-slice"
+SCOPE_HEADINGS = ("## Proposed fix scope", "## Proposed scope")   # the second is the retired forward-form heading: read, never written
 NOTE_LABELS = ("Deviations", "Surprises", "Durable facts", "Process notes", "Follow-ups")
 
 
@@ -130,7 +133,7 @@ def find_slice(home: Path, sid: str):
     return None
 
 
-def _worker_marker(home: Path):
+def _slice_marker(home: Path):
     out = _git(home, "rev-parse", "--absolute-git-dir")
     if out and (Path(out.strip()) / MARKER).is_file():
         return (Path(out.strip()) / MARKER).read_text(encoding="utf-8").strip()
@@ -170,8 +173,23 @@ def _section(lines: list, idx: int, level_prefix: str) -> int:
     return len(lines)
 
 
-def convert(home: Path, path: Path, nnn: str):
-    """Single-file order -> folder. -> (folder, slice file, note)."""
+_LEADING_FILLER = frozenset("a an the to of on onto in into and or for with from by as at is are".split())
+
+
+def _scope_words(body: str, limit: int = 4) -> str:
+    """The first words of a scope body, for naming S1: its first heading, else its first line of text.
+    '' when there are none."""
+    lines = [ln.strip() for ln in body.split("\n") if ln.strip()]
+    pick = next((ln for ln in lines if ln.startswith("#")), None) or (lines[0] if lines else "")
+    words = re.findall(r"[A-Za-z0-9]+", re.sub(r"^[#>*\-\s]+", "", pick))[:limit]
+    while len(words) > 1 and words[-1].lower() in _LEADING_FILLER:
+        words.pop()
+    return " ".join(words)
+
+
+def convert(home: Path, path: Path, nnn: str, s1_name: "str | None" = None):
+    """Single-file order -> folder. -> (folder, slice file, note). S1's name is `s1_name` when given, else the
+    words of the `### S1` slice heading, else the first heading words of the scope; the note says which."""
     text = _read(path).replace("\r\n", "\n")
     lines = text.split("\n")
     heads = [i for i, ln in enumerate(lines) if SLICE_HEAD_RE.match(ln)]
@@ -190,10 +208,11 @@ def convert(home: Path, path: Path, nnn: str):
         end = _section(lines, i, "### ")
         m = SLICE_HEAD_RE.match(lines[i])
         title = m.group(2).strip() or "scope"
+        source = "the slice heading"
         body = "\n".join(lines[i + 1:end])
         new_lines = lines[:i + 1] + ["", "(moved to slices/S1-@NAME@.md)", ""] + lines[end:]
     else:
-        i = next((k for k, ln in enumerate(lines) if ln.startswith("## Proposed fix scope")), None)
+        i = next((k for k, ln in enumerate(lines) if ln.startswith(SCOPE_HEADINGS)), None)
         if i is None:
             raise SliceError(f"{path.name} has no slice section and no '## Proposed fix scope' to become S1; "
                              f"nothing was changed")
@@ -201,8 +220,13 @@ def convert(home: Path, path: Path, nnn: str):
         title = re.sub(r"^WO-?\d{3}\s*[—–-]+\s*", "", next((ln[2:].strip() for ln in lines if ln.startswith("# ")),
                                                            "scope"))
         body = "\n".join(lines[i + 1:end])
+        words = _scope_words(body)
+        title, source = (words, "the scope's first heading words") if words else (title, "the order title")
         new_lines = lines[:i + 1] + ["", "(moved to slices/S1-@NAME@.md)", ""] + lines[end:]
-    name = _slug(title)
+    if s1_name:
+        name, source = s1_name, "--s1-name"
+    else:
+        name = _slug(title)
     folder = path.parent / f"WO-{nnn}"
     if folder.exists():
         raise SliceError(f"{_rel(home, folder)} already exists beside the single-file order; nothing was changed")
@@ -218,19 +242,21 @@ def convert(home: Path, path: Path, nnn: str):
     sl = folder / "slices" / f"S1-{name}.md"
     _write(sl, _slice_text(1, title, "ready", body))
     _write(folder / "log.md", f"# WO-{nnn} log\n\n- {date.today().isoformat()} converted to the folder form: "
-                              f"the scope became S1 ({name}, ready)\n")
+                              f"the scope became S1 ({name}, ready; named from {source})\n")
     note = ("converted " + path.name + " -> " + _rel(home, dest) + (" (git mv)" if moved else " (plain move: not tracked)")
-            + f"; S1-{name} is `ready` (set it by hand if the work has started)")
+            + f"; S1-{name} is `ready`, named from {source} (set it by hand if the work has started)")
     return folder, sl, note
 
 
-def slice_add(home: Path, wo: str, name: str, depends_on=(), origin: str = ""):
+def slice_add(home: Path, wo: str, name: str, depends_on=(), origin: str = "", s1_name: "str | None" = None):
     nnn = norm_wo(wo)
     if not NAME_RE.match(name):
         raise SliceError(f"slice name '{name}' must be lower-case letters, digits and hyphens")
-    marker = _worker_marker(home)
+    if s1_name and not NAME_RE.match(s1_name):
+        raise SliceError(f"--s1-name '{s1_name}' must be lower-case letters, digits and hyphens")
+    marker = _slice_marker(home)
     if marker:
-        raise SliceError(f"this is a worker's worktree (slice {marker}): `slice add` is the orchestrator's; "
+        raise SliceError(f"this is an implementer's worktree (slice {marker}): `slice add` is the orchestrator's; "
                          f"nothing was changed")
     found = find_order(home, nnn)
     if not found:
@@ -243,7 +269,7 @@ def slice_add(home: Path, wo: str, name: str, depends_on=(), origin: str = ""):
             raise SliceError(f"depends-on '{d}' is not a slice id (WO-NNN/SN)")
     msgs = []
     if not is_folder:
-        folder, _s1, note = convert(home, path, nnn)
+        folder, _s1, note = convert(home, path, nnn, s1_name)
         msgs.append(note)
     else:
         folder = path
@@ -374,14 +400,16 @@ def main(argv=None) -> int:
     a_add = sub.add_parser("add", help="add a slice (converts a single-file order to the folder form first)")
     a_add.add_argument("wo")
     a_add.add_argument("name")
-    a_add.add_argument("home")
+    a_add.add_argument("home", help="the home directory, e.g. <repo>/.gitos")
     a_add.add_argument("--depends-on", nargs="*", default=[], metavar="WO-NNN/SN")
     a_add.add_argument("--origin", default="")
+    a_add.add_argument("--s1-name", default=None, metavar="NAME",
+                       help="name S1 when a single-file order converts (default: the scope's first heading words)")
     a_next = sub.add_parser("next", help="the first ready slice whose dependencies are all landed")
     a_next.add_argument("args", nargs="+", metavar="[WO-NNN] HOME")
-    a_brief = sub.add_parser("brief", help="print a worker's brief for WO-NNN/SN")
+    a_brief = sub.add_parser("brief", help="print an implementer's brief for WO-NNN/SN")
     a_brief.add_argument("slice")
-    a_brief.add_argument("home")
+    a_brief.add_argument("home", help="the home directory, e.g. <repo>/.gitos")
     a = ap.parse_args(argv)
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -391,7 +419,7 @@ def main(argv=None) -> int:
     try:
         if a.cmd == "add":
             home = Path(a.home).resolve()
-            for m in slice_add(home, a.wo, a.name, a.depends_on, a.origin):
+            for m in slice_add(home, a.wo, a.name, a.depends_on, a.origin, a.s1_name):
                 print(f"slice: {m}")
             return 0
         if a.cmd == "next":

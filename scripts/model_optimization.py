@@ -30,6 +30,14 @@ def require(condition, message):
         raise Invalid(message)
 
 
+def checked(source, fix, read):
+    """Run `read()`; an Invalid it raises is re-raised naming the file it came from and the fix."""
+    try:
+        return read()
+    except Invalid as exc:
+        raise Invalid(f"{source}: {exc} -> {fix}") from exc
+
+
 def strings(value):
     return isinstance(value, list) and all(isinstance(x, str) and x for x in value)
 
@@ -44,12 +52,12 @@ def read_json(path):
     try:
         return json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_keys)
     except (OSError, ValueError) as exc:
-        raise Invalid(f"Cannot read JSON {path}: {exc}") from exc
+        raise Invalid(f"cannot read JSON {path}: {exc} -> check that the file exists and is valid JSON") from exc
 
 
 def home_path(root, requested="auto"):
     root = Path(root).resolve()
-    require(root.is_dir(), "Repo root must be an existing directory")
+    require(root.is_dir(), f"repo root {root} is not a directory -> pass the repo root as ROOT")
     if requested != "auto":
         return root / requested
     return next((root / p for p in HOMES if (root / p).is_dir()), root / ".gitos")
@@ -151,7 +159,10 @@ def validate_config(config):
 
 def load_config(home):
     path = home / FILENAME
-    return validate_config(read_json(path)) if path.exists() else empty_config()
+    if not path.exists():
+        return empty_config()
+    return checked(FILENAME, "repair the file, or delete it to start from `unasked`",
+                   lambda: validate_config(read_json(path)))
 
 
 def save_config(home, config):
@@ -161,7 +172,7 @@ def save_config(home, config):
 
 def save_json(home, filename, value):
     # Explicit configuration requires an existing pipeline; never scaffold by accident.
-    require(home.is_dir(), "Pipeline home missing; initialize GitOs first")
+    require(home.is_dir(), f"no home at {home} -> run scaffold.py to initialize GitOS first")
     write_json_atomic(home / filename, value)
 
 
@@ -169,7 +180,7 @@ def write_json_atomic(path, value):
     """Replace `path` with `value` as JSON, atomically, and only when the bytes would change.
 
     Separated from `save_json` because the hook registration below writes a file OUTSIDE the
-    pipeline home, and an operator's settings file deserves the same no-partial-write
+    home, and an operator's settings file deserves the same no-partial-write
     guarantee as the engine's own state. -> True when bytes changed.
     """
     path = Path(path)
@@ -217,7 +228,7 @@ def ensure_gitignore(root, home):
 
     The baseline is per session, so the transient record must not travel in git - and a repo
     with optimization on must not show a permanently untracked file either. Exactly ONE path is
-    ignored: the pipeline home itself stays tracked, because the ledger and the brain are the
+    ignored: the home itself stays tracked, because the ledger and the brain are the
     repo's audit trail. Append-only and idempotent; it never removes or rewrites an existing
     line.
 
@@ -251,11 +262,11 @@ def report_gitignore(root, status, pattern):
     rather than silent.
     """
     if status == "skipped":
-        print(f"model optimization: .gitignore skipped - the home is not inside the repo root; "
+        print(f"model_optimization: .gitignore skipped - the home is not inside the repo root; "
               f"ignore '{SESSION_FILENAME}' by hand so the baseline stays per session",
               file=sys.stderr)
         return
-    print(f"model optimization: .gitignore {status} '{pattern}' in {Path(root) / '.gitignore'} "
+    print(f"model_optimization: .gitignore {status} '{pattern}' in {Path(root) / '.gitignore'} "
           f"(the baseline is per session, so the record stays out of commits)", file=sys.stderr)
 
 
@@ -344,7 +355,10 @@ def validate_session(state):
 
 def load_session(home):
     path = home / SESSION_FILENAME
-    return validate_session(read_json(path)) if path.exists() else None
+    if not path.exists():
+        return None
+    return checked(SESSION_FILENAME, "delete the file and run `session-init` to start a new baseline",
+                   lambda: validate_session(read_json(path)))
 
 
 # --------------------------------------------------------------------------- currency
@@ -810,11 +824,11 @@ def report_settings_hook(root, status, detail):
     """Name the registration outcome on stderr; stdout stays the machine-readable record."""
     path = Path(root) / ".claude" / "settings.json"
     if status == "skipped":
-        print(f"model optimization: currency hook NOT registered - {detail}. Register it by hand, "
+        print(f"model_optimization: currency hook NOT registered - {detail}. Register it by hand, "
               f"or an operator model/effort change leaves the baseline stale instead of unknown",
               file=sys.stderr)
         return
-    print(f"model optimization: currency hook {status} in {path} ({detail}); an announced "
+    print(f"model_optimization: currency hook {status} in {path} ({detail}); an announced "
           f"operator change now invalidates the baseline rather than leaving it stale",
           file=sys.stderr)
 
@@ -832,7 +846,7 @@ def hook_command(stream):
         payload = json.loads(stream.read() or "null")
         root = payload.get("cwd") if isinstance(payload, dict) else None
         if not isinstance(root, str) or not Path(root).is_dir():
-            print("model optimization hook: inert - the announcement names no usable cwd",
+            print("gitos model_optimization: inert - the announcement names no usable cwd",
                   file=sys.stderr)
             return 0
         home = home_path(root)
@@ -841,9 +855,9 @@ def hook_command(stream):
         if not load_config(home)["enabled"]:
             return 0
         action, detail = apply_event(home, payload)
-        print(f"model optimization hook: {action} - {detail}", file=sys.stderr)
+        print(f"gitos model_optimization: {action} - {detail}", file=sys.stderr)
     except Exception as exc:  # a hook must never be the thing that breaks a session
-        print(f"model optimization hook: inert - {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"gitos model_optimization: inert - {type(exc).__name__}: {exc}", file=sys.stderr)
     return 0
 
 
@@ -987,7 +1001,7 @@ def main(argv=None):
     parser.add_argument("--tier", choices=TIERS, default="standard")
     parser.add_argument("--lead")
     parser.add_argument("--lead-effort")
-    parser.add_argument("--session", help="Explicit identity of this active GitOs session")
+    parser.add_argument("--session", help="Explicit identity of this active GitOS session")
     parser.add_argument("--new-session", action="store_true", help="Deliberately replace a different session baseline")
     parser.add_argument("--model-source", choices=("harness", "operator"))
     parser.add_argument("--effort-source", choices=("harness", "operator"))
@@ -1025,7 +1039,8 @@ def main(argv=None):
                 output = config
             elif args.command == "configure":
                 require(args.harness and args.file, "configure requires --harness and --file")
-                mapping = validate_mapping(read_json(args.file))
+                mapping = checked(f"--file {args.file}", "fix the mapping file, then re-run `configure`",
+                                  lambda: validate_mapping(read_json(args.file)))
                 # Replace routing fields while preserving unrelated per-harness settings.
                 merged = copy.deepcopy(config["harnesses"].get(args.harness, {}))
                 merged.update(mapping)
@@ -1081,7 +1096,7 @@ def main(argv=None):
         print(json.dumps(output, indent=2, ensure_ascii=False))
         return 3 if output.get("status") in ("blocked", "recommendation-only") else 0
     except (Invalid, OSError) as exc:
-        print(f"model optimization: {exc}", file=sys.stderr)
+        print(f"model_optimization: {exc}", file=sys.stderr)
         return 2
 
 

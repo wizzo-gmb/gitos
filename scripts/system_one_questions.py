@@ -148,7 +148,7 @@ def _name_or_escalate(qid: str):
 register(
     "loose-end-join",
     questions=[question("joins", "noul",
-                        "Item B is about the same part of the product as work order A, so whoever does or "
+                        "Item B is about the same part of the product as work-order A, so whoever does or "
                         "plans order A should look at it.",
                         {"true": "B concerns the same feature, screen, data, component or rule that order A "
                                  "works on, even if order A does not mention it.",
@@ -165,7 +165,7 @@ PICK_SAMPLE = {"WO-001": "Sample order about sorting a list.", "WO-002": "Sample
 register(
     "loose-end-pick",
     questions=[question("order", "choice",
-                        "Which of these work orders is about the same part of the product as this item?",
+                        "Which of these work-orders is about the same part of the product as this item?",
                         PICK_SAMPLE)],
     table=_name_or_escalate("order"),
     outcomes={n: REVERSIBLE for n in PICK_SAMPLE},
@@ -174,7 +174,7 @@ register(
 register(
     "loose-end-bundle",
     questions=[question("bundles", "noul",
-                        "One work order could do item A and item B together, because they change "
+                        "One work-order could do item A and item B together, because they change "
                         "the same thing for related reasons.",
                         {"true": "Both items change the same file, rule or behaviour for connected "
                                  "reasons, so one order would be smaller than two.",

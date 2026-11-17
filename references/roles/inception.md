@@ -14,7 +14,7 @@ inception proceeds), **recomputed each reply**. Slipped / stale → the reinject
 
 ---
 
-## Phase 1 — The interview (~7 questions, conversational)
+## Phase 1 — The interview (nine questions, conversational)
 
 Include the one-time optional **model optimization** preference: Disabled (default)
 or Enabled, using the harness question UI where available. Follow
@@ -23,7 +23,7 @@ after scaffolding, including skipped/off when unanswered. A recorded preference 
 not asked again. Scaffolding alone never enables routing.
 
 Ask these in a single pass, conversationally (not as a numbered form). Adapt the
-wording to the user's domain and vocabulary. Every answer feeds the handoff and seeds
+wording to the operator's domain and vocabulary. Every answer feeds the handoff and seeds
 the brain — collect them before running the scaffold.
 
 > **Note — lenses.** Operator-imported **lenses** (if any) live in `<home>/agents/` and are applied
@@ -37,10 +37,13 @@ the brain — collect them before running the scaffold.
    checks must a change pass before it is "done" — tests, reviews, benchmarks,
    sign-off, a manual verification step? If the project has formal stage gates
    (e.g. candidate → promoted), describe them. These become the project's
-   `references/acceptance-criteria.md` instance.
+   `references/acceptance-criteria.md` instance. Also ask for the **null baseline** (what the simplest
+   alternative scores), where each gate's **gate-math test** will live, a **negative control** per gate
+   ((a), (h), (j) in `references/disciplines.md`), and when the gates get a **precommitment stamp**
+   (commit hash or UTC date, (l) name-the-clock) before the first evaluation run.
 
-3. **Hold-out / test discipline.** Is there a locked evaluation set, hold-out dataset,
-   or test slice that must not be touched until final evaluation? If yes: what is it,
+3. **Hold-out discipline.** Is there a hold-out (a locked evaluation dataset, environment or
+   surface) that must not be touched until final evaluation? If yes: what is it,
    where does it live, and what rule governs access? If no hold-out applies, say so
    explicitly — the handoff records this either way.
 
@@ -70,7 +73,7 @@ the brain — collect them before running the scaffold.
      prune pass). Good for mature repos being brought into the pipeline for the first
      time. Expect the brain to need a reconcile pass after seeding.
 
-   Explain these options to the user and let them choose at runtime.
+   Explain these options to the operator and let them choose at runtime.
 
 8. **Lenses.** Lenses are off by default. Ask whether this repo should use them; the
    default answer is no. If yes, list the global library's lenses (`<skill>/agents/index.md`)
@@ -91,7 +94,7 @@ the brain — collect them before running the scaffold.
 
 ## Phase 2 — Scaffold
 
-After the interview, confirm the detected project root with the user (state the path
+After the interview, confirm the detected project root with the operator (state the path
 you inferred, and ask them to confirm or correct it). Then run:
 
 ```
@@ -102,8 +105,8 @@ The script is **idempotent** — it fills missing pieces and never overwrites st
 files. It lays:
 
 - `.gitos/README.md` — explains the layout (work-orders + brain)
-- `.gitos/handoff.md` — the birth certificate skeleton (you fill it next)
-- `.gitos/INDEX.md` — four-section work ledger (starts empty)
+- `.gitos/HANDOFF.md` — the birth certificate skeleton (you fill it next)
+- `.gitos/INDEX.md` — five-section work ledger (starts empty)
 - `.gitos/log_vocabulary.md` — output/log vocabulary skeleton
 - `.gitos/work-orders/resolved/.gitkeep` — the resolved archive
 - `.gitos/brain/` — the empty brain structure (BRAIN.md, raw/, wiki/ with sources/
@@ -119,14 +122,14 @@ The script does NOT ingest — that is your job in Phase 3.
 
 This is an agent action, governed by `references/brain-schema.md`. Follow the UPSERT
 discipline (search-before-write) even during initial seeding so you don't create
-duplicates if the user re-runs inception.
+duplicates if the operator re-runs inception.
 
 **Always (regardless of depth):**
 - Ingest the handoff as the first `sources/` page in the brain. This is the
   immutable birth record; seeding from it first means the brain's origin is always
   traceable.
 - Write seed pages for: the project's core identity (entity or concept page), the
-  key goals and constraints (concept page or decision page if the user articulated a
+  key goals and constraints (concept page or decision page if the operator articulated a
   non-obvious choice), and any named stakeholders or external systems mentioned in
   the interview.
 - Write `wiki/index.md` and append one line per created page to `wiki/log.md`.
@@ -140,7 +143,7 @@ paths), and capture the key dependencies from the manifest (→ entity pages).
 significant module, and concept pages for detected patterns (data flow conventions,
 error handling patterns, test conventions, etc.). Flag each auto-generated concept
 page with `<!-- generated: needs prune pass -->` so the orchestrator knows to review
-them. Let the user know a reconcile pass (`python <home>/tools/brain_lint.py`) is
+them. Let the operator know a reconcile pass (`python <home>/tools/brain_lint.py`) is
 recommended after an aggressive seed.
 
 Brain schema, page types, frontmatter conventions, wikilinks, and the full maintenance
@@ -150,24 +153,26 @@ loop: `references/brain-schema.md`.
 
 ## Phase 4 — Fill the handoff
 
-`<home>/handoff.md` is the project's **immutable birth certificate**. The scaffold
+`<home>/HANDOFF.md` is the project's **immutable birth certificate**. The scaffold
 lays the skeleton; you fill every section from the interview answers. Sections:
 
-- **§Identity** — project short name, one-line description, domain, stage.
+- **§Project identity** — project short name, one-line description, domain, stage.
 - **§Acceptance criteria** — the project's gates (what "done" means for a unit of
-  work).
-- **§Hold-out discipline** — the locked eval/test set, or explicit "N/A".
-- **§Outcome** — project-level success definition.
-- **§Lifecycle** — the stages work moves through (e.g. idea → forward WO →
-  implement → verify → resolved | DISPROVED → next). Name the stages the user uses.
+  work), plus `null_baseline`, `gate_math_tests`, `negative_controls`, `holdout_ledger` and
+  `precommitment_timestamp` (`references/acceptance-criteria.md` → *Filling your gates*).
+- **§Hold-out discipline** — the hold-out and the rule that governs access, or explicit "N/A".
+- **§Outcome definition** — project-level success definition.
+- **§Lifecycle stages** — the stages work moves through (e.g. idea → forward WO →
+  implement → verify → resolved | DISPROVED → next). Name the stages the operator uses.
 - **§Production target** — yes/no; if yes, point at `production-contract.md`.
 - **§Predecessor lessons** — the specific failure modes and constraints to honor.
-- **§Parity baseline** — if the project ports an existing, already-proven
+- **§Parity status** — if the project ports an existing, already-proven
   implementation, note it here: what is being ported, what the parity criterion is,
   and that improvements are separate work-orders against a frozen baseline. If N/A,
   say so explicitly.
-- **§Open questions** — anything unresolved from the interview that the orchestrator
-  should address early.
+- **§Initial backlog seed** — the known work-items, questions and risks, including anything
+  unresolved from the interview that the orchestrator should address early.
+- **§Brain seed summary** — the ingest depth chosen and what was seeded.
 
 After the handoff is filled, **do not edit it again** — it is the immutable record.
 Anything that evolves after inception goes into brain pages (which link back to the
@@ -193,17 +198,18 @@ authorization to set it up — this reverses the old "never run git without cons
    `.gitignore` must **not** ignore `.gitos/`; ignore caches/build output) and a
    `.gitattributes` (`* text=auto`; do not pin `eol=lf` generically). Auto-proceed after
    reporting — the report is the backstop, not a confirmation prompt.
-3. **Initial baseline commit.** Make the first commit of the scaffolded baseline (the
+3. **Initial commit.** Make the first commit of the scaffolded tree (the
    `.gitos/` tree + brain + any files laid). scaffold lays files but never commits — the
-   baseline commit is your step.
+   initial commit is your step.
 
 If the repo is already under version control, say so and skip the init (still make the
-baseline commit if there is nothing committed yet).
+initial commit if there is nothing committed yet).
 
 ---
 
-## Porting discipline — when you copy any file from a reference or template
+## Porting check — when you copy any file from a reference or template
 
+This is discipline (e), copy-without-rename (`references/disciplines.md`).
 If you bring any file into the repo from a reference scaffold, a template, or another
 project, rename every identifier end-to-end before moving to the next file. A copied
 file is not ported until it carries no trace of its origin except one explicit
@@ -236,19 +242,19 @@ except for attribution lines.
 
 Before declaring inception complete, verify:
 
-- [ ] `.gitos/handoff.md` is fully filled — every section present, no `<FILL>`
+- [ ] `.gitos/HANDOFF.md` is fully filled — every section present, no `<FILL>`
   placeholders remaining.
-- [ ] `.gitos/INDEX.md` exists with its four sections.
+- [ ] `.gitos/INDEX.md` exists with its five sections.
 - [ ] The brain has been seeded at the chosen depth: `wiki/index.md` exists and
   lists at least the handoff source page, and `wiki/log.md` has at least one entry.
-- [ ] The porting discipline `grep` check is clean across any copied files.
+- [ ] The porting check `grep` is clean across any copied files.
 - [ ] The repo is under version control — git ensured (robust-detected; init'd if absent,
-  with detection + intent reported first) and an initial baseline commit made.
+  with detection + intent reported first) and an initial commit made.
 
 Then **explicitly hand control to the orchestrator** (`references/roles/orchestrator.md`)
 in the same session. State that inception is complete, summarize what was created
 (the pipeline home, the handoff, and what the brain was seeded with), and invite the
-user to start working — the orchestrator picks up from here.
+operator to start working — the orchestrator picks up from here.
 
 Inception is a phase, not a destination. Its value is measured by the quality of the
 handoff and the brain the orchestrator inherits, not by the act of running the scaffold.

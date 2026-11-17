@@ -1,7 +1,7 @@
 """Restore working state after a compaction or a `/clear`, and back-stop a missed resolution.
 
 Two hooks in one file, one entry: `SessionStart` matched on `compact|clear` restores, and `Stop`
-asks once when a work order has landed unresolved or RESUME is behind the ledger (see
+asks once when a work-order has landed unresolved or RESUME is behind the ledger (see
 `stop_output`). The text below describes the restore half.
 
 See references/roles/orchestrator.md, *Rotation triggers*. Compaction summarizes the conversation
@@ -185,7 +185,7 @@ def _worktree_lines(root, home):
 
 
 def live_facts(root, home):
-    """Current branch, worktrees and open work orders, read now. -> a list of lines.
+    """Current branch, worktrees and open work-orders, read now. -> a list of lines.
 
     Read fresh at hook time because they are exactly what the RESUME text may have outlived.
     A git failure is stated and the rest carries on.
@@ -226,10 +226,10 @@ def live_facts(root, home):
         if names is not None:
             if names:
                 more = len(names) - OPEN_WO_CAP
-                lines.append("Open work orders (work-orders/): " + "; ".join(names[:OPEN_WO_CAP])
+                lines.append("Open work-orders (work-orders/): " + "; ".join(names[:OPEN_WO_CAP])
                              + (f" (+{more} more)" if more > 0 else "") + ".")
             else:
-                lines.append("Open work orders (work-orders/): none.")
+                lines.append("Open work-orders (work-orders/): none.")
     return lines
 
 
@@ -353,7 +353,7 @@ def build_output(payload):
 def locate(payload):
     """(home, repo root) for a payload's cwd, or None when the hook must stay silent.
 
-    Silent with no home and in a linked worktree: a worker's window is not the orchestrator's,
+    Silent with no home and in a linked worktree: an implementer's window is not the orchestrator's,
     and the worktree holds its own copy of the ledger that would only mislead.
     """
     home = find_home(payload.get("cwd"))
@@ -380,8 +380,8 @@ def stop_state(home, canary):
     """The unresolved-state findings for a home. -> (state key, instruction) or None."""
     keys, asks = [], []
     for item in canary.landed_unresolved(home):
-        keys.append(f"landed:{item['nnn']}")
-        asks.append(f"WO-{item['nnn']} has landed but is still open in work-orders/")
+        keys.append(f"landed:{item['wo']}")
+        asks.append(f"{item['wo']} has landed but is still open in work-orders/")
     stale = canary.resume_stale_item(home)
     if stale is not None:
         keys.append(f"stale:{stale['newer']}@{stale.get('newer_mtime', 0)}")
@@ -403,12 +403,12 @@ def stop_state(home, canary):
         tail.append("finish the resolution now: move the order to work-orders/resolved/, update its "
                     "INDEX row, replace RESUME.md wholesale, then run canary.py")
     if reap:
-        target = reap[0]["nnn"] if len(reap) == 1 and reap[0]["nnn"] else "--merged"
+        target = reap[0]["wo"].replace("WO-", "") if len(reap) == 1 and reap[0]["wo"] else "--merged"
         tail.append(f"reap {'it' if len(reap) == 1 else 'them'} with "
                     f"`python <skill>/scripts/worktree.py reap {target}`")
     if not keys:
         return None
-    text = ("gitos: " + "; ".join(asks) + ". If you are the orchestrator, "
+    text = ("gitos compact_restore: " + "; ".join(asks) + ". If you are the orchestrator, "
             + ", then ".join(tail) + ". An implementer or any other role ignores this.")
     return "|".join(keys), text
 
@@ -535,7 +535,7 @@ def hook_entry(event=EVENT):
     would flash at the end of every turn.
     """
     entry = {"type": "command", "command": "python", "args": ["-I", "-c", HOOK_BOOTSTRAP],
-             "statusMessage": "gitos: restoring working state after compaction or clear"}
+             "statusMessage": "gitos compact_restore: restoring working state after compaction or clear"}
     if event == STOP_EVENT:
         del entry["statusMessage"]
     return entry
@@ -629,7 +629,7 @@ def main(argv=None):
         return hook_command(sys.stdin)
     root = Path(args.root).resolve()
     status, detail = ensure_hook(root)
-    print(f"gitos compact restore: {status} in {root / '.claude' / 'settings.json'}"
+    print(f"gitos compact_restore: {status} in {root / '.claude' / 'settings.json'}"
           f"{f' - {detail}' if detail else ''}")
     return 0 if status != "skipped" else 3
 

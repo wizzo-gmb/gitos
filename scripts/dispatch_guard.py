@@ -225,6 +225,7 @@ def receipt_status(value, now=None):
 
 
 def deny(reason):
+    reason = f"gitos dispatch_guard: {reason}"
     return {"hookSpecificOutput": {"hookEventName": EVENT, "permissionDecision": "deny",
                                    "permissionDecisionReason": reason}}
 
@@ -332,7 +333,7 @@ def decide(payload, engine=None, now=None):
             missing = []
     if missing:
         named = " and ".join(f"`{key}`" for key in missing)
-        return deny(f"This dispatch sets no {named}, so no task tier was chosen for it - it "
+        return deny(f"this dispatch sets no {named}, so no task tier was chosen for it - it "
                     f"inherits the lead's pair, which is the ceiling. {ADVICE}")
 
     # THE TIER BINDING, only where an operator opted in AND there is a tier to bind to. A repo
@@ -355,20 +356,20 @@ def decide(payload, engine=None, now=None):
 
     value, reason = read_receipt(root)
     if value is None:
-        return deny(f"The tier binding is switched on here (`{BINDING_KEY}: true`) and {reason}, "
+        return deny(f"the tier binding is switched on here (`{BINDING_KEY}: true`) and {reason}, "
                     f"so nothing establishes that "
                     f"this pair is the tier this work needs - a typed pair proves a route was "
                     f"written down, not that it was derived. Run `select`, record its "
                     f"dispatch-ready decision with `dispatch_guard.py record`, then dispatch.")
     stale = receipt_status(value, now)
     if stale is not None:
-        return deny(f"This dispatch is not authorized: {stale}. Re-run `select` for THIS "
+        return deny(f"this dispatch is not authorized: {stale}. Re-run `select` for THIS "
                     f"dispatch and record the decision again; a receipt that outlived its "
                     f"dispatch would authorize every later one, including a mis-tiered one.")
     pair = (tool_input.get("model").strip(),
             "default" if effortless else tool_input.get("effort").strip())
     if not same_model(pair[0], value["model"]) or pair[1] != value["effort"]:
-        return deny(f"This dispatch requests {pair[0]}/{pair[1]}, but the recorded route for "
+        return deny(f"this dispatch requests {pair[0]}/{pair[1]}, but the recorded route for "
                     f"tier `{value['tier']}` is {value['model']}/{value['effort']}. Dispatch "
                     f"the pair `select` authorized, or re-derive the tier and re-run `select`.")
     # Authorized - and therefore SPENT. Consumed on the pass path, so the next dispatch needs
@@ -396,7 +397,7 @@ def hook_command(stream):
         else:
             log_dispatch(payload)
     except Exception as exc:
-        print(f"gitos dispatch guard: inert - {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"gitos dispatch_guard: inert - {type(exc).__name__}: {exc}", file=sys.stderr)
     return 0
 
 
@@ -429,7 +430,7 @@ def hook_entry():
     which is precisely the accidental block this design exists to rule out.
     """
     return {"type": "command", "command": "python", "args": ["-I", "-c", HOOK_BOOTSTRAP],
-            "statusMessage": "gitos: every dispatch names a task tier"}
+            "statusMessage": "gitos dispatch_guard: every dispatch names a task tier"}
 
 
 def ensure_hook(root, engine=None):
@@ -496,7 +497,7 @@ def main(argv=None):
         # MACHINE-WIDE, and only ever on this explicit name. It edits the operator's own
         # settings, which is their decision to make and not a side effect of any other command.
         status, detail = ensure_hook(Path.home())
-        print(f"gitos dispatch guard: {status} in {Path.home() / '.claude' / 'settings.json'}"
+        print(f"gitos dispatch_guard: {status} in {Path.home() / '.claude' / 'settings.json'}"
               f"{f' - {detail}' if detail else ''}")
         print("Every session on this machine now names a task tier at dispatch, including "
               "sessions in repos that have no gitos home. Claude Code only.")
@@ -504,7 +505,7 @@ def main(argv=None):
     root = Path(args.root).resolve()
     if args.command == "install":
         status, detail = ensure_hook(root)
-        print(f"gitos dispatch guard: {status} in {root / '.claude' / 'settings.json'}"
+        print(f"gitos dispatch_guard: {status} in {root / '.claude' / 'settings.json'}"
               f"{f' - {detail}' if detail else ''}")
         return 0 if status != "skipped" else 3
     if args.command == "show":
@@ -528,7 +529,7 @@ def main(argv=None):
             Path(args.select).read_text(encoding="utf-8-sig")
         value = receipt_from_select(json.loads(raw), args.uses)
     except (OSError, ValueError) as exc:
-        print(f"gitos dispatch guard: no receipt written - {exc}", file=sys.stderr)
+        print(f"gitos dispatch_guard: no receipt written - {exc}", file=sys.stderr)
         return 2
     path = write_receipt(root, value)
     print(json.dumps({"status": "recorded", "path": str(path), "receipt": value},

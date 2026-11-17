@@ -35,10 +35,10 @@ script that builds the state, calls `decide` and applies only `reversible` outco
 `require_reversible`).
 
 ANSWER SHAPES, both normalized by `normalize_answer`:
-  * TypeSafe (OpenAPI `SystemOneResponse`): `{"model", "answers": {id: {"type": "noul", "noul": 0.98}
+  * typed (OpenAPI `SystemOneResponse`): `{"model", "answers": {id: {"type": "noul", "noul": 0.98}
     | {"type": "choice", "choice": "x", "confidence": .9, "probabilities": {...}}
     | {"type": "score", "score": 1.7, "confidence": .9, "probabilities": {...}}}, "usage": {...}}`
-  * pplx: `{"answers": {id: {"choice"|"noul"|"score": ..., "probabilities": ..., ...}}, "usage": {...}}`
+  * keyed: `{"answers": {id: {"choice"|"noul"|"score": ..., "probabilities": ..., ...}}, "usage": {...}}`
     (the answer's type is the key it carries; `type` may be absent).
   A noul's `p` is P(true); a choice's or score's `p` is P(top). A shape that is neither raises.
 """
@@ -798,7 +798,7 @@ _PATH = re.compile(r"[\w.-]+(?:/[\w.-]+)+|\b[\w-]+\.(?:py|md|json|js|html|sh|tom
 _WORD = re.compile(r"[a-z][a-z0-9_-]{3,}")
 _STOP = frozenset("that this with from have been will they them then than when which what where "
                   "would could should about into only also each every their there these those "
-                  "work order note notes item items file files".split())
+                  "work-order note notes item items file files".split())
 
 
 def _canary():
@@ -949,31 +949,49 @@ def _loose_end_items(home: Path, pick: bool = True) -> tuple:
 
 
 def _bundle_groups(results: list) -> list:
-    """Connected groups of items joined by `bundle` pairs, joined by code: [[L1, L2, L5], ...]."""
-    parent: dict = {}
-
-    def find(x):
-        while parent.setdefault(x, x) != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
+    """Groups of items that bundle, joined by code: [[L1, L2, L5], ...], every pair in a group agreed.
+    A pair answered `bundle` is an edge; a group is a clique of those edges, never a chain. Bundling is not
+    transitive (A~B and B~C say nothing about A and C), so a connected component is split greedily: items in
+    id order, each taking the lowest-numbered unplaced item that agrees with every member so far; an item that
+    agrees with only part of a group stays out of it (it may seed or join another group; one that agrees with
+    nobody left is in no group). Deterministic: the same answers give the same groups."""
+    agree: dict = {}
     for r in results:
         if r["use"] == "loose-end-bundle" and r["outcome"] == "bundle":
             a, b = r["ref"].split("~")
-            parent[find(a)] = find(b)
-    groups: dict = {}
-    for x in list(parent):
-        groups.setdefault(find(x), []).append(x)
-    return sorted((sorted(g, key=lambda t: int(t[1:])) for g in groups.values()), key=lambda g: int(g[0][1:]))
+            if a != b:
+                agree.setdefault(a, set()).add(b)
+                agree.setdefault(b, set()).add(a)
+    order = sorted(agree, key=lambda t: int(t[1:]))
+    placed: set = set()
+    groups: list = []
+    for seed in order:
+        if seed in placed:
+            continue
+        group = [seed]
+        for x in order:
+            if x != seed and x not in placed and x not in group and all(x in agree[m] for m in group):
+                group.append(x)
+        if len(group) > 1:
+            placed.update(group)
+            groups.append(sorted(group, key=lambda t: int(t[1:])))
+    return sorted(groups, key=lambda g: int(g[0][1:]))
 
 
 _TRIGGER = re.compile(r"\b(?:after|once|until|when|waits? (?:for|on)|following)\b[^.;]{3,70}", re.I)
 
 
-def _drain_plan(results: list, bundles: list) -> list:
-    """One suggested next step per loose end, built by code from the answers: [{ref, step}]. A step the
+def _fix_label(fix: dict) -> str:
+    return fix["ref"] if fix["kind"] == "order" else f"commit {fix['ref']}"
+
+
+def _drain_plan(results: list, bundles: list, fixed: "dict | None" = None) -> list:
+    """One proposed next step per loose end, built by code from the answers: [{ref, step}]. A step the
     item's own state settles (`close`, `ask`, `park`) comes first; otherwise a `join` answer beats a
-    bundle group, and a bundle beats `open` alone (an item still unsettled is `read it`). Nothing is applied."""
+    bundle group, and a bundle beats `open` alone (an item still unsettled is `read it`). `fixed` is
+    `loose_ends.fixed_elsewhere`: an item it names that is not settled as `ask` or `park` becomes a `close`
+    step naming the fix (the item's own `closable` gets the fix attached), ahead of join, bundle and read.
+    Nothing is applied."""
     best: dict = {}
     for r in results:
         if r["use"] == "loose-end-join" and r["outcome"] == "join":
@@ -986,6 +1004,7 @@ def _drain_plan(results: list, bundles: list) -> list:
         ref, out = r["ref"], r["outcome"]
         group = next((g for g in bundles if ref in g), None)
         kind, wo = "read", None
+        fix = (fixed or {}).get(ref)
         if out == "closable":
             step, kind = "close (confirm)", "close"
         elif out == "ask-operator":
@@ -994,13 +1013,16 @@ def _drain_plan(results: list, bundles: list) -> list:
             m = _TRIGGER.search(r["text"])
             trig = _squash(m.group(0)) if m else "name the event"
             step, kind = f"park (trigger: {trig})", "park"
+        elif fix:
+            step, kind = f"close (confirm): possibly fixed by {_fix_label(fix)}", "close"
         elif ref in best:
             step, kind, wo = f"related open order: consider adding {best[ref]}", "join", best[ref]
         elif group:
             step, kind = "bundle with " + ", ".join(x for x in group if x != ref) + " -> new order", "bundle"
         else:
             step, kind = "read it", ("open" if out == "open" else "read")
-        plan.append({"ref": ref, "step": step, "kind": kind, "wo": wo})
+        plan.append({"ref": ref, "step": step, "kind": kind, "wo": wo,
+                     "fix": fix if kind == "close" else None})
     return sorted(plan, key=lambda p: int(p["ref"][1:]))
 
 
@@ -1093,6 +1115,13 @@ def _proposal_body(p: dict, rows: dict, ctx: list, titles: dict) -> list:
             out.append(f"- target in progress: {p['in_progress']}")
     if p["kind"] == "park":
         out += ["", "## Trigger words found", "", f"- {p['trigger']}"]
+    if p.get("fix"):
+        f = p["fix"]
+        when = f", {f['date']}" if f.get("date") else ""
+        what = (f"{f['ref']} (resolved{when}): {f['title']}" if f["kind"] == "order"
+                else f"commit {f['ref']} ({f['date']}): {f['title']}")
+        out += ["", "## Possibly fixed elsewhere", "", f"- {what}",
+                "- a match by code, not a decision: read the fix, then accept with `--reason` or decline"]
     if p["kind"] == "ask" and p.get("question"):
         out += ["", "## Question for the operator", "", f"- {p['question']}"]
     if p["kind"] == "read":
@@ -1109,6 +1138,8 @@ def _proposal_file(p: dict, created: str, updated: str, model: str, rows, ctx, t
         head.append(f"- target: {p['wo']}")
         if p.get("in_progress"):
             head.append(f"- target in progress: {p['in_progress']}")
+    if p.get("fix"):
+        head.append(f"- fix: {_fix_label(p['fix'])}")
     head += [f"- created: {created}", f"- updated: {updated}", f"- model: {model}"]
     return "\n".join(head + _proposal_body(p, rows, ctx, titles)) + "\n"
 
@@ -1119,7 +1150,7 @@ def _read_proposal(path: Path) -> "dict | None":
         return None
     meta = {}
     for ln in text.splitlines():
-        m = re.match(r"- (id|kind|items|target|created|updated|model): (.*)$", ln)
+        m = re.match(r"- (id|kind|items|target|fix|created|updated|model): (.*)$", ln)
         if m and m.group(1) not in meta:
             meta[m.group(1)] = m.group(2).strip()
     if not meta.get("id") or not meta.get("kind"):
@@ -1157,9 +1188,57 @@ def _pile_ids(home: Path) -> set:
     return out
 
 
+def pending_holding(home, lid: str) -> list:
+    """The ids of the pending proposals that hold item `lid`."""
+    out = []
+    pend = _drain_dirs(Path(home))["pending"]
+    for f in sorted(pend.glob("*.md")) if pend.is_dir() else []:
+        m = _read_proposal(f) if _DRAIN_ID.fullmatch(f.stem) else None
+        if m and lid in m["item_list"]:
+            out.append(f.stem)
+    return out
+
+
+def release_items(home, ids) -> dict:
+    """Take routed items out of the pile: a pending proposal that holds only them is removed; one that holds
+    others is rewritten without them, under the id its remaining items give (the old file goes after the new one
+    is written, so a crash leaves a proposal, never a hole). The Context lines of a rewritten file stay as first
+    written. -> {"withdrawn": [id], "edited": [(old id, new id)]}."""
+    home, gone = Path(home), set(ids)
+    pend = _drain_dirs(home)["pending"]
+    done = {"withdrawn": [], "edited": []}
+    for f in sorted(pend.glob("*.md")) if pend.is_dir() else []:
+        m = _read_proposal(f) if _DRAIN_ID.fullmatch(f.stem) else None
+        if not m or not gone & set(m["item_list"]):
+            continue
+        keep = [x for x in m["item_list"] if x not in gone]
+        if not keep:
+            f.unlink()
+            done["withdrawn"].append(f.stem)
+            continue
+        wo = (m.get("target") or "").strip() or None
+        new_id = drain_id(m["kind"], sorted(keep, key=lambda t: int(t[1:])), wo)
+        lines = []
+        for ln in m["text"].splitlines():
+            row = ITEM_LINE.match(ln)
+            if row and row.group(1) in gone:
+                continue
+            lines.append(ln)
+        text = "\n".join(lines) + "\n"
+        text = text.replace(f"# Drain proposal {m['id']}", f"# Drain proposal {new_id}", 1)
+        text = re.sub(r"(?m)^- id: .*$", f"- id: {new_id}", text, count=1)
+        text = re.sub(r"(?m)^- items: .*$", "- items: " + ", ".join(keep), text, count=1)
+        text = re.sub(r"(?m)^- updated: .*$", f"- updated: {_now()}", text, count=1)
+        _write_text_atomic(pend / f"{new_id}.md", text)
+        if new_id != f.stem:
+            f.unlink()
+        done["edited"].append((f.stem, new_id))
+    return done
+
+
 def drain(home, fresh: bool = False) -> dict:
-    """Ask the loose-ends group (state, joins, bundles) and write one file per proposal under
-    `<home>/drain/pending/`, then removes those items from `loose-ends.md`: a suggested item lives in the pile
+    """Ask the loose-end uses (state, joins, bundles) and write one file per proposal under
+    `<home>/drain/pending/`, then removes those items from `loose-ends.md`: a proposed item lives in the pile
     only. A proposal declined before (same fingerprint) is not proposed again. A run never deletes a pending
     file: only `accept`, `decline` and `withdraw` do. Raises `Unavailable` (nothing written) when System One
     is off or a call fails. -> {"counts", "written", "moved", "skipped"}."""
@@ -1179,7 +1258,8 @@ def _drain_write(home: Path, model: str, loose_rows: list, orders: list, results
     c = _canary()
     le = _loose_ends()
     bundles = _bundle_groups(results)
-    plan = _drain_plan(results, bundles)
+    fixed = le.fixed_elsewhere(home, [r for r in loose_rows if r["state"].strip() == le.STATE_NEW], sm=sys.modules[__name__])
+    plan = _drain_plan(results, bundles, fixed)
     cause = {r["ref"]: r["cause"] for r in results if r["use"] == "loose-end-state"}
     rows = {r["id"]: {"text": _squash(r["item"]), "source": r["source"], "age": le.age_days(r["added"]),
                       "added": r["added"]}
@@ -1200,7 +1280,12 @@ def _drain_write(home: Path, model: str, loose_rows: list, orders: list, results
             props.append({"kind": "new-order", "items": [p["ref"]]})
         elif p["kind"] in ("ask", "park", "close", "read"):     # an unsure item never vanishes: it is a `read`
             props.append({"kind": p["kind"], "items": [p["ref"]], "cause": cause.get(p["ref"], ""),
-                          "trigger": (p["step"][len("park (trigger: "):-1] if p["kind"] == "park" else "")})
+                          "fix": p.get("fix"), "trigger": (p["step"][len("park (trigger: "):-1] if p["kind"] == "park" else "")})
+    routed = le.routed_ids(home)           # routed while this run was asking: they never come back as proposals
+    if routed:
+        for p in props:
+            p["items"] = [x for x in p["items"] if x not in routed]
+        props = [p for p in props if p["items"]]
     dirs = _drain_dirs(home)
     now = _now()
     written, skipped, keep = [], [], set()
@@ -1366,7 +1451,7 @@ def drain_status(home) -> "str | None":
     news = sorted((m["id"], ", ".join(m["item_list"])) for m in (_read_proposal(f) for f in pend.glob("*.md"))
                   if m and m["kind"] == "new-order")
     if news:
-        line += (f"\nnew-order suggestions (approve them in one batch):\n"
+        line += (f"\nnew-order proposals (approve them in one batch):\n"
                  + f"\n".join(f"  {i}: {items}" for i, items in news))
     return line
 
@@ -1376,7 +1461,8 @@ def _drain_dispose(home, pid: str, state: str, note: str, drop_to: "str | None" 
     """Move a pending proposal to `accepted/` or `declined/`, appending the disposition line. The items live
     in the pile, so nothing is left to drop from the list; a `new` row still there (a crash between the pile
     write and the list write) is dropped to `drop_to` first. `back`: put the proposal's items back on the list
-    with that State (a decline without a route), before the file moves, so a crash never leaves an item nowhere."""
+    with that State (a decline without a route), before the file moves, so a crash never leaves an item nowhere;
+    an item `drop` routed (`drain/routed.txt`) is not put back."""
     le = _loose_ends()
     dirs = _drain_dirs(home)
     if not _DRAIN_ID.fullmatch(pid or ""):
@@ -1390,12 +1476,13 @@ def _drain_dispose(home, pid: str, state: str, note: str, drop_to: "str | None" 
         try:
             for x in m["item_list"]:
                 if x in live:
-                    le.drop(home, x, drop_to)
+                    le.drop(home, x, drop_to, release=False)
         except le.LooseEndsError as e:
             raise ValueError(str(e))
     if back:
         try:
-            le.restore_rows(home, _proposal_rows(m), back)
+            routed = le.routed_ids(home)        # an item `drop` routed never goes back on the list
+            le.restore_rows(home, [r for r in _proposal_rows(m) if r[0] not in routed], back)
         except le.LooseEndsError as e:
             raise ValueError(str(e))
     dest = dirs[state] / f"{pid}.md"
@@ -1533,7 +1620,7 @@ def drain_decline(home, pid: str, reason: "str | None", route: "str | None" = No
     """Decline a proposal. With `route` (WO-NNN | P<n> | brain:<page> | closed:<why>, checked like
     `loose_ends.py drop`) the orchestrator has routed the items by hand and they leave the pile for good;
     without it the items go back on the list with State `declined: <reason>`, which the drain never
-    suggests again."""
+    proposes again."""
     if not reason or not reason.strip():
         raise ValueError("decline needs --reason")
     home, why = Path(home), _squash(reason)
@@ -1560,7 +1647,8 @@ def drain_withdraw(home, pid: str) -> str:
         raise ValueError(f"no pending proposal {pid}")
     le = _loose_ends()
     try:
-        back = le.restore_rows(home, _proposal_rows(m), le.STATE_NEW)
+        routed = le.routed_ids(home)
+        back = le.restore_rows(home, [r for r in _proposal_rows(m) if r[0] not in routed], le.STATE_NEW)
     except le.LooseEndsError as e:
         raise ValueError(str(e))
     src.unlink()
@@ -1740,7 +1828,7 @@ def _work_state(home: Path, wo: "str | None", text_file: "str | None") -> tuple:
         if n == nnn:
             text = _read_text(path) or ""
             sev = next((ln.strip() for ln in (c.section_lines(text, "## Severity") or []) if ln.strip()), "")
-            scope = _squash(" ".join(c.section_lines(text, "## Proposed fix scope") or []))
+            scope = _squash(" ".join(c.proposed_scope_lines(text) or []))
             return f"WO-{nnn}", (f"Work-order WO-{nnn}: {_title(text, path.stem)}\n"
                                  f"Severity: {_cap(sev, 200)}\nScope: {_cap(scope, 1000)}")
     raise ValueError(f"no work-order {nnn} under {home}")
@@ -1819,7 +1907,7 @@ def _wo_text(home: Path, wo: str) -> tuple:
 
 def _scope_patterns(text: str, c) -> tuple:
     """(scope text, [path or glob the scope names], [path or glob its Not in scope names])."""
-    body = "\n".join(c.section_lines(text, "## Proposed fix scope") or [])
+    body = "\n".join(c.proposed_scope_lines(text) or [])
     m = re.search(r"^[ \t]*\*\*not in scope", body, re.I | re.M)
     inside, outside = (body[:m.start()], body[m.start():]) if m else (body, "")
 
@@ -1977,7 +2065,7 @@ def _strip_keys(text: str, names: list) -> str:
 
 def _migrate_waiting(home: Path, write: bool) -> list:
     """Each `waiting: user — Q` row of the loose-ends list: [(list path, ["L4 waiting: user", ...])]. With
-    `write`, each becomes an `ask` suggestion in the pile that carries the question (the pile file is written
+    `write`, each becomes an `ask` proposal in the pile that carries the question (the pile file is written
     first, then the row is removed, so a crash leaves it in both places, never neither)."""
     le = _loose_ends()
     path = le.list_path(home)
@@ -2032,7 +2120,7 @@ def migrate(root=".", write: bool = False) -> list:
     """What `/gitos upgrade` converts: [(path, [names])]. The retired keys of the machine config and the repo's
     `system-one.json` (with `write`, removed atomically, every other key stays; a file that is missing,
     unreadable or not an object is skipped), and each `waiting: user` loose end (with `write`, an `ask`
-    suggestion in the pile that carries its question; the row leaves the list), and a hand-made carried section
+    proposal in the pile that carries its question; the row leaves the list), and a hand-made carried section
     whose lines are all boxes (its heading becomes `## Carried loose ends`; see `_migrate_carried`)."""
     found = _migrate_waiting(_repo_home(root), write)
     found += _migrate_carried(_repo_home(root), write)[0]
@@ -2664,7 +2752,7 @@ def main(argv: "list | None" = None) -> int:
     lg.add_argument("--summary", action="store_true")
     lg.add_argument("--use")
     lg.add_argument("--json", action="store_true")
-    dr = sub.add_parser("drain", help="ask the loose-ends group and write one proposal file each under "
+    dr = sub.add_parser("drain", help="ask the loose-end questions and write one proposal file each under "
                                       "<home>/drain/pending/ (the one command that writes in the home); "
                                       "also: accept ID | decline ID | withdraw ID | defer ID | status")
     dr.add_argument("rest", nargs=argparse.REMAINDER,
@@ -2675,20 +2763,20 @@ def main(argv: "list | None" = None) -> int:
     ed = sub.add_parser("eval-drain", help="ask the drain's uses on labelled loose ends and compare with the labels")
     ed.add_argument("file", help="JSONL: id, text, source, age_days, expect_state "
                                  "(closable|ask-operator|park|open), expect_join (WO-NNN or null)")
-    ed.add_argument("--home", required=True, help="the .gitos directory or repo root whose open orders are the join candidates")
+    ed.add_argument("--home", required=True, help="the home directory (or the repo root that holds it) whose open orders are the join candidates")
     ed.add_argument("--export", metavar="OUT", help="write the questions of the labelled set to OUT for a helper "
                                                     "(no model call; the title pick is skipped)")
     ed.add_argument("--answers", metavar="IN", help="score a helper's answers file against the labels")
     ed.add_argument("--json", action="store_true")
     ln = sub.add_parser("lenses", help="list the active lenses with their domain and when-to-apply (no model call, writes nothing)")
-    ln.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
+    ln.add_argument("home", help="the home directory (or the repo root that holds it)")
     ln.add_argument("--wo", help="a work-order number")
     ln.add_argument("--text", help="a text file describing the work")
     ln.add_argument("--global-dir", help=f"the global lens library (default: ${GLOBAL_LENS_ENV}, "
                                          f"else <skill>/agents)")
     ln.add_argument("--json", action="store_true")
     sc = sub.add_parser("scope", help="advisory scope check of a work-order's diff (writes nothing)")
-    sc.add_argument("home", help="the .gitos directory (or the repo root that holds it)")
+    sc.add_argument("home", help="the home directory (or the repo root that holds it)")
     sc.add_argument("wo", help="a work-order number")
     sc.add_argument("--range", help="A..B (default: merge-base to the branch wo-NNN)")
     sc.add_argument("--json", action="store_true")

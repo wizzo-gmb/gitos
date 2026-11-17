@@ -1,13 +1,13 @@
 # Loose ends
 
 Small things that came up while other work was going on. Written down in the turn they come up,
-drained at the seams (after an order resolves, at each checkpoint, on "triage the loose ends").
-The list is the inbox: only items not yet suggested. Once the drain suggests an item it moves to the pile
+drained after an order resolves, at each checkpoint, and on request ("drain the loose ends").
+The list is the inbox: only items not yet proposed. Once the drain proposes an item it moves to the pile
 (`drain/pending/`) and leaves this list; an ask for the operator is raised from the pile.
 
 Only the orchestrator writes it (`scripts/loose_ends.py`). An item is one or two sentences, at most
 300 characters. This is never a work queue or a notebook: a finding that needs evidence, a cause, a
-fix or its own worker is a work order; a session plan belongs in `RESUME.md`. Nothing leaves the list
+fix or its own worker is a work-order; a session plan belongs in `RESUME.md`. Nothing leaves the list
 without the orchestrator's or the operator's decision: it is removed with `drop --to WO-NNN | P<n> |
 brain:<page> | closed:<reason>` and git keeps the history. State is `new` or `declined: <reason>`.
 

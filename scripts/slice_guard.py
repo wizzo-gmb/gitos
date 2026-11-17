@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""slice_guard.py - PreToolUse hook: keep a slice worker's file edits to its own slice file (Claude Code only).
+"""slice_guard.py - PreToolUse hook: keep a slice implementer's file edits to its own slice file (Claude Code only).
 
-A worker for a slice of a folder order works in a worktree made by `worktree.py new NNN --slice SN`, which
+An implementer for a slice of a folder order works in a worktree made by `worktree.py new NNN --slice SN`, which
 writes an untracked marker `gitos-slice` (content `WO-NNN/SN`) into that worktree's own git dir. This hook
 runs before Edit, Write, MultiEdit and NotebookEdit:
 
   * No marker for the file's worktree and none for the session's cwd: ALLOW (the orchestrator, or anyone not
     working a slice).
   * Marker present: REFUSE an edit to a folder order's `order.md` or `log.md`, to any slice file other than
-    the worker's own `slices/SN-*.md`, to `INDEX.md` of a gitos home, and a front-matter `status` change of
-    the worker's own slice to `landed` or `dropped`. Everything else is allowed: code, tests, docs, and the
-    worker's own slice notes and its status move in-progress -> implemented.
+    the implementer's own `slices/SN-*.md`, to `INDEX.md` of a gitos home, and a front-matter `status` change of
+    the implementer's own slice to `landed` or `dropped`. Everything else is allowed: code, tests, docs, and the
+    implementer's own slice notes and its status move in-progress -> implemented.
 
 The marker is looked up from the edited file's worktree and from the session's cwd, either one binds the
-edit, so a worker cannot step around it by an absolute path into another checkout, and a subagent whose
+edit, so an implementer cannot step around it by an absolute path into another checkout, and a subagent whose
 cwd is its parent's still binds when its files are in the worktree.
 
-HONEST LIMITS. Bash edits are not covered (`sed -i`, a redirect, a script): a worker that wants to write a
+HONEST LIMITS. Bash edits are not covered (`sed -i`, a redirect, a script): an implementer that wants to write a
 protected file through the shell is not stopped, and the orchestrator's review of the diff at merge is the
-backstop. A worker that edits a file in the main checkout by a path while its own cwd and the file's
+backstop. An implementer that edits a file in the main checkout by a path while its own cwd and the file's
 worktree both lack the marker is also allowed. Hooks can be switched off by configuration, a Codex session
 runs none, and any failure of the hook itself allows the edit (it never blocks by accident).
 """
@@ -101,7 +101,7 @@ def _after(text: str, tool: str, inp: dict) -> "str | None":
 
 def refusal(path: str, why: str, marker) -> dict:
     sid = f"WO-{marker[0]}/S{marker[1]}"
-    reason = (f"gitos: this worktree is bound to slice {sid}; {why} ({path}). A worker edits only its own slice "
+    reason = (f"gitos slice_guard: this worktree is bound to slice {sid}; {why} ({path}). An implementer edits only its own slice "
               f"file's notes and moves its status in-progress -> implemented; the orchestrator owns the rest. "
               f"Report what you need changed instead.")
     return {"hookSpecificOutput": {"hookEventName": EVENT, "permissionDecision": "deny",
@@ -163,7 +163,7 @@ def hook_command(stream) -> int:
         if decision is not None:
             print(json.dumps(decision, ensure_ascii=False))
     except Exception as exc:
-        print(f"gitos slice guard: inert - {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"gitos slice_guard: inert - {type(exc).__name__}: {exc}", file=sys.stderr)
     return 0
 
 
@@ -186,7 +186,7 @@ def hook_entry() -> dict:
     """Neither `async` nor `onFailure` is set: an async hook's decision has no effect, and `onFailure: block`
     would make the hook's own breakage a refusal."""
     return {"type": "command", "command": "python", "args": ["-I", "-c", HOOK_BOOTSTRAP],
-            "statusMessage": "gitos: a slice worker edits only its own slice file"}
+            "statusMessage": "gitos slice_guard: a slice implementer edits only its own slice file"}
 
 
 def _engine():
@@ -211,14 +211,14 @@ def ensure_hook(root, engine=None):
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="PreToolUse hook keeping a slice worker to its own slice file.")
+    ap = argparse.ArgumentParser(description="PreToolUse hook keeping a slice implementer to its own slice file.")
     ap.add_argument("command", choices=("hook", "install"))
     ap.add_argument("root", nargs="?", default=".")
     a = ap.parse_args(argv)
     if a.command == "hook":
         return hook_command(sys.stdin)
     status, detail = ensure_hook(Path(a.root).resolve())
-    print(f"gitos slice guard: {status}{f' - {detail}' if detail else ''}")
+    print(f"gitos slice_guard: {status}{f' - {detail}' if detail else ''}")
     return 0 if status != "skipped" else 3
 
 

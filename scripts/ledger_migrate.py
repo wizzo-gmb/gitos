@@ -17,7 +17,7 @@ section becomes `slices/S<n>-<name>.md`, and `log.md` records the migration.
     history file (trimmed from the live order) is created from it. The history file is removed once consumed;
     an empty `work-orders/history/` folder is removed.
   * Open carried boxes (`- [ ] L<n> ...`) are never converted. They stay in order.md and are LISTED for the
-    orchestrator to triage: a proposed slice (`slice add`, or `drain accept --new-slice`), a new order, or dropped.
+    orchestrator to settle: a proposed slice (`slice add`, or `drain accept --new-slice`), a new order, or dropped.
   * Single-slice orders and resolved orders are left alone. When an order cannot be split with confidence the
     report names it and the reason, and `--write` skips it; nothing is guessed.
 
@@ -252,7 +252,7 @@ def apply(home: Path, nnn: str, path: Path, hist_path: "Path | None", plan: dict
     log = [f"# WO-{nnn} log", "", f"- {today} migrated to the folder form by ledger_migrate: "
            + ", ".join(f"S{x['n']} {x['status']}" + (f" {x['commit']}" if x["commit"] else "") for x in plan["slices"])]
     for b in plan["boxes"]:
-        log.append(f"- {today} open carried box {b['id']} (slice: {b['slice']}) left in order.md for triage")
+        log.append(f"- {today} open carried box {b['id']} (slice: {b['slice']}) left in order.md to be settled")
     _write(folder / "log.md", "\n".join(log) + "\n")
     if hist_path and hist_path.is_file():
         if not (top and _git(top, "rm", "-q", "-f", "--", str(hist_path)) is not None):
@@ -304,7 +304,7 @@ def run(home: Path, write: bool, out=print) -> int:
     if not migrated and not skipped:
         out("ledger_migrate: nothing to migrate")
     if boxes:
-        out("carried boxes left in order.md, not converted; triage each (a proposed slice via `slice add` or "
+        out("carried boxes left in order.md, not converted; settle each (a proposed slice via `slice add` or "
             "`drain accept --new-slice`, a new order, or dropped):")
         for b in boxes:
             out(f"  {b}")
@@ -329,7 +329,7 @@ def run(home: Path, write: bool, out=print) -> int:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Convert open multi-slice single-file orders into the folder form.")
-    ap.add_argument("home")
+    ap.add_argument("home", help="the home directory, e.g. <repo>/.gitos")
     ap.add_argument("--write", action="store_true", help="apply the migration (default: dry run)")
     a = ap.parse_args(argv)
     try:

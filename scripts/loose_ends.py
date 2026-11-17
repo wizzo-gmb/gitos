@@ -4,18 +4,18 @@
 `<home>/loose-ends.md` is a tracked table of small things that came up while other work was going
 on: written down in the turn they come up, drained at the seams. It is never a work queue or a
 notebook: an item is one or two sentences (at most MAX_ITEM characters); anything that needs
-evidence, a cause, a fix or its own worker is a work order, and a session plan belongs in the
+evidence, a cause, a fix or its own worker is a work-order, and a session plan belongs in the
 resume file. Work is never dispatched from the list (an item is first dropped `--to WO-NNN`).
 
     | ID | Added | Source | Item | State |
 
 `ID` is `L<n>`, never reused (the next id lives in `<!-- next: L<n> -->` under the table).
 `Source` is `WO-NNN`, `P<n>`, `chat`, `proposal:<id>` or `import:<old id>`. `State` is `new` or
-`declined: <reason>` (a suggestion the orchestrator declined without routing it; the drain never suggests
+`declined: <reason>` (a proposal the orchestrator declined without routing it; the drain never proposes
 it again and the orchestrator decides it by hand with `drop`). An item that is routed or closed is
 REMOVED; git keeps the history.
 
-The list is the inbox: only items not yet suggested. When the drain suggests an item it writes the pile file
+The list is the inbox: only items not yet proposed. When the drain proposes an item it writes the pile file
 (`<home>/drain/pending/<id>.md`) and removes the item from the list in the same run; from then on the pile is
 its one home, until `accept`, `decline` or `withdraw` (`system_one.py drain ...`). An ask for the operator is a
 pile state too: the orchestrator raises it from the pile.
@@ -27,6 +27,9 @@ pile state too: the orchestrator raises it from the pile.
     loose_ends.py candidates [--root R] [--json]     (code only, no model)
     loose_ends.py import     [--root R] FILE
     loose_ends.py legacy     pending | decline FILE [--root R] [--json]
+
+`drop` also takes an item that is only in the pile: it withdraws the pending proposals that hold only that item,
+removes it from those that hold others, and records the id in `<home>/drain/routed.txt` (never put back).
 
 Only the orchestrator writes the list. Every write is atomic and keeps every other row and line
 byte for byte. No file means an empty list (nothing is written by drop, list, status, candidates);
@@ -68,7 +71,7 @@ DECLINED_RE = re.compile(r"declined:\s*(\S.*)")
 DEST_RE = re.compile(r"(?:WO-(\d{3,})|P(\d+)|brain:(\S.*)|closed:(\S.*))")
 DONE_CELL_RE = re.compile(r"^[\s*_`~>\-]*(?:done|fixed|closed|merged|superseded|resolved)\b", re.IGNORECASE)
 UNESC_PIPE = re.compile(r"(?<!\\)\|")
-TOO_LONG = ("this is a work order or a RESUME entry, not a loose end: author one, or shorten it "
+TOO_LONG = ("this is a work-order or a RESUME entry, not a loose end: author one, or shorten it "
             f"(an item is at most {MAX_ITEM} characters)")
 
 
@@ -304,7 +307,7 @@ def check_dest(home, dest: str) -> str:
         raise LooseEndsError(f"--to {d!r} is not WO-NNN, P<n>, brain:<page> or closed:<reason>")
     wo, par, brain, closed = m.groups()
     if wo and not _wo_open(home, wo):
-        raise LooseEndsError(f"WO-{wo} is not an open work order in {Path(home) / 'work-orders'}: "
+        raise LooseEndsError(f"WO-{wo} is not an open work-order in {Path(home) / 'work-orders'}: "
                              "author it first, then drop the item to it")
     if par and not _parked_exists(home, f"P{par}"):
         raise LooseEndsError(f"P{par} is not a row of the INDEX Parked list: park it first")
@@ -315,16 +318,73 @@ def check_dest(home, dest: str) -> str:
     return d
 
 
-def drop(home, lid: str, dest: str) -> "str | None":
+def routed_path(home) -> Path:
+    return Path(home) / "drain" / "routed.txt"
+
+
+def routed_ids(home) -> set:
+    """The ids `drop` routed (one `L<n> -> <dest> (<date>)` line each in `<home>/drain/routed.txt`). Ids are
+    never reused, so an id here is routed for good: no decline, withdraw or drain puts it back on the list."""
+    try:
+        text = routed_path(home).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return set()
+    return {m.group(1) for m in re.finditer(r"(?m)^(L\d+) -> ", text)}
+
+
+def _record_routed(home, lid: str, dest: str) -> None:
+    path = routed_path(home)
+    try:
+        old = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        old = ""
+    if lid in routed_ids(home):
+        return
+    if old and not old.endswith("\n"):
+        old += "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".routed-", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(f"{old}{lid} -> {dest} ({today().isoformat()})\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def drop(home, lid: str, dest: str, release: bool = True) -> "str | None":
+    """Route or close an item: its row leaves the list and `drain/routed.txt` records it. The item may be only
+    in the pile (a proposed item has no row): a pending drain proposal that holds only it is withdrawn, one
+    that holds others loses just this item (`release=False` leaves the pile alone: the caller disposes of the
+    proposal itself). The routing is recorded first, so a crash after it never lets a decline put the item
+    back. No list file and no proposal holding the item is an empty list: nothing to drop (None)."""
     d = check_dest(home, dest)
-    if not list_path(home).is_file():
-        return None                                    # no file is an empty list: nothing to drop
-    p = parse(_text_or_template(home))
-    r = _find(p, lid)
-    lines = list(p["lines"])
-    del lines[r["line"]]
-    _write(home, "".join(lines))
-    return f"{r['id']} -> {d}"
+    lid = lid.strip()
+    sm = _system_one() if release else None
+    held = sm.pending_holding(home, lid) if sm else []
+    r = None
+    if list_path(home).is_file():
+        p = parse(_text_or_template(home))
+        try:
+            r = _find(p, lid)
+        except LooseEndsError:
+            if not held:
+                raise
+    elif not held:
+        return None
+    _record_routed(home, lid, d)
+    if r is not None:
+        lines = list(p["lines"])
+        del lines[r["line"]]
+        _write(home, "".join(lines))
+    done = sm.release_items(home, [lid]) if sm else {"withdrawn": [], "edited": []}
+    note = [f"withdrew proposal {x}" for x in done["withdrawn"]] + [
+        f"proposal {old} is now {new} without it" for old, new in done["edited"]]
+    return f"{lid} -> {d}" + ("; " + "; ".join(note) if note else "")
 
 
 def remove_rows(home, ids) -> list:
@@ -374,7 +434,7 @@ def restore_rows(home, rows: list, state: str = STATE_NEW) -> list:
 
 
 def pile_counts(home) -> tuple:
-    """(suggestions pending in the pile, those that wait for the operator = pending `ask`)."""
+    """(proposals pending in the pile, those that wait for the operator = pending `ask`)."""
     d = Path(home) / "drain" / "pending"
     n = k = 0
     for f in sorted(d.glob("*.md")) if d.is_dir() else []:
@@ -402,7 +462,7 @@ def rows_of(home) -> list:
 
 
 def carried_open(home) -> int:
-    """Open boxes (`- [ ] L<n> (slice: ..) ..`) in the open work orders."""
+    """Open boxes (`- [ ] L<n> (slice: ..) ..`) in the open work-orders."""
     c = _canary()
     d = Path(home) / "work-orders"
     n = 0
@@ -450,7 +510,7 @@ def _open_orders(home: Path) -> list:
         except (OSError, UnicodeDecodeError):
             continue
         title = next((" ".join(ln[2:].split()) for ln in text.splitlines() if ln.startswith("# ")), path.stem)
-        scope = c.section_lines(text, "## Proposed fix scope") or []
+        scope = c.proposed_scope_lines(text) or []
         cut = re.search(r"(?m)^#{2,3}\s*Implementer notes", text)
         body = " ".join((text[:cut.start()] if cut else text[:ORDER_BODY_CHARS]).split())
         sev = _severity_line(text, c)
@@ -518,7 +578,7 @@ def _bm25(query: set, docs: list) -> list:
 
 def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = MAX_JOIN_PAIRS,
                     pick=None) -> dict:
-    """The one reader of the open work orders for any item text, on the list or not.
+    """The one reader of the open work-orders for any item text, on the list or not.
     `items` is [(ref, text)]. Each item is offered its `top` best orders: a shared reference or path
     ranks first, then BM25 of the item's words over the order (its title counted twice, read up to its
     Implementer notes; its Proposed fix scope need not exist), so a long order gains nothing from its length.
@@ -576,7 +636,7 @@ def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = 
 
 
 def candidates(home, sm=None, pick=None) -> dict:
-    """For each `new` item: its best open work orders (`join_candidates`); and the pairs
+    """For each `new` item: its best open work-orders (`join_candidates`); and the pairs
     of `new` items that could be bundled, chosen by code with System One's signals: a shared reference or
     path (one shared by more than HUB_LIMIT texts is no signal) or word overlap (OVERLAP).
     -> {"items", "join", "bundle", "orders"}."""
@@ -598,6 +658,146 @@ def candidates(home, sm=None, pick=None) -> dict:
     bundle.sort(key=lambda x: (-len(x["shared"]), -x["score"], x["a"], x["b"]))
     return {"items": [r["id"] for r in items], "join": jc["join"], "bundle": bundle[:sm.MAX_PAIRS],
             "orders": jc["orders"]}
+
+
+# ------------------------------------------------------------------ fixed elsewhere (code only, no model)
+FIX_MIN_SHARED = 3                # distinctive words an item and a fix must share
+FIX_MIN_COVER = 0.5               # with no anchor: the share of the fix's own words the item holds, and at least 4
+FIX_COMMITS = 2000                # commit subjects read at most
+_FIX_TICKS = re.compile(r"`([^`\n]{4,60})`")
+_FRONT = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.S)
+
+
+def _git(root: Path, *args) -> "str | None":
+    try:
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _resolved_on(root: Path, path: Path) -> "str | None":
+    """The date a resolved order file was last committed (the resolve commit), else its modified date."""
+    out = _git(root, "log", "-1", "--format=%cs", "--", str(path))
+    if out and re.fullmatch(r"\d{4}-\d\d-\d\d", out.strip()):
+        return out.strip()
+    try:
+        return date.fromtimestamp(path.stat().st_mtime).isoformat()
+    except OSError:
+        return None
+
+
+def _resolved_orders(home: Path) -> list:
+    """[{nnn, ref, title, text, path}] for the files of `work-orders/resolved/`. `text` is what an item is
+    matched against: the heading, the front matter's `title:` and `summary:`, never the whole order. The
+    resolve date is read (git) only for an order that already matches: see `fixed_elsewhere`."""
+    c = _canary()
+    out = []
+    d = home / "work-orders" / "resolved"
+    for nnn, names in sorted(c._wo_files(d)[0].items()):
+        path = d / names[0]
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        m = _FRONT.match(text)
+        front = {}
+        for ln in (m.group(1).splitlines() if m else []):
+            k, _, v = ln.partition(":")
+            front[k.strip().lower()] = v.strip()
+        head = next((" ".join(ln[2:].split()) for ln in text.splitlines() if ln.startswith("# ")), "")
+        out.append({"nnn": nnn, "ref": f"WO-{nnn}", "title": head or front.get("title", path.stem),
+                    "text": " ".join(x for x in (head, front.get("title", ""), front.get("summary", "")) if x),
+                    "path": path})
+    return out
+
+
+def _commit_subjects(home: Path, since: str) -> list:
+    """[{sha, date, subject}] of the commits since `since` (YYYY-MM-DD), newest first; [] when git cannot say
+    (no git, no repository, or `home` is not inside the repository's own top level)."""
+    root = _repo_root(home)
+    top = _git(root, "rev-parse", "--show-toplevel")
+    try:
+        if not top or Path(top.strip()).resolve() != root.resolve():
+            return []
+    except OSError:
+        return []
+    out = _git(root, "log", f"--since={since}", f"--max-count={FIX_COMMITS}", "--no-merges",
+               "--format=%h%x09%cs%x09%s")
+    rows = []
+    for ln in (out or "").splitlines():
+        parts = ln.split("\t", 2)
+        if len(parts) == 3 and parts[1] >= since:
+            rows.append({"sha": parts[0], "date": parts[1], "subject": " ".join(parts[2].split())})
+    return rows
+
+
+def _fix_score(item: str, target: str, sm) -> "tuple | None":
+    """(shared words, anchored) when `target` reads as a fix of `item`, else None. Both sides are reduced to their
+    distinctive words (System One's word list, no stop words). A match needs FIX_MIN_SHARED shared words and
+    either an anchor (a backticked name, a path, or a word with an underscore, of the item, found in the target)
+    or four shared words that make up half of the target's own words. Conservative on purpose: a miss costs the
+    orchestrator the manual check made today; a false match costs a close proposal that is read and declined."""
+    def words(t):
+        return {w for w in sm._WORD.findall(t.lower()) if w not in sm._STOP}
+    iw, tw = words(item), words(target)
+    shared = iw & tw
+    if len(shared) < FIX_MIN_SHARED or not tw:
+        return None
+    low = " ".join(target.lower().split())
+    names = [" ".join(x.lower().split()) for x in _FIX_TICKS.findall(item)] + [x.lower() for x in sm._PATH.findall(item)]
+    anchored = any(n and n in low for n in names) or any("_" in w for w in shared)
+    if anchored or (len(shared) >= 4 and len(shared) / len(tw) >= FIX_MIN_COVER):
+        return len(shared), anchored
+    return None
+
+
+def fixed_elsewhere(home, rows=None, sm=None) -> dict:
+    """The new items that look already fixed, by code (no model). For each row ({id, added, source, item}; default
+    the list's `new` rows) it looks at the orders resolved after the item (a higher WO number than the item's
+    Source order, or resolved on or after its Added date; the Source order itself never) and at the commit
+    subjects since its Added date, and keeps the best match (the most shared words; an order before a commit).
+    -> {id: {"kind": "order" | "commit", "ref": "WO-NNN" | "<sha>", "title": ..., "date": ...}}. A match is
+    only a lead: the drain turns it into a `close` proposal naming the fix, never into a close."""
+    sm = sm or _system_one()
+    home = Path(home)
+    if rows is None:
+        rows = [r for r in rows_of(home) if r["state"].strip() == STATE_NEW and ID_RE.fullmatch(r["id"])]
+    if not rows:
+        return {}
+    orders = _resolved_orders(home)
+    dated = [r["added"] for r in rows if re.fullmatch(r"\d{4}-\d\d-\d\d", r.get("added") or "")]
+    commits = _commit_subjects(home, min(dated)) if dated else []
+    out = {}
+    resolved_on: dict = {}
+    for r in rows:
+        added = r.get("added") or ""
+        src = re.fullmatch(r"WO-(\d{3,})", (r.get("source") or "").strip())
+        best = None
+        for o in orders:
+            if src and int(o["nnn"]) == int(src.group(1)):
+                continue
+            sc = _fix_score(r["item"], o["text"], sm)
+            if not sc or (best is not None and sc <= best[0]):
+                continue
+            later = bool(src) and int(o["nnn"]) > int(src.group(1))
+            if o["nnn"] not in resolved_on:
+                resolved_on[o["nnn"]] = _resolved_on(_repo_root(home), o["path"])
+            if not later and not (added and resolved_on[o["nnn"]] and resolved_on[o["nnn"]] >= added):
+                continue
+            best = (sc, {"kind": "order", "ref": o["ref"], "title": o["title"],
+                         "date": resolved_on.get(o["nnn"]) or ""})
+        if best is None and re.fullmatch(r"\d{4}-\d\d-\d\d", added):
+            for cm in commits:
+                if cm["date"] < added:
+                    continue
+                sc = _fix_score(r["item"], cm["subject"], sm)
+                if sc and (best is None or sc > best[0]):
+                    best = (sc, {"kind": "commit", "ref": cm["sha"], "title": cm["subject"], "date": cm["date"]})
+        if best:
+            out[r["id"]] = best[1]
+    return out
 
 
 # ------------------------------------------------------------------ legacy registers (asked once per file)
@@ -659,7 +859,9 @@ def legacy_pending(home) -> list:
     """Repo-relative paths of `*.md` files in the home's top level and in work-orders/ whose file name or `# `
     title says loose ends or register, minus those already answered. Empty when none.
 
-    Two limits, both deliberate. `work-orders/resolved/` is not scanned: a resolved order is history and never a
+    Three limits, all deliberate. A work-order file (`WO-NNN-*.md`) in `work-orders/` is skipped: an order, open or
+    resolved, is never a register, yet its title often mentions loose ends (only a plainly named list there is
+    asked about). `work-orders/resolved/` is not scanned: a resolved order is history and never a
     register, yet its title often mentions loose ends. The rest of the home is not walked either: briefs, audit
     logs, archives and slice folders sit there and would match the name and title test far more often than a real
     register would; a register kept elsewhere is imported by naming it (`import FILE`)."""
@@ -670,8 +872,8 @@ def legacy_pending(home) -> list:
         if not d.is_dir():
             continue
         for f in sorted(d.glob("*.md")):
-            if f.name == NAME:
-                continue
+            if f.name == NAME or (d != home and _canary().wo_nnn(f.name)):
+                continue                       # a work-order, open or resolved, is never a register
             try:
                 head = f.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
@@ -759,7 +961,7 @@ def main(argv=None) -> int:
 
     def cmd(name, help_):
         sp = sub.add_parser(name, help=help_)
-        sp.add_argument("--root", default=None, help="the repo root or the gitos home (default: here)")
+        sp.add_argument("--root", default=None, help="the repo root or the home directory (default: here)")
         return sp
     s = cmd("add", "append a new item; prints its id")
     s.add_argument("--source", required=True)
@@ -772,7 +974,7 @@ def main(argv=None) -> int:
     s = cmd("status", "one line: the inbox, the pile, and what waits for you")
     s.add_argument("--brief", action="store_true")
     s.add_argument("root_pos", nargs="?", default=None)
-    s = cmd("candidates", "open work orders each new item could join, and items that could be bundled")
+    s = cmd("candidates", "open work-orders each new item could join, and items that could be bundled")
     s.add_argument("--json", action="store_true")
     s = cmd("import", "add the rows of a legacy register file as new items (records the answer)")
     s.add_argument("file")

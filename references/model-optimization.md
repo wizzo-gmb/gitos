@@ -51,7 +51,7 @@ evidence, and learned guidance. Re-enable refreshes discovery before using them.
 
 When enabled, initialize one session baseline before the first optimized dispatch.
 Use the active harness session/thread identity when exposed, or assign one stable
-opaque identity for this GitOs session and carry it through resumes. Do not reuse
+opaque identity for this GitOS session and carry it through resumes. Do not reuse
 an identity for a different session or take the shared record's identity as proof
 that it belongs to this session. If identity cannot be established after resume,
 explicitly initialize a distinct new baseline and label it as such. Record model and effort independently, each
@@ -67,8 +67,8 @@ both pairs when neither is observable. `default` retains only the fixed/default
 meaning described below; it does not stand in for an unknown active effort.
 The helper validates provenance labels, not the truth of the supplied observation.
 
-The baseline means **GitOs initialization / first observation**, not the harness
-process's launch setting. Starting GitOs late cannot reconstruct earlier settings.
+The baseline means **GitOS initialization / first observation**, not the harness
+process's launch setting. Starting GitOS late cannot reconstruct earlier settings.
 Repeating `session-init` with the same identity and harness preserves both original
 baseline and latest current observation; it never fills unknown initial values
 from later evidence. Resume with that same identity. A deliberate new session uses
@@ -101,7 +101,7 @@ Every selection checks current evidence against the configured ceiling. If it
 changed, revalidate the mapping; once it matches, selection can proceed while the
 original baseline remains unchanged. Baseline drift alone is not a permanent block.
 
-**Observation limits.** GitOs does not introspect hidden reasoning settings. In
+**Observation limits.** GitOS does not introspect hidden reasoning settings. In
 Codex, use session/turn metadata only when the active client exposes the actual
 pair for this session. `config/read` resolves on-disk settings; model catalogs,
 saved defaults and a separately spawned app-server do not reveal the current
@@ -227,7 +227,7 @@ reach the same answer:
 - `## Verification` demands a negative control, an adversarial wave, a fuzzer, or
   mutation testing → **deep**; that is the edge-case signal, where measured gains
   concentrate.
-- `## Proposed scope` carries a diff sketch → **standard**; the judgment is spent.
+- `## Proposed fix scope` carries a diff sketch → **standard**; the judgment is spent.
 - Read-only work, or one named file with no Options → **light**.
 
 Where rules conflict, the highest tier among the matching rules wins: effort buys
@@ -405,7 +405,7 @@ the pricing page does not mention effort, so a cheaper pair is not proven cheape
 overall.
 
 **The measured comparison.** To test the prior on a repo's own work, take one
-resolved work order with a settled spec and run it under two permitted pairs, for
+resolved work-order with a settled spec and run it under two permitted pairs, for
 example the middle model at `high` and the lead's model at one level below the lead:
 
 1. Create two throwaway worktrees at the commit just before the order landed, one per
@@ -416,7 +416,7 @@ example the middle model at `high` and the lead's model at one level below the l
    revisions needed. Anything the client does not expose is recorded as unknown.
 4. Compare tokens against first-pass verification. One order is an anecdote; repeat
    across several before changing the starting mapping, and keep the numbers as local
-   data in the work orders' model entries.
+   data in the work-orders' model entries.
 
 This is documented here and is not run by the engine.
 
@@ -663,7 +663,7 @@ or available tool metadata, and resolve alias targets for this provider. `/model
 is a picker/inspection path, not permission to change the lead. Populate the same
 mapping shape from these observations; `source` records the harness version and
 alias resolution. Full model IDs avoid ambiguous alias changes. No roster of
-current model names is shipped with GitOs.
+current model names is shipped with GitOS.
 
 Read only relevant model settings: selected agent frontmatter, applicable managed/
 user/project/local settings, installed spawn overrides, and model-specific
@@ -728,7 +728,7 @@ Apply the checked pair through the native dispatcher and record one compact WO n
 
 Replace unknown with observed settings only when runtime evidence supports them.
 Capture native reroutes if exposed, revalidate their ceiling, and report conflicts;
-GitOs policy cannot prevent an opaque provider substitution. A repeated same failure
+GitOS policy cannot prevent an opaque provider substitution. A repeated same failure
 prompts reassessment: worker returns attempts and failure evidence to the orchestrator.
 Distinguish reasoning difficulty from context, tool, credential, or environment gaps.
 Escalate only for a useful reason within the ceiling. New tasks reset to their suitable
@@ -745,7 +745,7 @@ benchmark, report, follow-up WO, or general handoff-improvement requirement.
 Use the existing brain upsert protocol: search for the canonical routing concept;
 update/replace its compact current guidance rather than append an event history.
 Create `wiki/concepts/model-routing.md` only for a reusable, evidenced lesson, with
-normal concept frontmatter/index/log handling. Link supporting WOs with relative
+normal concept frontmatter/index/log handling. Link supporting work-orders with relative
 Markdown links resolved from the concept page (including the resolved directory
 after a WO moves); the ledger keeps the details. No separate history or memory store.
 If this repo has no brain, keep evidence in the WO and skip learning; do not create a

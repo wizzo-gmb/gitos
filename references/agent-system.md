@@ -10,10 +10,10 @@ role briefs listed at the bottom.
 
 ### 1. Inception (once per repo)
 
-Run once on an uninitialized repo. Inception interviews the user to understand the
+Run once on an uninitialized repo. Inception interviews the operator to understand the
 project, scaffolds the `.gitos/` tree (work-order ledger, brain, work-order
 template), **seeds the brain** at the agreed depth (minimal / moderate / aggressive),
-fills `handoff.md` — the immutable birth record — and then hands control to the
+fills `HANDOFF.md` — the immutable birth record — and then hands control to the
 Orchestrator in the same session.
 
 Inception does NOT write application source code. Its only product is the pipeline
@@ -24,10 +24,10 @@ start.
 
 The front-line builder. Each session it:
 
-1. Reads `handoff.md` **once** — the frozen birth record; never edited again.
-2. Reads `INDEX.md` — the current work state (open / resolved / disproved / next-steps).
+1. Reads `HANDOFF.md` **once** — the frozen birth record; never edited again.
+2. Reads `INDEX.md` — the current work state (open / parked / resolved / disproved / next-steps).
 3. Reads the brain (`BRAIN.md` + `wiki/index.md`, then the pages relevant to today).
-4. Builds with the user: authors forward work-orders, sequences work, makes decisions.
+4. Works with the operator: authors forward work-orders, sequences work, makes decisions.
 5. Invokes the **Diagnostic** finder (read-only) when evidence needs careful cataloging
    before action is taken.
 6. Dispatches and verifies **Implementer** agents for authorized code changes.
@@ -49,7 +49,7 @@ work-orders dispatched by the Orchestrator.
 
 ### The implementer (entered on a work-order, not on the repo)
 
-The three roles above are **repo-entry** — reached by state detection + user intent on the *repo*.
+The three roles above are **repo-entry** — reached by state detection + operator intent on the *repo*.
 The **implementer** is the fourth role, entered on a single **work-order**: the orchestrator
 dispatches it, **or** the operator points a fresh window at one work-order ("implement this", "do
 `wo_046`"). Either way it reads that work-order in full, **plans first**, edits only what its
@@ -63,10 +63,10 @@ approaches a domain; they are not an agent themselves.
 
 ---
 
-## Bridge Diagram
+## Role-flow diagram
 
 ```
-Inception ──seeds──▶ brain + writes──▶ handoff.md ──read once──▶ Orchestrator
+Inception ──seeds──▶ brain + writes──▶ HANDOFF.md ──read once──▶ Orchestrator
                                                                       │  ⇅ brain (read/query/update)
                                               calls (read-only)       ├──▶ Diagnostic ──▶ work-orders ──▶ INDEX
                                               dispatches + verifies   └──▶ Implementers ──▶ code
@@ -80,14 +80,14 @@ honest.
 
 ## When to Use Which Role
 
-| User phrasing | Role |
+| Operator phrasing | Role |
 |---|---|
 | "init this repo", "scaffold the pipeline", "give this project a brain", "set up the work-order system", "bootstrap the agent system" | **Inception** |
 | "start working on this", "what should I do next", "drive the project", "plan the next steps", "prioritize the backlog", "build X" | **Orchestrator** |
 | "audit this artifact", "find bugs in X", "diagnose the pipeline", "inspect the logs", "what's wrong with Y", "investigate this anomaly" | **Diagnostic** |
 
 If the repo is already initialized and the intent is build/drive, it's the
-Orchestrator — even if the user says "start over" or "what's left". Detection always
+Orchestrator — even if the operator says "start over" or "what's left". Detection always
 runs first; see `SKILL.md §First action`.
 
 The **implementer** is entered differently — on a single **work-order**, not on the repo: the
@@ -106,7 +106,7 @@ rule — it's what keeps the system from drifting out of sync as it grows.
 |---|---|---|---|
 | **Brain** | *Why / what-is-true* — decisions, domain concepts, entities, ingested sources | `.gitos/brain/wiki/` | Yes — Orchestrator only, via the maintenance loop |
 | **INDEX** | *What work is open* — forward work-orders, bug work-orders, resolved/disproved history, next-steps | `.gitos/INDEX.md` + `work-orders/` | Yes — Orchestrator updates lifecycle; Diagnostic appends findings |
-| **Handoff** | *The birth record* — project identity, acceptance criteria, hold-out discipline, outcome definition, predecessor lessons | `.gitos/handoff.md` | No — frozen after Inception; evolution goes into brain pages |
+| **Handoff** | *The birth record* — project identity, acceptance criteria, hold-out discipline, outcome definition, predecessor lessons | `.gitos/HANDOFF.md` | No — frozen after Inception; evolution goes into brain pages |
 | **Code** | *What the system does* — the actual implementation | `src/`, `tests/`, etc. | Yes — Implementers only (never the orchestrator directly); the orchestrator authorizes + dispatches + verifies |
 
 **The one-atom-one-place rule:** if a fact is *why something is true*, it belongs in

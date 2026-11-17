@@ -10,7 +10,7 @@ look for log evidence first — anomalies you can't prove from logs become
 
 ---
 
-## 1. Math / formula / sizing correctness
+## 1. Math / formula / quantity correctness
 
 **Highest blast radius for any system with computed outputs.**
 
@@ -18,18 +18,17 @@ What to look for:
 - Critical formulas should be derivable from logged inputs. Find a log line
   that shows inputs and the computed output. Recompute by hand. Compare.
 - Multipliers printed in logs that don't actually propagate — e.g., a
-  `dd_throttle=0.5` log followed by a `contracts=14` calculation that didn't
-  apply the throttle.
+  `throttle=0.5` log followed by a computed quantity that didn't apply it.
 - Sign errors, off-by-one, integer-vs-float drift in places where the
   intermediate value is logged but not the final.
-- Commission, fee, or rake calculations where the count of "sides" or "legs"
-  could be wrong.
+- Fee or charge calculations where the count of what is charged on could be wrong.
 
 **Domain adaptations:**
 - IoT/telemetry: batch sizing (`records = floor(buffer_bytes / record_size)`), throughput accounting (`samples × bytes_per_sample × devices − 2 × header_bytes × packets`), quota/rate-budget math.
 - Billing: per-unit pricing, tax, discounts, currency conversion.
 - ML: loss-function components, weighted aggregates, normalization.
 - Data pipeline: aggregations, joins (cardinality bugs), windowed stats.
+- Trading/quant: a `dd_throttle=0.5` log followed by a `contracts=14` sizing calculation that didn't apply it; commission or rake where the count of "sides" or "legs" is wrong.
 
 **Evidence pattern:** quote the input log line, quote the output log line,
 show the recomputation, show the drift.
@@ -52,6 +51,7 @@ What to look for:
 - Web service: session init order, auth-context-vs-request lifecycle, request-scoped vs app-scoped state.
 - Background jobs: idempotency keys set on which phase, retry state, cron-vs-realtime initialization.
 - Game state: scene init, save/load, cross-frame mutations.
+- Trading/quant: a streak-state loader that fires at data-ready time, before the account context is resolved.
 
 **Common bug shape:** "X is initialized in phase A but first used in phase B
 which runs before A on cold start" — e.g., a streak-state loader that fires at
@@ -114,7 +114,7 @@ What to look for:
   shared file.
 - File paths constructed with placeholder fallbacks (`?? "UNKNOWN"`) that
   freeze the path with the placeholder.
-- Cross-restart drift: behavior depends on chart/process being open vs
+- Cross-restart drift: behavior depends on the process or host being open vs
   freshly started.
 
 **Domain adaptations:**
@@ -122,6 +122,7 @@ What to look for:
 - Web service: session store, cache invalidation, sticky-routing.
 - ML: model checkpoint loading, hyperparameter state across training runs.
 - CLI tools: rc-file lookup, working-directory assumptions, env-var defaults.
+- Trading/quant: behavior that differs between a chart or platform host that is already open and one freshly started.
 
 **Test pattern:** read multi-day logs and look for whether observably-derived
 state (like a high-water mark, a streak counter, a session token, a trained
@@ -157,7 +158,7 @@ on these logs. Closing the loop matters even when current behavior is
 What to look for:
 - `None`/`null`/empty-string handling. Sentinel collisions (e.g., -1 as
   both "not found" and a legit value).
-- Timezone boundaries: UTC-vs-local-vs-exchange. Midnight rollover behavior.
+- Timezone boundaries: UTC-vs-local-vs-source-system. Midnight rollover behavior.
   Daylight Saving Time transitions.
 - Integer truncation of floats where precision matters (e.g., `T=34.7` stored
   as `int` → 34, or rounded to 35).
@@ -169,6 +170,7 @@ What to look for:
 - IoT/telemetry: device-local-vs-UTC boundary for daily reset, sensor-scale precision (5.0 vs 5).
 - ML: NaN propagation through aggregations, masked values in feature pipelines.
 - Web service: locale handling, encoding detection, max-int overflow.
+- Trading/quant: exchange session time vs UTC vs local (discipline (l), name-the-clock).
 
 ---
 
@@ -177,7 +179,7 @@ What to look for:
 What to look for:
 - Values produced by an offline pipeline shipped to a live consumer where the
   consumer applies the value differently than the producer assumed.
-- Threshold selectors that pick boundary values (e.g., T=0 as PF-maximum)
+- Threshold selectors that pick boundary values (e.g., a threshold of 0 as the score maximum)
   that the live consumer's downstream logic depends on being non-zero.
 - Hyperparameters tuned on one slice and deployed against a different one.
 
@@ -186,6 +188,7 @@ What to look for:
 - ML: train-vs-serve skew; a preprocessing parameter tuned on training data applied differently at inference.
 - Web service / A/B testing: stat-significance threshold used to select a variant, but the deployment activation condition uses a different comparison.
 - Data pipeline: aggregation window tuned on historical cadence, deployed against a streaming feed with different timing.
+- Trading/quant: a threshold T=0 chosen as the profit-factor (PF) maximum, which removes the live filter.
 
 **Pattern:** find a deployed value, find where it was selected, recompute
 how the live consumer applies it. Differences are often hidden by the writer
@@ -193,14 +196,14 @@ and reader living in different code paths or even different languages.
 
 ---
 
-## 9. Negative-EV / "shouldn't trigger" paths
+## 9. "Shouldn't trigger" paths
 
 What to look for:
 - Guards that protect against bad behavior — verify they actually block what
   they're supposed to.
 - "This branch should never run" code that occasionally runs.
 - Dormant-mode logic for entities that should be inactive (e.g., disabled
-  tickers, suspended users).
+  entities, suspended users).
 
 **Domain adaptations:**
 - IoT/telemetry: `enabled=false` devices should skip sampling entirely;
@@ -209,6 +212,7 @@ What to look for:
   resources must not be returned by list endpoints.
 - ML: out-of-distribution detector must trigger when expected, not silently
   return predictions.
+- Trading/quant: negative-EV paths that should never fire; disabled tickers that should stay dormant.
 
 **Critical insight:** for this family, **the absence of log evidence IS
 evidence**. If a guard exists in code but never produces its expected log line

@@ -83,7 +83,7 @@ ROLE_SUMMARIES = {
     ),
     "orchestrator": (
         "Front-line builder + coordinator. Each session reads HANDOFF.md (once) + "
-        "INDEX.md + the brain. Builds with the user; authors and prioritizes "
+        "INDEX.md + the brain. Builds with the operator; authors and prioritizes "
         "work-orders; invokes the diagnostic finder for evidence; dispatches and "
         "verifies implementer agents; stewards the brain (inline upsert -> checkpoint "
         "reconcile -> brain_lint), recording a decision page on every non-trivial "
@@ -317,7 +317,7 @@ def compact_restore_module():
 
 
 def slice_guard_module():
-    """The slice-edit hook (keeps a slice worker to its own slice file), loaded from this `scripts/` dir BY PATH, or None."""
+    """The slice-edit hook (keeps a slice implementer to its own slice file), loaded from this `scripts/` dir BY PATH, or None."""
     path = Path(__file__).resolve().parent / "slice_guard.py"
     if not path.is_file():
         return None
@@ -426,7 +426,7 @@ def starter_gitignore(home_label: str, brain_on: bool) -> str:
     configured home (.gitos/.pipeline/...) rather than hard-coding `.gitos/`."""
     lines = [
         "# gitos starter .gitignore — generic; extend per project/profile.",
-        f"# The pipeline home '{home_label}/' is the audit trail and is intentionally NOT ignored.",
+        f"# The home '{home_label}/' is the audit trail and is intentionally NOT ignored.",
         "",
         "# Python",
         "__pycache__/",
@@ -476,7 +476,7 @@ def starter_gitignore(home_label: str, brain_on: bool) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Scaffold a GitOS pipeline + brain.")
     ap.add_argument("root")
-    ap.add_argument("--home", default="auto",
+    ap.add_argument("--home", default="auto", help="the home directory name under ROOT (default: auto-detect)",
                     choices=["auto", ".gitos", ".pipeline", "outputs/debug", "docs/agents"])
     ap.add_argument("--brain", default="on", choices=["on", "off"])
     ap.add_argument("--roles", default="all", choices=["all", "diagnostic"])
@@ -646,7 +646,7 @@ def main() -> int:
         f"description: Reloadable pointer to the GitOS agent system for "
         f"{project_name}; load when resuming work or restoring context after compaction\n"
         f"metadata:\n  type: reference\n---\n\n"
-        f"This repo runs the **GitOS** agent system. Pipeline home: "
+        f"This repo runs the **GitOS** agent system. Home: "
         f"`{posix_root}/{home_label}/`.\n\n"
         f"Default re-entry role: **orchestrator**. On a fresh/compacted session, invoke the "
         f"`gitos` skill and read, in order:\n"
@@ -838,9 +838,9 @@ def main() -> int:
     elif args.git == "offer":
         if not has_git(root):
             print("\nGIT  no git repository detected. The pipeline + brain are an audit trail")
-            print("     and are only durable under version control. Recommended (ask the user first):")
+            print("     and are only durable under version control. Recommended (ask the operator first):")
             print(f"       cd {posix_root} && git init")
-            print(f"     Track the pipeline home; a .gitignore should NOT ignore '{home_label}/'.")
+            print(f"     Track the home; a .gitignore should NOT ignore '{home_label}/'.")
     else:  # ensure (default)
         if has_git(root):
             print("\nGIT  already under version control (.git present, or inside a parent "
@@ -848,7 +848,7 @@ def main() -> int:
         else:
             # Report BEFORE any git runs, so a false-negative ("a repo I missed") is visible.
             print(f"\nGIT  no git repository detected at {posix_root}.")
-            print("     ENSURE: initializing one now so the pipeline home + brain (the audit")
+            print("     ENSURE: initializing one now so the home + brain (the audit")
             print("     trail) are durable under version control. If a repo already exists here")
             print("     or in a parent dir I missed, stop and re-run with --git skip.")
             if git_init(root):

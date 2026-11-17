@@ -14,7 +14,7 @@ latest GitOS engine. It is home-agnostic and idempotent.
 
 ## When to run it
 
-- The user asks to "upgrade this repo's engine" / "update the gitos directive" (the
+- The operator asks to "upgrade this repo's engine" / "update the gitos directive" (the
   `SKILL.md` router sends that intent here), or
 - the orchestrator's first-action drift check reports the skill's `ENGINE_VERSION` is
   ahead of the repo's stamped `engine_version`.
@@ -99,7 +99,7 @@ _meta.inception_template_version placeholder) and re-run.
 Resolve `<home>` by the standard detection order (`.gitos/` → `.pipeline/` →
 `outputs/debug/`). Read the repo's stamped `engine_version` from
 `<home>/brain/.brainmeta.json` (`engine_version` field) — or, for a general repo without
-a brain, from `<home>/handoff.md`. A repo with no stamp is treated as version `0`.
+a brain, from `<home>/HANDOFF.md`. A repo with no stamp is treated as version `0`.
 
 **2. Refresh + live-read the installed engine.**
 First, **offer to pull the latest engine from its remote.** If the installed skill is a git clone
@@ -138,7 +138,7 @@ Direct the running orchestrator to:
   **implementer-notes accept/reject loop** (have each implementer fill the work-order's
   `## Implementer notes` on completion; on landing, harvest and adjudicate them: ACCEPT —
   route durable facts to the brain, lessons into dispatch, follow-ups into new
-  work-orders — or REJECT with a one-line reason) and the **per-reply canary marker**
+  work-orders — DEFER to a Parked row or the loose-ends list, or REJECT with a one-line reason) and the **per-reply canary marker**
   (open every reply with `[gitos · <role> · <focus>]` — SKILL.md → *Canary*);
 - **re-point any stale role pointers** — if a role pointer or the memory pointer still
   names an old skill path or the legacy `project_flow_role_brief.md`, repoint it to
@@ -180,7 +180,7 @@ Direct the running orchestrator to:
   content**, and is report-and-**ask** by design;
 - **refresh the CLAUDE.md context anchor** — the repo-root `CLAUDE.md` carries the gitos
   `<!-- gitos:agent-system -->` managed block (the canary's durable recovery seed; SKILL.md →
-  *Canary*). If `canary.py` reports `anchor/missing` or `anchor/stale`, refresh it: re-run
+  *Canary*). If `canary.py` reports `anchor-missing` or `anchor-stale`, refresh it: re-run
   `python ~/.claude/skills/gitos/scripts/scaffold.py <root> --git skip` (idempotent — it upserts
   *only* the managed block, creating `CLAUDE.md` if absent, never touching content outside the
   markers), or edit the block by hand between its markers. **Anything the repo owns — project
@@ -235,7 +235,7 @@ Direct the running orchestrator to:
   It is the upgrade, so there is no question to ask. It removes the keys the engine no longer reads
   (`RETIRED_KEYS` in `system_one.py`) from the machine config and from the repo's `system-one.json`, keeping
   every other key; and it turns each loose end whose State is `waiting: user — <question>` into an `ask`
-  suggestion in `<home>/drain/pending/` that carries the question, removing the row from `loose-ends.md` (the
+  proposal in `<home>/drain/pending/` that carries the question, removing the row from `loose-ends.md` (the
   list's states are now `new` and `declined: <reason>`; an `ask` is raised from the pile). It also renames a hand-made carried-loose-ends section of an open
   order to `## Carried loose ends`, but only where every line of it already parses as a box
   (`- [ ] L<n> (slice: <name>) <text>`); any other line is printed by file and line, left alone, and is the
@@ -313,7 +313,7 @@ another harness present the same options as a numbered text list.
 
 **Plugin update channels.** Report the `update` and `sync` lines about channels as they are: an
 `auto` plugin's `autoUpdate: true` for its marketplace is a user-scope **proposal**, never applied by
-the engine. A `pinned-but-auto-updates` finding is the operator's call, and turning the marketplace's
+the engine. A `plugin-pinned-auto-updates` finding is the operator's call, and turning the marketplace's
 `autoUpdate` off freezes every plugin from it. Also carry `audit`'s machine-wide auto-update line
 when an env var turns updates off. Never edit `known_marketplaces.json`.
 
@@ -324,15 +324,6 @@ entry). It registers a `SessionStart` hook matched on `compact|clear` and a `Sto
 `compact`-only entry has that entry's matcher widened in place (one entry, firing once per event) and
 the `Stop` entry added. The canary's `restore` category reports it missing in a scaffolded repo; this
 step is the fix. Claude Code only, and `disableAllHooks` switches it off.
-
-**4p. Follow-ups on folder orders.**
-A folder order takes no `## Carried loose ends` boxes. `drain accept ID --work-order NNN` into one refuses, naming the
-alternatives (a new order with `origin:`, or decline with a reason); `--new-slice NAME` writes a `proposed` slice with
-`origin:` set to the items, only when the orchestrator decides the order's definition of done needs them. Single-file
-orders keep boxes and the whole-order limit. A folder order has per-file limits instead (200 lines for `order.md`,
-150 for a slice; `order.md` over its limit refuses new slices). The canary gates `slice-landed-no-commit` and a
-dangling or cyclic `depends_on`, and reports `ready-to-close`, `slice-stale`, `file-oversized` and split advice at
-eight slices; it reads `ledger_index.py` from beside itself, the home `tools/` or `<SKILL_DIR>/scripts/`.
 
 **4j. Worktree leftovers.**
 Run `python <SKILL_DIR>/scripts/worktree.py status <repo-root>` (read-only). Reap the reapable
@@ -352,7 +343,7 @@ lays the section on a new repo. Work-orders resolved before engine v44 are exemp
 The loose-ends list is **lazy**: upgrade does not lay `<home>/loose-ends.md` and a repo with no file has an
 empty list. The only step here is the legacy register question, asked **at most once per file**. Run
 `python <SKILL_DIR>/scripts/loose_ends.py legacy pending --root <repo-root>`. **If it prints nothing there
-is no question and no output.** Otherwise it lists files (a work order or file under the home whose name or
+is no question and no output.** Otherwise it lists files (a work-order or file under the home whose name or
 `# ` title says loose ends or register) not yet answered; for each, ask once, with the harness's question
 UI, whether to import it and drain, and record the answer: `loose_ends.py import --root <repo-root> <FILE>`
 (adds each table row as a `new` item with Source `import:<its id>`; never edits the file, never imports a
@@ -370,7 +361,7 @@ single-file order with two or more `### S<n>` slice sections that it would conve
 commit is `landed` with it, the rest `ready` with `depends_on` in order; `history/WO-NNN.md` content becomes the landed
 slices' notes), each order it will skip because the text cannot be split with confidence (with the reason: nothing
 is guessed), the **open carried boxes** (`- [ ] L<n> ...`) it will leave in `order.md`, and any `history/` file it
-cannot fold in. Show the operator that report, triage each listed box with the orchestrator (a proposed slice via
+cannot fold in. Show the operator that report, settle each listed box with the orchestrator (a proposed slice via
 `slice.py add` or `drain accept --new-slice`, a new order, or dropped), and only after the operator confirms run it
 again with `--write`. It stages its changes and commits nothing; review the diff, then commit. Single-slice orders and
 resolved orders are left alone. `work-orders/history/` is retired: an empty one (a `.gitkeep` only) is removed by
@@ -396,13 +387,22 @@ Run `python <SKILL_DIR>/scripts/slice_guard.py install <repo-root>` (scaffold la
 already there, and is idempotent. The hook acts only in a worktree made by `worktree.py new NNN --slice SN` (an
 untracked marker in that worktree's git dir); everywhere else it allows. Bash edits are not covered and the
 orchestrator's merge review is the backstop. Then run the canary: a single-file order with more than one slice
-section is a `single-file-multi-slice` finding; `slice.py add WO-NNN NAME <home>` converts it with `git mv`.
+section is a `order-needs-folder` finding; `slice.py add WO-NNN NAME <home>` converts it with `git mv`.
 Claude Code only, and `disableAllHooks` switches it off.
+
+**4p. Follow-ups on folder orders.**
+A folder order takes no `## Carried loose ends` boxes. `drain accept ID --work-order NNN` into one refuses, naming the
+alternatives (a new order with `origin:`, or decline with a reason); `--new-slice NAME` writes a `proposed` slice with
+`origin:` set to the items, only when the orchestrator decides the order's definition of done needs them. Single-file
+orders keep boxes; no order has a whole-order size limit any more. A folder order has per-file limits (200 lines for `order.md`,
+150 for a slice; `order.md` over its limit refuses new slices). The canary gates `slice-landed-no-commit` and a
+dangling or cyclic `depends_on`, and reports `order-ready-to-close`, `slice-stale`, `order-oversized` and `slice-oversized` and split advice at
+eight slices; it reads `ledger_index.py` from beside itself, the home `tools/` or `<SKILL_DIR>/scripts/`.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
 `<home>/brain/.brainmeta.json` (`engine_version` field) for a repo with a brain, else
-`<home>/handoff.md`.
+`<home>/HANDOFF.md`.
 
 **6. Record an ADR + a log line.**
 Add a decision page `<home>/brain/wiki/decisions/engine-upgrade-vN.md` recording: the
@@ -413,7 +413,7 @@ from→to versions, which directives were adopted, and any pointers re-pointed. 
 Show the `git diff` of what changed (the re-pointed pointers, the stamp, the ADR, any
 `<home>/tools/` copy that was newly copied **or refreshed** — name each refreshed tool and
 say the prior bytes are in git), and the `ledger_migrate.py` result (converted orders, skipped orders with their reason,
-the carried boxes triaged, `work-orders/history/` removed) — confirm each explicitly in the report.
+the carried boxes settled, `work-orders/history/` removed) — confirm each explicitly in the report.
 
 ## What it never does
 

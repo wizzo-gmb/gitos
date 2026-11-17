@@ -13,7 +13,7 @@ network call is made and the canary prints nothing new.
 ## The cascade
 
 code rules -> **local decision model** -> the reasoning model -> the operator. The model answers small
-typed questions (`noul` yes/no, `choice`, `score`); a **table in code** decides. `decide(use, item, state,
+typed questions (`noul`, the yes/no type's name in code; `choice`; `score`); a **table in code** decides. `decide(use, item, state,
 second_state=None)` asks the use's questions, settles each probability (`yes` above 0.7, `no` below 0.3,
 otherwise `unsure`), applies the table, and on any `unsure` runs **one** second pass (the caller's
 enriched `second_state`, and/or the configured `second` model; two models disagreeing is `unsure`).
@@ -96,9 +96,9 @@ the operator accepted for a private LAN. Where that is not acceptable, use a VPN
 
 ## Answer shapes
 
-Both are normalized to `{id: {"type", "value", "probabilities", "p"}}`, `p` being P(true) for a noul and
-P(top) otherwise: the TypeSafe shape (typed per-answer objects: `{"type": "noul", "noul": 0.98}`,
-`{"type": "choice", "choice", "confidence", "probabilities"}`) and the pplx shape (the answer carries a
+Both are normalized to `{id: {"type", "value", "probabilities", "p"}}`, `p` being P(true) for a yes/no (`noul`) question and
+P(top) otherwise: the *typed* shape (typed per-answer objects: `{"type": "noul", "noul": 0.98}`,
+`{"type": "choice", "choice", "confidence", "probabilities"}`) and the *keyed* shape (the answer carries a
 `noul` / `choice` / `score` key plus `probabilities`; `type` may be absent). Anything else raises.
 
 ## The call log
@@ -120,7 +120,7 @@ reused. `drain --fresh` and `decide(..., fresh=True)` skip it. CLI: `status [--j
 
 ## Canary
 
-Optional category `system-one`, absent when off. Only an engine defect gates: `registry-invalid` (the question registry
+Optional category `system-one`, absent when off. Only an engine defect gates: `question-registry-unparseable` (the question registry
 does not load) counts into `total` and fails the exit code. `endpoint-down` is an **advisory** line, never counted and never
 changing the exit code: `System One is down (<detail>); the drain waits until it is back, or the orchestrator drains by
 hand` (it is printed, and present in `--json` as `{"kind": "endpoint-down", "advisory": true, ...}`). A config unusable for
@@ -140,7 +140,7 @@ small question per request; a table in code decides. `confirm` outcomes are mark
 | `probe` | a text (status check and gate only; judges nothing real) | `greeting`, `other` |
 `system_one.py lenses <home> (--wo NNN | --text FILE) [--global-dir D] [--json]` makes no model call: it lists the active set of `<home>/lenses.json` with each lens's domain and when-to-apply, and prints one line when lenses are off; the repo wins a name collision; the global layer is `<skill>/agents`, or `--global-dir`, or `GITOS_GLOBAL_LENS_DIR`; a lens that cannot be judged is listed as a problem, never dropped. You decide which lenses apply.
 
-**The `loose-ends` group.** `drain` reads `<home>/loose-ends.md` with no flag (no file: nothing to ask). Each
+**The loose-end uses.** `drain` reads `<home>/loose-ends.md` with no flag (no file: nothing to ask). Each
 `new` item is asked `loose-end-state`: the item says it is
 done -> `closable` (confirm); else it asks the owner -> `ask-operator`; else it waits on a named event -> `park`;
 all three no -> `open`; an unsure answer that the table reads escalates (an unsure `waits_on_event` does not
@@ -150,21 +150,32 @@ candidate and each (item, item) bundle candidate is asked, all chosen by code. A
 ranks first. (2) **BM25** over each open order (its title counted twice, read up to `## Implementer notes`, or the
 first 4,000 characters; a Proposed fix scope heading is not needed; k1 1.2, b 0.75) gives the item's best three, in
 progress or not (the drain only proposes; the orchestrator decides); a long order gains nothing from its length.
-(3) **The title pick** (`loose-end-pick`) finds what words cannot: one `choice` question, "Which of these work orders
+(3) **The title pick** (`loose-end-pick`) finds what words cannot: one `choice` question, "Which of these work-orders
 is about the same part of the product as this item?", with the open orders' titles as options (named by WO id, the
 best 26 by BM25 when there are more), asked once per item and again with the options reversed, the probabilities
 averaged (a choice leans to the first option); its top two orders join the candidates, unique. There is **no minimum
 score**, then `loose-end-join` (the noul) decides, up to 60 pairs a run, taken best first across the items, each pair
 once; `loose_ends.py join_candidates(home,
 [(ref, text)])` serves any item text, on the list or not, to `drain` and `eval-drain`. A `declined:` row is
-asked nothing. Bundle pairs are joined by code into connected groups, and code builds **one suggested next step per
+asked nothing. Bundle pairs are joined by code into **cliques**: a group holds only items every pair of which was answered
+`bundle`. Bundling is not transitive (A~B and B~C say nothing about A and C), and a cap on size would still let a chain
+through, so a connected set is split greedily in id order (each group takes the lowest-numbered unplaced item that agrees
+with every member so far); an item that agrees with only part of a group stays out of it. Before the next step is chosen,
+code checks each new item against **fixes that landed elsewhere** (the function `fixed_elsewhere` of `loose_ends.py`, no model): the
+orders resolved after it (a higher WO number than its Source order, or resolved on or after its Added date; its own
+Source order never) are matched on their heading, front matter `title:` and `summary:`, and the commit subjects since
+its Added date on their subject; a match needs three shared distinctive words and either an anchor (a backticked name,
+a path or an underscore word of the item found in the fix) or four shared words that are half of the fix's words. A
+match is a lead, never a close: it becomes a `close` proposal naming the order or commit (`- fix:` in the header, a
+`## Possibly fixed elsewhere` section), ahead of join, bundle and read; an item settled as `ask` or `park` keeps that
+step, and `closable` gets the fix attached. Code builds **one proposed next step per
 item**: `close (confirm)`, `ask the operator`, `park (trigger: ...)` come from the state; otherwise `related open order:
 consider adding WO-NNN` (kind `join`) beats `bundle with L<a>, L<b> -> new order`, which beats `open` alone (`read it`).
 Nothing is applied. `closable` stays a `confirm` outcome; `join` and `bundle` are reversible because the orchestrator
 still writes the order.
 
 **`system_one.py drain <home> [--json] [--fresh]`** is the one command that writes in the home. It runs the
-loose-ends group (state, joins, bundles) and writes one file per proposal, `<home>/drain/pending/<id>.md`, in the
+loose-end uses (state, joins, bundles) and writes one file per proposal, `<home>/drain/pending/<id>.md`, in the
 shape of the federation intake: the id is the first 12 hex characters of a sha256 over the proposal's kind, its sorted
 item ids and (for a join) the target order, so a re-run updates the same file (and leaves it alone when the body is
 unchanged). Kinds: `join` (items to one open order), `new-order` (a bundle group, or one open item with no join),
@@ -174,10 +185,10 @@ and the items in full with Source and age, plus context gathered by code: the So
 backticked names found, open orders that share those paths, the oldest item's age. No sentence is model-written. A
 fingerprint declined before (`drain/declined/<id>.md`) is not proposed again.
 
-**The pile is the one home of a suggested item.** A run writes the pile file first and only then removes the
+**The pile is the one home of a proposed item.** A run writes the pile file first and only then removes the
 proposal's items from `loose-ends.md`; a crash between the two leaves an item in both places, never in neither,
 and the next run drops from the list every `new` row that a pending file carries (and asks nothing of it). The
-list holds only items not yet suggested. A run never deletes a pending file: only `accept`, `decline` and
+list holds only items not yet proposed. A run never deletes a pending file: only `accept`, `decline` and
 `withdraw` do. Each file also records every item's Added date, so an item that goes back on the list keeps its id,
 age and Source. A join proposal means "related to this open order": the orchestrator decides whether the items belong in that order, its next slice, or elsewhere. A join proposal whose target is in progress (a worktree exists, or its Implementer notes are started) says so in its header and body: `target in progress: <why>`; it is the same kind, and the orchestrator decides whether the item waits for the next slice, without changing a running slice's scope. `drain accept ID --work-order NNN --slice NAME [ROOT]` (every accept into an order names the slice that carries the items, and writes them into the order as `## Carried loose ends` boxes; a folder order refuses unless `--new-slice NAME` is given) refuses
 unless `work-orders/` holds an open WO-NNN (a resolved order, or a join whose target is resolved, is refused
@@ -186,8 +197,13 @@ with one line before anything changes) and moves the file to `drain/accepted/` w
 the same path as the kind that form names, whichever it is). Nothing is left to drop from the list. `drain decline
 ID --reason R` refuses without a reason and moves the file to `drain/declined/`: with `--route
 WO-NNN|P<n>|brain:<page>|closed:<why>` (checked like `loose_ends.py drop`) the orchestrator routed the items by hand;
-without it the items go back on the list with State `declined: <reason>`, which the drain never suggests again (the
-orchestrator decides them by hand with `loose_ends.py drop`). `drain withdraw ID` puts the items back on the list as
+without it the items go back on the list with State `declined: <reason>`, which the drain never proposes again (the
+orchestrator decides them by hand with `loose_ends.py drop`). **Routed items leave the pile.** `loose_ends.py drop L<n> --to DEST`
+also works on an item that is only in the pile: it records the id in `drain/routed.txt` (first, so a crash never lets
+it come back), removes the row if there is one, withdraws every pending proposal that holds only that item and
+rewrites one that holds others without it (under the id its remaining items give; its Context lines stay as written).
+A routed id is never put back on the list: a decline or withdraw skips it, and a drain that was asking while the
+drop happened writes no proposal for it. `drain withdraw ID` puts the items back on the list as
 `new` and removes the file, so the next drain asks them again. `drain defer ID` changes nothing. An `ask` stays in
 `pending/` until the operator answers; the orchestrator raises it from the pile, then accepts it with the routing the
 answer gave or declines it. There is no `waiting: user` state and no `loose_ends.py wait`: `system_one.py migrate
@@ -292,7 +308,7 @@ latency on your own card.
 **A test model runs alone on the card:** stop the production service first (`systemctl --user stop system-one`),
 or two models share the card and time and memory numbers mean nothing. To compare two models, serve each in turn
 and run `python scripts/system_one.py eval-drain --home HOME FILE` on the same labelled set (see *The
-`loose-ends` group*); compare the hand-back rate, the state accuracy and the join precision and recall, and for BF16 against 8-bit compare the same
+loose-end uses*); compare the hand-back rate, the state accuracy and the join precision and recall, and for BF16 against 8-bit compare the same
 numbers on the same file.
 
 **After any model change, run `system_one.py uses-check [--endpoint URL] [--json]`.** It builds one request per

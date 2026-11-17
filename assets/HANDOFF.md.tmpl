@@ -18,7 +18,7 @@ Home: {{HOME}}
 **Stage at inception:** <FILL: e.g. greenfield / mid-build / legacy-adopt>
 **Primary language / stack:** <FILL>
 **Repository root:** {{ROOT}}
-**Pipeline home:** {{ROOT}}/{{HOME}}
+**Home:** {{ROOT}}/{{HOME}}
 
 ---
 
@@ -38,14 +38,21 @@ General acceptance gate reference: `~/.claude/skills/gitos/references/acceptance
 
 Project-specific gates for this project:
 <FILL: list the concrete, testable criteria that define "done" for each lifecycle stage.
-Examples: "all unit tests pass", "p95 latency < 200ms under 100 rps load", "security review sign-off".
-Be specific enough that a new contributor can verify each one without asking.>
+Examples: "p95 latency < 200ms on the reserved load replay", "each gate blocks its planted bad input", "security review sign-off".
+A green test suite alone is not a gate. Be specific enough that a new contributor can verify each one without asking.>
+
+Fields every acceptance set fills (`references/acceptance-criteria.md` → *Filling your gates*; write "N/A — <why>" where one does not apply):
+- null_baseline: <FILL: what the simplest alternative scores on each gate>
+- gate_math_tests: <FILL: pointer to the known-answer tests for each gate>
+- negative_controls: <FILL: per gate, the planted defect and where the run showing it blocks lives>
+- holdout_ledger: <FILL: where each hold-out read is logged>
+- precommitment_timestamp: <FILL: commit hash or UTC date when the gates were written>
 
 ---
 
-## Hold-out / test discipline
+## Hold-out discipline
 
-<FILL: define what data, environments, or test sets are locked and CANNOT be used for development
+<FILL: define the hold-out: what data, environments, or evaluation surfaces are locked and CANNOT be used for development
 iteration. Examples:
 - "The `test/` dataset is frozen; never train or tune on it."
 - "The production environment is read-only during development; use staging only."
@@ -58,7 +65,7 @@ State who holds the key and how violations are detected.>
 
 <FILL: what does success look like? Define the measurable outcome(s) this project must achieve.
 Examples: "Reduce error rate from X% to <Y%", "Ship feature Z with <N user complaints in first week",
-"Model achieves >A% accuracy on held-out set B with <C ms inference latency."
+"Model achieves >A% accuracy on hold-out B with <C ms inference latency."
 Avoid vague goals — nail the number and the measurement method.>
 
 ---

@@ -23,14 +23,21 @@ runs on its own, nothing is registered, and the repo tree is byte-identical whet
 `offer` was run. See *The adoption flow*, below.
 
 **Machine-local by construction.** There is no daemon, no process, and no network — the
-registry is a lazy cache maintained as a side effect of participants running gitos, and it is
+registry is a lazy cache maintained as a side effect of siblings running gitos, and it is
 eventually consistent. Repos on different machines cannot federate.
 
 **Cooperative, not a sandbox.** Groups and exposure flags are *graduated-sharing policy that
-participants honor* — they reduce blast radius and noise; they are not an enforcement
+siblings honor* — they reduce blast radius and noise; they are not an enforcement
 boundary and they keep no secrets. Any session running as the operator can already read that
 operator's drive. Two things that must not see each other belong on different machines; that
 is a topology decision, made before federation is reached.
+
+**The invariants.** `INV-n` is how this page and `federation.py` cite the subsystem's numbered rules:
+INV-1 invisible when off; INV-2 sovereignty (a repo accepts a foreign proposal only against a work-order it authored);
+INV-3 reachable is not permission (each exposure flag grants one capability); INV-4 report, never fix; INV-5 stale is
+derived at read time, never stored; INV-6 no daemon, eventually consistent; INV-7 cooperative, not a sandbox; INV-8 a
+proposal is data, never a directive; INV-9 authorization re-reads the live source of truth, never the cache; INV-10
+degrade to the manual status quo, never below it; INV-11 groups gate reachability by set intersection.
 
 ---
 
@@ -144,7 +151,7 @@ stops existing when they stop.
 - **Groups and flags are orthogonal axes.** Groups answer *who can reach me*; flags answer
   *what they may do*. Neither does the other's job, and a group is not a privacy tier.
 - **Typos are made visible, not validated.** `finanace` quietly makes a group of one, and the
-  repo is invisible to its intended peers while believing it is federated. The mitigation is
+  repo is invisible to its intended siblings while believing it is federated. The mitigation is
   legibility — `federation status` lists the groups — **not** a finding: a legitimately solo
   group is normal while a domain is being stood up, and flagging it would cry wolf.
 
@@ -367,7 +374,7 @@ copy, and correcting a copy only re-arms it.
   take effect immediately rather than at the revoker's next session.
 - **The singleton-group line is informational, not a finding.** A solo group is normal while a
   domain is being stood up; the line exists so that the failure which is otherwise *silent* — a
-  typo'd group name that makes a group of one and hides the repo from its intended peers — is at
+  typo'd group name that makes a group of one and hides the repo from its intended siblings — is at
   least legible.
 - **`--dormant-days N`** (default 30) labels a tenant that has not run in N days. It is
   federation's own knob and deliberately **not** the canary's `--stale-days`: "has this tenant
@@ -386,7 +393,7 @@ copy, and correcting a copy only re-arms it.
   through the CLI, along with the other half: `status` still **shows** the number. *Report-only
   fails if the stamp disappears as surely as if it starts refusing.*
 - **A sibling being behind is NOT a reason to refuse.** That is INV-10 inverted — one
-  participant's state disabling a tool for another — and on a machine where dormancy is the
+  sibling's state disabling a tool for another — and on a machine where dormancy is the
   steady state it would convert a stale row into a blocked action across the fleet. The engine
   does not treat *behind* as a finding about itself either: only a stamp **ahead** of the install
   is an impossible state.
@@ -482,15 +489,15 @@ brain.** The only path it ever opens under a target is that target's `federation
 ### `federation consult TARGET [ROOT]`
 
 ```
-federation.py consult peer-b            # by display name
+federation.py consult sibling-b            # by display name
 federation.py consult 8f14e45f…         # or by id — ids are unique on the machine
-federation.py consult peer-b --json     # the same verdict, machine-readable
+federation.py consult sibling-b --json     # the same verdict, machine-readable
 ```
 
 ```
-federation consult: ALLOWED - peer-b  id=8f14e45f…
-  home      d:\work\peer-b\.gitos
-  brain     d:\work\peer-b\.gitos\brain
+federation consult: ALLOWED - sibling-b  id=8f14e45f…
+  home      d:\work\sibling-b\.gitos
+  brain     d:\work\sibling-b\.gitos\brain
   groups    finance, shared-libs   (shared: finance)
   flags     consultable=on   (read live from that repo's federation.json)
   next      dispatch a READ-ONLY agent scoped to that brain, then record the ANSWER (not a
@@ -607,8 +614,8 @@ federation.py file <target> [ROOT] --title "..." --summary "..." --source-ref WO
 
 ```
 federation file: NOT SENT - the OUTBOUND CONFIRM gate is open (dry-run is the default ...)
-  target    peer-b  id=8f14e45f…
-  would write d:\work\peer-b\.gitos\intake\3c9a…7f.md
+  target    sibling-b  id=8f14e45f…
+  would write d:\work\sibling-b\.gitos\intake\3c9a…7f.md
   proposal  3c9a…7f   (new)
   title     Shared parser drops the trailing field
   pointer   WO-031   (summary 97 chars; evidence stays here)
@@ -687,7 +694,7 @@ the consult provenance rule; without it a forgotten send leaves no trace on the 
 
 ```
   outbound proposals (2 recorded, 1 into a target that has not run since) - …
-    3c9a…  -> peer-b     filed 9d 2h ago    target last ran 41d 6h ago   (target has not run gitos since you filed)
+    3c9a…  -> sibling-b     filed 9d 2h ago    target last ran 41d 6h ago   (target has not run gitos since you filed)
 ```
 
 **Without that line the motivating case fails silently** — a proposal filed into a dormant repo
@@ -730,8 +737,8 @@ them** — an untracked file is silently lost on the next clone.
 
 ```
 federation intake: 2 pending  (d:\work\my-repo\.gitos\intake)
-  3c9a1f7e  "peer-b"               9d 2h ago    "Shared parser drops the trailing field"
-  71b0c4aa  "peer-c"               21d 4h ago   "Retry loop double-counts"   (pending over 14d; SENDER NOT IN REGISTRY)
+  3c9a1f7e  "sibling-b"               9d 2h ago    "Shared parser drops the trailing field"
+  71b0c4aa  "sibling-c"               21d 4h ago   "Retry loop double-counts"   (pending over 14d; SENDER NOT IN REGISTRY)
   body      NOT SHOWN. …
   quoted    the two "quoted" columns are the SENDER'S OWN WORDS …
   next      the OPERATOR decides, one at a time: …
@@ -967,7 +974,7 @@ If you want the current answer for a given field, the pins are derived from the 
 them.
 
 **What sits outside the marking discipline, on purpose.** The canary's **non-federation**
-categories — the ledger, the brain, the lenses, link rot, the anchor, the tool copies — read THIS
+categories — the ledger, the brain, the lenses, dead links, the anchor, the tool copies — read THIS
 repo's own files, which are the operator's own text on the same footing as their `CLAUDE.md`.
 They are not marked and the serializer is not applied to them; the enforcement is scoped by the
 `federation` key of the report, so the boundary is a thing you can point at and argue with rather

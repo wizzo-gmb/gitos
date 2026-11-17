@@ -1,11 +1,11 @@
-"""worktree - one worktree per work order, and nothing left behind once it lands.
+"""worktree - one worktree per work-order, and nothing left behind once it lands.
 
 stdlib-only, harness-neutral (plain git; no client feature is assumed).
 
   new NNN      Create `<parent>/<repo name>.worktrees/wo-NNN` (outside the repo tree, so editors and
                language servers do not index it; under the layout's `root` when `worktrees.json`
                sets one) on a new branch `wo-NNN` from the CURRENT `HEAD` (never a remote's default
-               branch), for an open work order. Prints the absolute path to dispatch the implementer
+               branch), for an open work-order. Prints the absolute path to dispatch the implementer
                into. A re-run prints the existing path and changes nothing. Worktrees already under
                `.claude/worktrees/` are still found, classified and reaped.
   reap NNN     Remove that worktree and delete its branch, only if the branch is merged (into the
@@ -54,9 +54,9 @@ reach through a link into another checkout.
 THE CLASSES, one per branch or worktree (`classify`):
   dirty      uncommitted or untracked files in the worktree.
   reapable   merged (see DECLARED LAYOUT) and clean, and not brand new (see FRESH).
-  abandoned  unmerged work that nothing is going to finish: a `wo-NNN` whose work order is resolved
+  abandoned  unmerged work that nothing is going to finish: a `wo-NNN` whose work-order is resolved
              or missing, or a `worktree-*` branch with no worktree left.
-  in flight  everything else: an open work order, a locked worktree, a `worktree-*` worktree that is
+  in flight  everything else: an open work-order, a locked worktree, a `worktree-*` worktree that is
              still on disk, any other linked worktree, a declared worktree that is not merged, and a
              merge target: a worktree or branch that IS the default branch or an `integration` branch
              (a target is where work lands, not work; never reapable, never abandoned, whatever its
@@ -64,7 +64,7 @@ THE CLASSES, one per branch or worktree (`classify`):
              detached checkout holds no branch, so one at a target's tip is still reapable.
 FRESH (`wo`, `builtin` and `declared` kinds). A branch that has never had a commit of its own is an ancestor of HEAD
 from the moment it is created, so "merged" alone would call every new worktree reapable. Its reflog tells them apart: one
-distinct hash is a branch nobody has committed to. A fresh branch is in flight while its work order is
+distinct hash is a branch nobody has committed to. A fresh branch is in flight while its work-order is
 open (or, for `worktree-*`, while its worktree is on disk). A declared worktree on disk is fresh when its
 own HEAD reflog holds one distinct hash (nothing committed there), a detached checkout included; for a
 branch checkout whose worktree reflog cannot be read the branch reflog decides. An explicit `reap NNN` is the operator
@@ -88,7 +88,7 @@ import sys
 HOMES = (".gitos", "outputs/debug", ".pipeline", "docs/agents")
 WORKTREES_REL = ".claude/worktrees"
 IGNORE_LINE = ".claude/worktrees/"
-IGNORE_COMMENT = "# Agent worktrees (gitos worktree.py): one per work order, never tracked."
+IGNORE_COMMENT = "# Agent worktrees (gitos worktree.py): one per work-order, never tracked."
 WO_BRANCH_RE = re.compile(r"^wo-(\d{3})$")
 BUILTIN_PREFIX = "worktree-"
 # canary.WO_FILE_RE, restated (this file must not import the canary, which imports it); the selftest
@@ -164,7 +164,7 @@ def posix(path):
     return Path(path).as_posix()
 
 
-# ----------------------------------------------------------------------------- work orders
+# ----------------------------------------------------------------------------- work-orders
 def wo_states(home):
     """-> (open NNNs, resolved NNNs, known). `known` is False when there is no work-orders/ dir."""
     wo_dir = Path(home) / "work-orders"
@@ -488,7 +488,7 @@ def inventory(root, home):
 def findings(inv):
     """The canary's view of an inventory: `worktree-reapable` and `worktree-abandoned` items.
 
-    A dirty worktree is a finding only when its work order is resolved or missing (it is somebody's
+    A dirty worktree is a finding only when its work-order is resolved or missing (it is somebody's
     leftover); dirty with an open order is live work and is not.
     """
     out = []
@@ -497,7 +497,7 @@ def findings(inv):
         target = f"WO-{it['nnn']}" if it["nnn"] else "a worktree-* branch"
         if it["class"] == "reapable":
             cmd = f"worktree.py reap {it['nnn']}" if it["nnn"] else "worktree.py reap --merged"
-            out.append({"kind": "worktree-reapable", "name": it["name"], "nnn": it["nnn"],
+            out.append({"kind": "worktree-reapable", "name": it["name"], "wo": target if it["nnn"] else "",
                         "has_worktree": it["path"] is not None,
                         "finding": f"{what} is merged into "
                                    f"{it.get('merged_into') or inv['branch'] or 'HEAD'} and clean but "
@@ -506,7 +506,7 @@ def findings(inv):
                                             and it["wo"] in ("resolved", "missing")):
             detail = it["why"] if it["class"] == "abandoned" else \
                 f"{it['why']} and WO-{it['nnn']} is {it['wo']}"
-            out.append({"kind": "worktree-abandoned", "name": it["name"], "nnn": it["nnn"],
+            out.append({"kind": "worktree-abandoned", "name": it["name"], "wo": target if it["nnn"] else "",
                         "has_worktree": it["path"] is not None,
                         "finding": f"{what} holds work that is not merged ({detail}) -> the operator "
                                    f"decides: merge it, or remove it by hand ({target} has no one "
@@ -605,7 +605,7 @@ def cmd_new(root, home, nnn, slice_id=None):
     if nnn not in open_nnns:
         why = ("is resolved" if nnn in resolved_nnns else
                "has no file" if known else "cannot be found (no work-orders/ under the home)")
-        print(f"worktree: WO-{nnn} {why} -> a worktree is made only for an open work order "
+        print(f"worktree: WO-{nnn} {why} -> a worktree is made only for an open work-order "
               f"(under {posix(home)}/work-orders/)", file=sys.stderr)
         return 1
     if slice_id and _slice_file(home, nnn, slice_id) is None:
@@ -866,10 +866,10 @@ def cmd_reap(root, home, target, merged_all):
 
 # --------------------------------------------------------------------------------------- cli
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="One worktree per work order; nothing left behind.")
+    ap = argparse.ArgumentParser(description="One worktree per work-order; nothing left behind.")
     ap.add_argument("cmd", choices=("new", "reap", "status"))
     ap.add_argument("args", nargs="*", help="new: NNN [ROOT]; reap: NNN [ROOT]; status: [ROOT]")
-    ap.add_argument("--home", default=None, help="the gitos home (default: auto-detected under ROOT)")
+    ap.add_argument("--home", default=None, help="the home directory (default: auto-detected under ROOT)")
     ap.add_argument("--slice", default=None, metavar="SN",
                     help="new: bind the worktree to slice SN of a folder order (the edit hook reads the marker)")
     ap.add_argument("--merged", action="store_true", help="reap: every reapable worktree/branch")

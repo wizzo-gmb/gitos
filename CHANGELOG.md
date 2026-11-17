@@ -18,7 +18,63 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
-## v55 — 2026-11-17
+## v56 — 2026-11-16
+breaking: yes
+
+- **The discipline layer is first-class again (WO-114).** `references/disciplines.md` has fourteen disciplines with a
+  one-screen index: (a)-(g) kept, and (h) a-check-must-be-able-to-fail, (i) no-answer-is-not-a-pass, (j)
+  a-null-needs-a-positive-control, (k) attack-your-own-win, (l) name-the-clock, (m) evidence-or-name-the-gap, (n)
+  a-rule-needs-a-mechanism, each with a software and a quant instance. Acceptance criteria have six properties (a
+  negative control per gate) and treat the hold-out as a budget with a ledger. The production-handoff contract covers
+  writes with an unknown outcome and test doubles no kinder than the real system. The roles cite the disciplines at the
+  step they apply; the work-order template asks for a negative control; inception and `HANDOFF.md.tmpl` ask for a null
+  baseline, gate-math tests, negative controls, a hold-out ledger and a precommitment stamp. Finance wording in engine
+  directives is labelled as a quant example.
+- **One lexicon (WO-114).** `references/glossary.md` is the source of truth (about 80 entries); the operator is the
+  thesis's director, defined once. The diagnostic no longer dispatches fixes (find != fix); adjudication is ACCEPT /
+  DEFER / REJECT; "Discipline notes" is "Risk notes"; the deployment-sense "canary" is "staged rollout"; four roles,
+  five INDEX sections, `HANDOFF.md`, `## Proposed fix scope` (the old `## Proposed scope` is still read).
+- **Canary output (breaking for anything that matches kinds or the report text).** Kinds follow `<concept>-<state>`;
+  categories are unchanged, so a descoped category still descopes. The human report prints `kind: what is wrong ->
+  what to do` per finding and ends `canary: CLEAN` or `canary: N finding(s)`. Finding items name the order as
+  `wo: "WO-NNN"` (was `nnn`). Renames: `nonconforming-wo-filename` -> `order-filename-nonconforming`;
+  `single-file-multi-slice` -> `order-needs-folder`; `cannot-parse` -> `index-unparseable`, `brainmeta-unparseable`,
+  `brainmeta-counts-unparseable`, `stamp-unparseable`, `skill-version-unparseable`, `lens-registry-unparseable`,
+  `federation-config-unparseable`, `own-record-unparseable`; `duplicate-nnn` -> `index-duplicate-row`;
+  `duplicate-file` -> `order-duplicate-file`; `wo-in-both` -> `order-in-both-dirs`; `open-row-file-in-resolved` ->
+  `index-open-row-file-in-resolved`; `open-row-missing-file` -> `index-open-row-file-missing`;
+  `resolved-row-file-in-root` -> `index-resolved-row-file-in-root`; `orphan-file` -> `order-file-orphan`;
+  `unknown-page-type` -> `brainmeta-page-type-unknown`; `counts-missing` -> `brainmeta-counts-missing`;
+  `count-missing-key` -> `brainmeta-counts-key-missing`; `count-mismatch` -> `brainmeta-counts-mismatch`;
+  `registry-missing` -> `lens-registry-missing`; `duplicate-row` -> `lens-registry-duplicate-row`;
+  `registry-row-no-file` -> `lens-registry-row-file-missing`; `lens-file-no-row` -> `lens-file-row-missing`;
+  `no-frontmatter` -> `lens-frontmatter-missing`; `missing-keys` -> `lens-frontmatter-keys-missing`; `name-mismatch` ->
+  `lens-name-mismatch`; `applies-to-scalar` -> `lens-applies-to-scalar`; `config-malformed` -> `lens-config-unparseable`;
+  `repo-off-missing` -> `lens-repo-off-missing`; `selected-missing` -> `lens-selected-missing`; `dead-link` ->
+  `link-dead`; `not-a-brain` -> `brain-wiki-missing`; `brain-broken_wikilinks` -> `brain-broken-wikilinks`;
+  `brain-cross_layer_redundancy` -> `brain-cross-layer-redundancy`; `cannot-read` -> `tool-unreadable`,
+  `settings-unparseable`; `intake-malformed` -> `intake-file-unparseable`; `own-record-path-invalid` ->
+  `own-record-path-missing`; `landed-not-resolved` -> `order-landed-not-resolved`; `resume-too-long` ->
+  `resume-oversized`; `gate-missing` -> `dispatch-gate-missing`; `restore-missing` -> `restore-hook-missing`;
+  `loose-ends-malformed` -> `loose-ends-unparseable`; `ready-to-close` -> `order-ready-to-close`; `file-oversized` ->
+  `order-oversized`, `slice-oversized`; `notes-unadjudicated` -> `order-notes-unadjudicated`; `registry-invalid` ->
+  `question-registry-unparseable`. Harness: `undeclared-<x>` -> `<x>-undeclared`; `declared-<x>-missing` ->
+  `<x>-missing`; `pin-moved` -> `plugin-pin-moved`; `pinned-but-auto-updates` -> `plugin-pinned-auto-updates`;
+  `agent-changed` -> `agent-pin-moved`; `sync-not-off` -> `harness-sync-not-off`; `connectors-not-off` ->
+  `harness-connectors-not-off`; `declaration-unreadable` -> `harness-declaration-unparseable`.
+- **Printed text follows the glossary (WO-114).** "implementer" (not "worker") in slice tools and hooks; "work-order";
+  the drain's output is a "proposal"; every hook message starts `gitos <script>:`. `slice add` names S1 from
+  `--s1-name`, the `### S1` heading or the scope's first heading words, not the order title.
+- **Drain safeguards (WO-112).** A new loose end that a later order or commit already fixed becomes a `close` proposal
+  naming the fix; bundling groups only items that all agree pairwise; `drop` withdraws routed items from pending
+  proposals and a decline never re-adds them; `legacy pending` skips work-order files.
+- **brain_lint does not count linked orders (WO-113).** A markdown link to an order is a pointer, not a restatement;
+  the cross-layer check counts distinct ids in the remaining prose.
+- v55's date in this file is corrected to 2026-11-16 (it was written in UTC).
+
+---
+
+## v55 — 2026-11-16
 breaking: no
 
 - **Small engine fixes (WO-111).** `selftest.py --gate NAME` runs one gate (exact name, or a `woNNN` prefix for every

@@ -1,6 +1,6 @@
 # Domain profiles — layering domain content on the engine
 
-GitOS ships a **generic engine**: the roles (three operator-entry + the dispatched implementer), the brain schema, the work-order
+GitOS ships a **generic engine**: the roles (three repo-entry + the implementer), the brain schema, the work-order
 template, the nine anomaly families, the acceptance-criteria and production-handoff
 skeletons. The engine knows nothing about any specific product.
 
@@ -23,9 +23,9 @@ re-synced without a merge conflict — and the fork is back.
 A profile is four kinds of additive content:
 
 1. **Concrete acceptance criteria** — instantiate `acceptance-criteria.md`'s generic,
-   four-property gate skeleton with the actual thresholds and hold-out surface this product
+   six-property gate skeleton with the actual thresholds and hold-out surface this product
    uses. The engine says "a gate is precommitted, measurable, evaluated on a locked
-   hold-out, and compared to a null"; the profile says *which* gates, at *what* numbers.
+   hold-out, compared to a null, its math tested and its negative control run"; the profile says *which* gates, at *what* numbers.
 
 2. **A filled production-handoff contract** — instantiate `production-handoff-contract.md`'s
    section skeleton with this product's real IO contract, environment, provenance, failure
@@ -48,7 +48,7 @@ loop — is engine, shared verbatim, never copied-and-edited.
 
 **Web / API service.**
 - *Acceptance:* p95 latency < 200 ms on a reserved traffic-replay profile; error rate
-  < 0.1% over a 24-hour canary; must beat a hard-coded most-common-response stub.
+  < 0.1% over a 24-hour staged rollout; must beat a hard-coded most-common-response stub.
 - *Handoff contract:* names the load balancer, the rollback runbook, the error-budget
   burn-rate alert, and the dev-vs-prod delta in connection-pool sizing.
 - *Extra anomaly family:* "retry-storm amplification" — a client retry policy that turns a
@@ -64,7 +64,7 @@ loop — is engine, shared verbatim, never copied-and-edited.
   historical cadence that mis-buckets events under a live feed's jitter.
 
 **ML / model.**
-- *Acceptance:* held-out metric (e.g. F1) beats the majority-class baseline by a
+- *Acceptance:* hold-out metric (e.g. F1) beats the majority-class baseline by a
   precommitted margin, set before training and never peeked at during tuning; calibration
   error below a fixed threshold on the same split.
 - *Handoff contract:* names the feature store, the model-registry version pin, and the

@@ -49,6 +49,10 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    **A box your slice carries is part of your scope.** If the order has a `## Carried loose ends` section, the open
    boxes naming your slice (`- [ ] L<n> (slice: <yours>) ...`) are work you land with it; you do not tick them
    (the orchestrator does at adjudication), but you say in the notes which you closed and which you did not.
+   **Disciplines at the step they apply** (`references/disciplines.md`): (a) a gate or check you add or change
+   gets a known-answer pass and a known-answer block; (b) assert that your change bit before reporting it;
+   (h) show the check go red on a planted defect, as deployed; (i) a skipped, empty, missing or crashed
+   result is reported as itself, never as a pass.
 3. **Fill the work-order's Implementer notes** on completion — deviations, surprises, durable
    facts, process notes, follow-ups. This is your only write-back channel; "nothing notable" is a
    valid answer. Write them **under those five labels** (they help the orchestrator read them), and
@@ -63,7 +67,7 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    deliberately left running is named in *Process notes* with its pid or marker, its log and how to
    stop it.
 5. **Return.** Your report is a *claim*; the orchestrator trust-but-verifies the diff and
-   adjudicates your notes (ACCEPT / REJECT). You do not move the work-order, update the INDEX,
+   adjudicates your notes (ACCEPT / DEFER / REJECT). You do not move the work-order, update the INDEX,
    bump VERSION/CHANGELOG, or touch the brain.
 
 ## Role boundary
@@ -96,7 +100,7 @@ this mechanically, but it can only catch names someone already knew to list.
 - **The work-order is your contract.** Its **Proposed fix scope** is the boundary; its
   **Implementer notes** section is your only write-back channel.
 - **Your notes are adjudicated, not auto-trusted.** The orchestrator ACCEPTs (→ brain / dispatch
-  change / new work-order) or REJECTs each note. Every code edit thus traces to a specified
+  change / new work-order), DEFERs (→ Parked row / loose end) or REJECTs each note. Every code edit thus traces to a specified
   work-order — the find/fix separation, completed from the implementer side.
 
 ## Reference index
@@ -105,4 +109,4 @@ this mechanically, but it can only catch names someone already knew to list.
   adjudicates your notes.
 - `references/work-order-template.md` — the work-order shape; **Proposed fix scope** is your
   contract, **Implementer notes** your write-back.
-- `references/agent-system.md` — the four-role / two-tier map.
+- `references/agent-system.md` — the four-role map.

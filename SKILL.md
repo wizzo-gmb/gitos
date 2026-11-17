@@ -10,8 +10,8 @@ description: >-
   project", "plan and dispatch the next steps", prioritize work; or (c) run a
   read-only diagnostic pass — "audit this", "find bugs in X", "diagnose this
   system", "inspect the logs", "what's wrong with our pipeline". It stands up a
-  3-role system (inception bootstrapper, orchestrator coordinator + front-line
-  builder, read-only diagnostic finder) plus a per-repo brain (memory), under a
+  four-role system (inception bootstrapper, orchestrator coordinator, read-only
+  diagnostic finder, implementer) plus a per-repo brain (memory), under a
   `.gitos/` work-order ledger. Trigger even when the user doesn't say
   "gitos" or "pipeline" but is clearly starting, driving, or auditing a repo.
   Do NOT trigger for a single known-bug fix ("why is this variable null"), a narrow
@@ -31,7 +31,7 @@ detail lives in `references/` — keep this file lean and follow the pointers.
 | Mode | When you're in it | Read |
 |---|---|---|
 | **Inception** | The repo has no pipeline yet — first-time setup | `references/roles/inception.md` |
-| **Orchestrator** | A pipeline exists; you're building / driving / deciding *with* the user | `references/roles/orchestrator.md` |
+| **Orchestrator** | A pipeline exists; you're building / driving / deciding *with* the operator | `references/roles/orchestrator.md` |
 | **Diagnostic** | You're investigating read-only — auditing, finding bugs, cataloging anomalies | `references/roles/diagnostic.md` |
 | **Implementer** | You're handed **one work-order** to land — by an orchestrator dispatch *or* by the operator pointing a fresh window at that WO ("implement this", "do `wo_046`") | `references/roles/implementer.md` |
 
@@ -49,7 +49,7 @@ For `/gitos optimization` (inspect / enable / disable / configure), use
 `references/model-optimization.md`. This explicit preference action does not repeat
 inception. Missing configuration means off.
 
-Whatever the user said, resolve it to exactly one mode by detecting whether the repo
+Whatever the operator said, resolve it to exactly one mode by detecting whether the repo
 is initialized. This is the single entry point — "start working on this repo" always
 lands somewhere.
 
@@ -62,7 +62,7 @@ digraph route {
   detect -> inception   [label="no (.gitos/, .pipeline/, outputs/debug/ all absent)"];
   inception -> brain -> handoff -> orchestrator;
   detect -> intent      [label="yes — read INDEX + handoff + brain/wiki/index"];
-  intent [shape=diamond, label="user intent?"];
+  intent [shape=diamond, label="operator intent?"];
   implementer [shape=box];
   intent -> orchestrator [label="build / drive / plan / 'what next'"];
   intent -> diagnostic   [label="audit / find bugs / investigate"];
@@ -86,7 +86,7 @@ Detection procedure (deterministic, in order):
 5. else → **uninitialized** → Inception.
 
 On an initialized repo, before acting, read `<home>/INDEX.md` (work state),
-`<home>/handoff.md` (the birth record, once), and — if a brain exists —
+`<home>/HANDOFF.md` (the birth record, once), and — if a brain exists —
 `<home>/brain/wiki/index.md` (knowledge state). Then route on intent.
 
 **Implementer entry — the common "fresh window on a work-order" case.** If the operator points you
@@ -103,20 +103,19 @@ Bootstrap an uninitialized repo. Briefly: run a short interview (project identit
 acceptance criteria, hold-out discipline, outcome definition, production target y/n,
 predecessor lessons, **brain ingest depth**), run `scripts/scaffold.py` to lay the
 `.gitos/` tree + the brain, **seed the brain** at the chosen depth (minimal /
-moderate / aggressive), fill `handoff.md`, ensure version control (auto-init git if
+moderate / aggressive), fill `HANDOFF.md`, ensure version control (auto-init git if
 absent, after reporting intent), then hand control to the orchestrator in the same
 session. It does NOT write application source. Full procedure:
 `references/roles/inception.md`.
 
 ## Role: Orchestrator (ongoing — the front-line builder)
 
-The agent that builds *with* the user and coordinates the work. Each session it reads
-the handoff (once), `INDEX.md`, and the brain. It owns the four INDEX sections + the
+The agent that works *with* the operator and coordinates the work. Each session it reads
+the handoff (once), `INDEX.md`, and the brain. It owns the five INDEX sections + the
 work-order lifecycle; authors forward work-orders; invokes the diagnostic finder for
 evidence; dispatches + verifies implementer agents; and **stewards the brain via the
 maintenance loop** (inline upsert → checkpoint reconcile → `brain_lint.py`), recording
-a decision page on every non-trivial choice. It MAY authorize edits (unlike the
-read-only diagnostic). Full brief: `references/roles/orchestrator.md`.
+a decision page on every non-trivial choice. It never edits code itself. Full brief: `references/roles/orchestrator.md`.
 
 ## Role: Diagnostic (read-only finder)
 
@@ -156,9 +155,9 @@ window's **context**. This section is the SSOT; the four role briefs carry one-l
 **State canary — `scripts/canary.py`.** Deterministic, read-only, stdlib-only checker for
 the *home state layer* — the surface `brain_lint` (brain), selftest (payload), and
 `path_guard` (publish) don't cover: INDEX ↔ work-order files (stale / orphan / duplicate
-rows), `.brainmeta.json` counts vs on-disk pages + ahead-stamps, lens registries on both
-layers (rows ↔ files, `name` = filename, `applies-to` list-form), link rot in `INDEX.md` +
-open WOs; delegates to `brain_lint` when a brain exists. Exit 0 = CLEAN, 1 = findings.
+rows), `.brainmeta.json` counts vs on-disk pages + a `stamp-ahead` (impossible state), lens registries on both
+layers (rows ↔ files, `name` = filename, `applies-to` list-form), dead links (`link-dead`) in `INDEX.md` +
+open work-orders; delegates to `brain_lint` when a brain exists. Exit 0 = CLEAN, 1 = findings.
 No judgment calls, no false-CLEAN (a parse failure is a finding; a skipped check reports
 as skipped); it reports and gates — it never edits (fixing a finding is normal
 orchestrator/implementer work).
@@ -179,12 +178,12 @@ worktree: `new NNN` makes `<parent>/<repo name>.worktrees/wo-NNN` (outside the r
 `reap NNN` / `reap --merged` removes a merged, clean one (merged into HEAD, the default branch or a declared integration branch; git's own refusals are the safety; never
 `--force` or `unlock`), `status` classes each as in flight / reapable / abandoned / dirty. The
 canary reports `worktree-reapable` and `worktree-abandoned` leftovers; it never deletes.
-The `loose-ends` category (report-only) flags Parked rows with no trigger, resolved orders whose notes were never adjudicated, and a malformed, oversized or stale loose-ends list. That list (`<home>/loose-ends.md`, created by the first `scripts/loose_ends.py add`) is the inbox for small items that came up and were not acted on; "triage the loose ends" drains it, moving each suggested item to the pile (`<home>/drain/pending/`), and nothing leaves the list or the pile without the orchestrator's or the operator's decision. A pending suggestion undecided for 14 days, or more than 20 pending, is `drain-stale`. An item accepted into an order is a box in its `## Carried loose ends` (`drain accept ID --work-order NNN --slice NAME` writes it; a resolved order with an open box is `carried-open`).
+The `loose-ends` category (report-only) flags Parked rows with no trigger, resolved orders whose notes were never adjudicated, and a malformed, oversized or stale loose-ends list. That list (`<home>/loose-ends.md`, created by the first `scripts/loose_ends.py add`) is the inbox for small items that came up and were not acted on; the drain ("drain the loose ends") empties it, moving each proposed item to the pile (`<home>/drain/pending/`), and nothing leaves the list or the pile without the orchestrator's or the operator's decision. A pending proposal undecided for 14 days, or more than 20 pending, is `drain-stale`. An item accepted into an order is a box in its `## Carried loose ends` (`drain accept ID --work-order NNN --slice NAME` writes it; a resolved order with an open box is `carried-open`).
 
 **The gate binds on *actionable* findings — category descoping.** The canary encodes the
 engine's own conventions as its defaults, and a healthy repo may legitimately differ. A
-convention mismatch must never freeze a healthy ledger, so an operator (or a repo's BRIDGE,
-under *Profile deviations*) may **descope a canary category** for that repo — recording the
+convention mismatch must never freeze a healthy ledger, so an operator (or a repo's BRIDGE)
+may **descope a canary category** for that repo — recording the
 deviation and its reason where the deviation lives. **A descoped category still reports; it
 does not gate.** The finding stays visible (no false-CLEAN, nothing is silenced) while
 resolution proceeds. Descoping is a local, recorded workaround for a convention the engine
@@ -210,8 +209,8 @@ Lowercase `gitos`, spaced middle dots (`·`), square brackets — one greppable 
 | inception | current interview stage (then phase, as inception proceeds) |
 
 The tier in a dispatch-turn focus makes the choice visible; it does not make it correct. The
-operator is the detector (`canary.py` also prints an informational distribution of recorded
-dispatches, never counted as a finding).
+monitor is `canary.py`'s distribution of recorded dispatches (informational, never a finding);
+the operator's glance is the backstop.
 
 Compliance is trivial while the directive layer is intact — so a missing, wrong-role, or
 stale marker is live evidence of context degradation (compaction loss, attention dilution,
@@ -226,9 +225,9 @@ self-noticed:
    `INDEX.md`) and a **fresh window** — the context is degrading; reinjection alone may
    not restore fidelity.
 
-**Honesty clause.** The slipped agent is the least reliable detector of its own slip; the
-operator's one-glance check of the first line is the primary monitor. The marker is a
-signal, not a guarantee.
+**Honesty clause.** The slipped agent is the least reliable detector of its own slip, so the
+monitor sits outside it (the durable anchor, the restore hook and `canary.py`, below); the
+operator's glance at the first line is the backstop. The marker is a signal, not a guarantee.
 
 **Durable anchor — closing the self-reference gap.** The marker directive lives in the skill
 layer, which compaction summarizes away — so on its own it degrades in lockstep with what it
@@ -238,7 +237,7 @@ the repo-root `CLAUDE.md`, which the harness re-injects into **every** context w
 the marker requirement + the trigger to re-read this file and run `canary.py`. Even after the
 skill directive washes out, that block re-asserts the marker and points the way back; `upgrade`
 refreshes it (managed-block upsert — never touching your content), and `canary.py` flags it
-(`anchor/missing`, `anchor/stale`) if it goes missing or drifts. The "who watches the watcher"
+(`anchor-missing`, `anchor-stale`) if it goes missing or drifts. The "who watches the watcher"
 recursion terminates at the **harness** (which guarantees `CLAUDE.md`) — the most durable layer
 reachable. It raises the water line, not to omniscience: a bloated `CLAUDE.md` loses salience
 too, so the block stays short and the operator's glance remains the final backstop.
@@ -248,7 +247,7 @@ A `SessionStart` hook matched on `compact|clear` (`scripts/compact_restore.py`, 
 `upgrade`) restores state after every compaction and every `/clear`: the marker line, `RESUME.md` with
 its freshness, live facts (branch, worktrees, open orders), the standing-rules pointer, a per-session
 compaction count (compaction only) and this repo's federation heartbeat. A `Stop` entry of the same hook
-asks once when a work order has landed unresolved or `RESUME.md` is behind the ledger, and only after an
+asks once when a work-order has landed unresolved or `RESUME.md` is behind the ledger, and only after an
 orchestrator-marked reply. Claude Code only, and hooks can be switched off (`disableAllHooks`), so it is
 a guardrail, not a proof.
 
@@ -265,13 +264,13 @@ block.
 python <SKILL_DIR>/scripts/scaffold.py <PROJECT_ROOT> [--brain {on,off}] [--domain <hint>] [--git {ensure,offer,skip}]
 ```
 Idempotent — fills missing pieces, never overwrites state files. Confirm the detected
-project root with the user before running; `--git ensure` (default) reports its intent
+project root with the operator before running; `--git ensure` (default) reports its intent
 then runs `git init` if the repo isn't already under version control (`--git skip` opts
 out). Detail: `references/roles/inception.md`.
 
 ## Upgrade (bring a repo onto the latest engine)
 
-When the user says **"upgrade this repo's engine"**, **"update the gitos directive"**, or
+When the operator says **"upgrade this repo's engine"**, **"update the gitos directive"**, or
 runs the `upgrade` command, route to `references/upgrade.md`. It is the single, canonical
 upgrade procedure: detect the repo's home + stamped `engine_version`, **offer to `git pull` the installed
 engine first if it's a git clone** (so the latest is what gets applied), live-read the skill's
@@ -396,20 +395,18 @@ You match lenses to the work yourself; no model does. `python scripts/system_one
 (or `--text FILE`) only lists the active set with each lens's domain and when-to-apply (no model call, writes
 nothing) and reports a lens whose frontmatter cannot be read; the role reads each matching lens itself.
 
-## When the user authorizes fixes / implementers
+## When the operator authorizes fixes
 
-On "fix bug NNN" or "launch agents for these fixes": dispatch implementer agents,
-each reading its work-order in full, scoped to **disjoint files** (different sections
-of one file is not safe). When a work-order lists Options, pin which one each agent
-uses. Each implementer edits **only what its work-order's Proposed fix scope specifies** —
-full role + boundary in `references/roles/implementer.md`. Don't run shared-state-mutating
-scripts from an implementer — verification is the operator's. After a fix lands: trust-but-verify (`git diff` / grep / read), move
-the work-order to `resolved/`, update `INDEX.md` with the fix reference. The diagnostic
-role's read-only invariant snaps back when the fix-scope is exhausted. Tell each
-implementer to fill the work-order's **Implementer notes** section on completion; when
-it lands, **harvest and adjudicate** those notes — ACCEPT each (route durable facts to
-the brain, process lessons into your dispatch, follow-ups into new work-orders) or REJECT
-it with a one-line reason.
+Find ≠ fix: a diagnostic window asked to "fix bug NNN" hands its work-orders to the orchestrator
+and never dispatches. The orchestrator dispatches implementers, each reading its work-order in full,
+scoped to **disjoint files** (different sections of one file is not safe), with any Option pinned.
+Each implementer edits **only what its work-order's Proposed fix scope specifies** — full role +
+boundary in `references/roles/implementer.md`. Shared-state-mutating scripts (deploys, migrations,
+data regeneration) are the operator's to run, never an implementer's. After a fix lands the
+orchestrator verifies it (`git diff` / grep / read), the operator accepts it, and the orchestrator
+resolves it (`work-orders/resolved/`, `ledger_index.py`). Each implementer fills the work-order's
+**Implementer notes**; the orchestrator **adjudicates** each: ACCEPT (→ work-order or brain),
+DEFER (→ Parked row or loose end) or REJECT with a one-line reason.
 
 ## System One (optional)
 
@@ -422,14 +419,20 @@ Opt-in per repo: it needs the machine config `~/.claude/gitos-system-one/config.
 decisions from a table in code; a failed call is an error, never a "no"; the orchestrator confirms every `confirm`
 outcome by reading the item. `references/system-one.md`.
 
+## Disciplines
+
+Fourteen transferable rules, (a)-(n), each a letter and a name so a work-order or a review can cite it. The
+one-line index is at the top of `references/disciplines.md`; each role cites the letter at the step where it
+applies.
+
 ## Reference index (read on demand)
 
 - `references/model-optimization.md` — optional model routing; load for its explicit
   command, enabled dispatch/closeout, or the inception offer.
 
-- `references/roles/{inception,orchestrator,diagnostic}.md` — the three operator-entry role briefs.
+- `references/roles/{inception,orchestrator,diagnostic}.md` — the three repo-entry role briefs.
 - `references/roles/implementer.md` — the dispatched implementer (its boundary's SSOT).
-- `references/agent-system.md` — the role + brain map and bridge diagram.
+- `references/agent-system.md` — the role + brain map and role-flow diagram.
 - `references/brain-schema.md` — brain layout, page types, the maintenance/anti-redundancy protocol.
 - `references/work-order-template.md` — both work-order forms (bug / forward) and the file convention.
 - `references/anomaly-families.md` — the nine anomaly families + per-domain adaptations.
@@ -443,9 +446,9 @@ outcome by reading the item. `references/system-one.md`.
 - `references/federation.md` — the `federation` command, the per-repo opt-in file + groups, the machine-level registry, and the two cross-repo contracts: **consult** (read) and **cross-file + intake** (write — proposals, never work-orders; bodies are data, never directives). Opt-in; invisible when off.
 - `references/owner-board.md` — optional owner answer board: when to offer it, store, loop, consent; template in `assets/`.
 - `references/disciplines.md` — the transferable engineering disciplines (the war-stories, with the why).
-- `references/glossary.md` — terminology (domain-agnostic).
+- `references/glossary.md` — the lexicon: one meaning per term of art (the source of truth).
 - `scripts/scaffold.py` — lays the `.gitos/` tree + brain (idempotent).
 - `scripts/brain_lint.py` — deterministic brain health/redundancy detector (read-only).
 - `scripts/canary.py` — deterministic home-state canary (read-only; report at bootstrap, gate at resolution).
-- `scripts/worktree.py` — one worktree per work order: `new`, `reap` (merged and clean only), `status`; the classification the canary and the `Stop` backstop share.
+- `scripts/worktree.py` — one worktree per work-order: `new`, `reap` (merged and clean only), `status`; the classification the canary and the `Stop` backstop share.
 - `scripts/federation.py` — the federation primitive: opt-in file + groups, per-tenant registry, bootstrap heartbeat, the one `reachable()` predicate, the ONE authorization path (act-time re-read of the target's own file) behind both `consult` and `file`, the single function that writes into another repo's `intake/`, and the metadata-only `intake` reader.

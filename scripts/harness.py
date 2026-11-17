@@ -988,7 +988,7 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
     out = {"applicable": decl is not None or derr is not None, "adopted": False,
            "findings": [], "notices": [], "error": derr}
     if derr:
-        out["findings"].append({"kind": "declaration-unreadable",
+        out["findings"].append({"kind": "harness-declaration-unparseable",
                                 "finding": f"{HARNESS_FILENAME}: {derr} -> repair or remove the file"})
         return out
     if decl is None:
@@ -1008,7 +1008,7 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
         if sk["scope"].startswith("plugin:") or skill_mode(m, sk) == "off":
             continue
         if sk["name"] not in d["skills"] and sk["name"] not in d["base_skills"]:
-            add("undeclared-skill", f"{sk['scope']} skill '{sk['name']}' is visible but undeclared",
+            add("skill-undeclared", f"{sk['scope']} skill '{sk['name']}' is visible but undeclared",
                 "declare it in harness.json, or run `harness sync` to override it off")
     vis = {s["name"] for s in m["skills"]} | {s["dir"] for s in m["skills"]}
     lib = Path(decl["library"]) if decl.get("library") else None
@@ -1017,7 +1017,7 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
         n = e.get("name")
         sk = next((s for s in m["skills"] if s["name"] == n or s["dir"] == n), None)
         if sk is None or skill_mode(m, sk) == "off":
-            add("declared-skill-missing", f"declared skill '{n}' is not visible in this repo",
+            add("skill-missing", f"declared skill '{n}' is not visible in this repo",
                 "run `harness sync` (library copy) or fix the declaration")
             continue
         if e.get("sha256") and sk["scope"] == "project":
@@ -1039,7 +1039,7 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
         proj_on = any(_dict(m["settings"][s].get("enabledPlugins")).get(pname) is True
                       for s in ("project", "local"))
         if proj_on:
-            add("undeclared-plugin", f"plugin '{pname}' is enabled by this repo but undeclared",
+            add("plugin-undeclared", f"plugin '{pname}' is enabled by this repo but undeclared",
                 "declare it or disable it")
         else:
             add("plugin-outside-baseline",
@@ -1050,7 +1050,7 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
         e = e if isinstance(e, dict) else {"name": e}
         pl = m["plugins"].get(e.get("name"))
         if pl is None or not pl["enabled"]:
-            add("declared-plugin-missing", f"declared plugin '{e.get('name')}' is not installed/enabled",
+            add("plugin-missing", f"declared plugin '{e.get('name')}' is not installed/enabled",
                 "install/enable it, or run `harness sync`, or fix the declaration")
             continue
         if e.get("version") and pl["version"] and e["version"] != pl["version"]:
@@ -1059,9 +1059,9 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
             if chan == "auto":
                 out["notices"].append(msg + " (update: auto; recorded by `harness update --apply`)")
             elif chan == "pinned":
-                add("pin-moved", msg + " but the entry is pinned", "restore the pinned version or change the declaration")
+                add("plugin-pin-moved", msg + " but the entry is pinned", "restore the pinned version or change the declaration")
             else:
-                add("pin-moved", msg + " (update: review)", "review it, then `harness update --approve`")
+                add("plugin-pin-moved", msg + " (update: review)", "review it, then `harness update --approve`")
     au_env = auto_update_env(m)
     for e in decl.get("plugins") or []:
         if not isinstance(e, dict) or e.get("update") != "pinned" or not _marketplace(str(e.get("name"))):
@@ -1073,28 +1073,28 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
                                   f"({au['source']}), held only by the machine-wide override; "
                                   "if that is unset the pin conflicts")
         elif au["on"]:
-            add("pinned-but-auto-updates",
+            add("plugin-pinned-auto-updates",
                 f"plugin '{e['name']}' is pinned but its marketplace '{mk}' auto-updates ({au['source']})",
                 f"the operator decides: turning '{mk}' autoUpdate off freezes EVERY plugin from it; or set "
                 "this entry's update to review/auto. No per-plugin pin is documented, so nothing is written")
     # MCP + connectors
     for n, s in sorted(m["mcp"].items()):
         if not s["disabled"] and n not in d["mcp"]:
-            add("undeclared-mcp", f"MCP server '{n}' ({s['scope']}) is live but undeclared",
+            add("mcp-undeclared", f"MCP server '{n}' ({s['scope']}) is live but undeclared",
                 "declare it, or run `harness sync` to disable it for this project")
     for n in m["connectors"] or []:
         if n not in d["mcp"]:
-            add("undeclared-connector", f"claude.ai connector '{n}' is live but undeclared",
+            add("connector-undeclared", f"claude.ai connector '{n}' is live but undeclared",
                 "declare it, or set disableClaudeAiConnectors via `harness sync`")
     ca = _dict(decl.get("claude_ai"))
     for flag, key, label in (("sync_skills_off", "sync_skills", "syncClaudeAiSkills"),
                              ("sync_plugins_off", "sync_plugins", "syncClaudeAiPlugins")):
         if ca.get(key) is False and not m["flags"][flag]:
-            add("sync-not-off", f"{label} is on/unset for this repo but the declaration says off",
+            add("harness-sync-not-off", f"{label} is on/unset for this repo but the declaration says off",
                 "answer the sync question in `harness popup`; on 'turn off', `harness sync "
                 f"--accept-sync-{key.split('_')[1]}` writes {label}: false to settings.local.json")
     if ca.get("connectors") == [] and not m["flags"]["connectors_off"]:
-        add("connectors-not-off", "claude.ai connectors are on but the declaration allows none",
+        add("harness-connectors-not-off", "claude.ai connectors are on but the declaration allows none",
             "run `harness sync` (writes disableClaudeAiConnectors: true to settings.local.json)")
     # hooks
     allowed = [h for h in d["hooks"] + [x if isinstance(x, dict) else {"match": x}
@@ -1104,21 +1104,21 @@ def drift(root: Path, home: Path, ch: Path, cj_path: Path) -> dict:
                    and a.get("event", h["event"]) == h["event"] for a in allowed):
             bc = " (user/plugin scope: fires in EVERY repo on this machine)" \
                 if h["scope"] == "user" or h["scope"].startswith("plugin:") else ""
-            add("undeclared-hook", f"{h['scope']} hook {h['event']} '{h['command'][:70]}' is undeclared{bc}",
+            add("hook-undeclared", f"{h['scope']} hook {h['event']} '{h['command'][:70]}' is undeclared{bc}",
                 "declare it under hooks (event + a substring `match` of its command)")
     # agents
     for a in m["agents"]:
         if a["scope"] == "project" and a["name"] not in d["agents"]:
-            add("undeclared-agent", f"project subagent '{a['name']}' is not declared",
+            add("agent-undeclared", f"project subagent '{a['name']}' is not declared",
                 "declare it under agents (WO-055 writes definitions; this file only declares them)")
     for e in decl.get("agents") or []:
         e = e if isinstance(e, dict) else {"name": e}
         a = next((x for x in m["agents"] if x["name"] == e.get("name")), None)
         if a is None:
-            add("declared-agent-missing", f"declared subagent '{e.get('name')}' has no definition",
+            add("agent-missing", f"declared subagent '{e.get('name')}' has no definition",
                 "restore the definition or fix the declaration")
         elif e.get("sha256") and a["sha256"] != e["sha256"]:
-            add("agent-changed", f"subagent '{e['name']}' definition differs from its pinned sha256",
+            add("agent-pin-moved", f"subagent '{e['name']}' definition differs from its pinned sha256",
                 "review the change, then re-pin sha256 in harness.json")
     for g in m["gaps"]:
         out["notices"].append("gap: " + g)
@@ -1271,7 +1271,7 @@ def _sync_answers(m: dict, decl: "dict | None", accept, restore, plan: dict) -> 
             dkey = "sync_skills" if key == "syncClaudeAiSkills" else "sync_plugins"
             if ca.get(dkey) is False:
                 plan["proposals"].append(f"harness.json declares claude_ai.{dkey} false: drift reports "
-                                         "sync-not-off until the declaration is changed")
+                                         "harness-sync-not-off until the declaration is changed")
     return put, drop
 
 
@@ -1699,9 +1699,9 @@ def canary_check(home: Path) -> "tuple[list, str | None, bool]":
 
 # --------------------------------------------------------------------------- CLI
 def main(argv: "list | None" = None) -> int:
-    ap = argparse.ArgumentParser(description="Per-project harness profile (audit/drift/sync).")
+    ap = argparse.ArgumentParser(description="Per-project harness file (audit/drift/sync).")
     ap.add_argument("cmd", choices=("audit", "drift", "offer", "update", "sync", "popup"))
-    ap.add_argument("--home", default=".gitos", help="the gitos home (default ./.gitos)")
+    ap.add_argument("--home", default=".gitos", help="the home directory (default: ./.gitos)")
     ap.add_argument("--root", default=None, help="repo root (default: parent of --home)")
     ap.add_argument("--claude-home", default=None)
     ap.add_argument("--claude-json", default=None)
