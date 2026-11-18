@@ -18,6 +18,13 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v63 — 2026-11-18
+breaking: no
+
+- The owner board loads a repo's own boards from `<home>/board/local/<name>.html` as sandboxed tabs that upgrades leave alone; `BOARD_VERSION` 3 (WO-131)
+
+---
+
 ## v62 — 2026-11-18
 breaking: no
 audit: brain (references/upgrade.md step 4u)

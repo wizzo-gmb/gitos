@@ -50,6 +50,10 @@ silently.
 
 Tabs come from "tabs": [...] in board.json; the default is `decisions` alone, which is always present.
 
+A repo's own boards: every <board dir>/local/<name>.html (name `a-z 0-9 -`, 1-32 characters) is one more tab, shown in
+a sandboxed iframe (scripts run; no board API, no network fetch) from GET /local/<name>.html. Upgrades never touch
+local/. A local board named like a card tab shows above that tab's cards.
+
 The honest limit: on a single-user machine the agent runs as the owner, so it could forge a browser request or write
 these files itself. The board guards against accidents and against other local pages and programs, not against a
 deliberately hostile agent.
@@ -76,7 +80,7 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-BOARD_VERSION = 2
+BOARD_VERSION = 3
 HOST = "127.0.0.1"
 PORT_LO, PORT_HI = 8800, 8999
 BASE_TABS = ("decisions",)
@@ -90,6 +94,7 @@ ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 VALUE_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 TAB_RE = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
+LOCAL_RE = re.compile(r"^[a-z0-9-]{1,32}$")
 
 _LOCK = threading.RLock()
 _HELD = threading.local()
@@ -255,6 +260,17 @@ def tabs(cfg: "dict | None" = None) -> tuple:
         if isinstance(t, str) and TAB_RE.fullmatch(t) and t not in out:
             out.append(t)
     return tuple(out)
+
+
+def local_boards() -> list:
+    """The names of the repo's own boards: each `<board dir>/local/<name>.html` that is a plain file and whose name
+    matches LOCAL_RE. Anything else in local/ is ignored."""
+    try:
+        found = list((HERE / "local").iterdir())
+    except OSError:
+        return []
+    return sorted(p.stem for p in found if p.suffix == ".html" and LOCAL_RE.fullmatch(p.stem)
+                  and p.is_file() and not p.is_symlink())
 
 
 def url(cfg: "dict | None" = None) -> str:
@@ -450,7 +466,7 @@ def state() -> dict:
         port = load_config()["port"]
     except BoardError:
         port = ""
-    return {"cards": out, "notes": notes[-20:], "tabs": list(tab_set), "problems": problems,
+    return {"cards": out, "notes": notes[-20:], "tabs": list(tab_set), "local": local_boards(), "problems": problems,
             "copy": copy_text(out), "name": home_dir().parent.name, "where": f"{home_dir().name}/{HERE.name}",
             "port": port, "now": iso(now_dt())}
 
@@ -734,14 +750,16 @@ textarea{width:100%;min-height:70px;height:70px;resize:none;overflow-y:hidden;fo
 .fp{font:12px ui-monospace,monospace;color:var(--muted)}
 .foot{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line)}
 .foot div{max-width:900px;margin:0 auto;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.localframe{display:block;width:100%;height:calc(100vh - 240px);min-height:420px;border:1px solid var(--line);border-radius:8px;background:var(--panel);margin:16px 0}
 .mono{font:13px ui-monospace,monospace;font-weight:700}.msg{color:var(--muted);font-size:13px}
 </style></head><body><main>
 <div class="top"><div><h1>Owner board</h1>
 <p class="sub">Things Claude needs you to decide. Press a button to answer; it saves at once. To change it, open Answered and press another.<br>An answer locks when Claude reads it.</p>
 <p class="repo" id="repo"></p></div>
 <div class="seg" id="tabs"></div></div>
+<div id="local"></div>
 <div class="chips" id="chips"></div>
-<div class="bar"><div class="pills" id="pills"></div><span class="stamp" id="stamp"></span></div>
+<div class="bar" id="bar"><div class="pills" id="pills"></div><span class="stamp" id="stamp"></span></div>
 <div id="list"></div>
 <div class="card"><div class="head"><span class="tag">note</span><h2>Anything else for Claude</h2></div>
 <p>A new instruction, a correction, or something the cards missed.</p>
@@ -752,9 +770,12 @@ textarea{width:100%;min-height:70px;height:70px;resize:none;overflow-y:hidden;fo
 <script>
 const TOKEN = "__TOKEN__";
 const GROUPS = [["close","Close or keep open"],["decision","Decisions"],["action","Your actions"],["parked","Parked work"]];
-let S = {cards:[], tabs:["decisions"], problems:[], copy:"", name:"", where:"", port:""};
+let S = {cards:[], tabs:["decisions"], local:[], problems:[], copy:"", name:"", where:"", port:""};
 let tab = location.hash.slice(1) || "decisions", sub = "needs", grp = "all";
 const $ = id => document.getElementById(id);
+const LOCAL = /^[a-z0-9-]{1,32}$/;
+let framed = "";
+const allTabs = () => [...S.tabs, ...(S.local || []).filter(t => !S.tabs.includes(t))];
 const ID = /^\d{8}-\d{6}-\d{6}-[0-9a-f]{4}$/;
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const label = t => t.charAt(0).toUpperCase() + t.slice(1);
@@ -776,16 +797,29 @@ async function load(force){
   const typed = {};                                  // notes typed but not sent survive a re-render
   for(const c of S.cards){ const el = document.getElementById("n-" + c.id); if(el && el.value) typed[c.id] = el.value; }
   S = next;
-  if(!S.tabs.includes(tab)) tab = S.tabs[0];
+  if(!allTabs().includes(tab)) tab = S.tabs[0];
   $("repo").textContent = `${S.name} · ${S.where} · 127.0.0.1:${S.port}`;
   render();
   for(const id in typed){ const el = document.getElementById("n-" + id); if(el){ el.value = typed[id]; grow(el); } }
   $("stamp").textContent = "Up to date " + new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
 }
 function render(){
+  const cardTab = S.tabs.includes(tab);
   const inTab = S.cards.filter(c => c.tab === tab), cnt = s => inTab.filter(c => c.status === s).length;
   const open = t => S.cards.filter(c => c.tab === t && c.status === "needs").length;
-  $("tabs").innerHTML = S.tabs.map(t => `<button class="${t===tab?"on":""}" data-t="${esc(t)}">${esc(label(t))}<span class="n">${open(t)}</span></button>`).join("");
+  $("tabs").innerHTML = allTabs().map(t => `<button class="${t===tab?"on":""}" data-t="${esc(t)}">${esc(label(t))}${S.tabs.includes(t) ? `<span class="n">${open(t)}</span>` : ""}</button>`).join("");
+  // a repo's own board (<board dir>/local/<tab>.html) in a sandbox without allow-same-origin: it runs as written and
+  // cannot reach the token or the API. Rebuilt only when the tab changes, so a refresh never resets the page.
+  const want = (S.local || []).includes(tab) && LOCAL.test(tab) ? tab : "";
+  if(want !== framed){
+    framed = want;
+    $("local").innerHTML = want ? `<iframe class="localframe" sandbox="allow-scripts" title="${esc(want)}" src="/local/${esc(want)}.html"></iframe>` : "";
+  }
+  const notClosed = S.cards.filter(c => c.status !== "closed");
+  $("count").textContent = `${notClosed.filter(c => c.answer).length} answered · ${notClosed.filter(c => c.locked).length} locked`;
+  $("bar").style.display = cardTab ? "" : "none";
+  const warn = S.problems.length ? `<div class="problems">Problems in the board's files (tell Claude): ${S.problems.map(esc).join("; ")}</div>` : "";
+  if(!cardTab){ $("pills").innerHTML = ""; $("chips").innerHTML = ""; $("list").innerHTML = warn; return; }
   $("pills").innerHTML = [["needs","Needs you"],["answered","Answered"],["closed","Closed"]].map(([k,l]) => `<button class="${k===sub?"on":""}" data-s="${k}">${l} <span class="n">${cnt(k)}</span></button>`).join("");
   const view = inTab.filter(c => c.status === sub), gcount = g => view.filter(c => groupOf(c) === g).length;
   const live = GROUPS.filter(([g]) => gcount(g) > 0);
@@ -793,11 +827,8 @@ function render(){
   $("chips").innerHTML = live.length < 2 ? "" : [["all","All"], ...live].map(([g,l]) => `<button class="${g===grp?"on":""}" data-c="${g}">${esc(l)} <span class="n">${g==="all" ? view.length : gcount(g)}</span></button>`).join("");
   const shown = view.filter(c => grp === "all" || groupOf(c) === grp).reverse();
   if(sub === "needs") shown.sort((a, b) => (b.voided ? 1 : 0) - (a.voided ? 1 : 0));
-  const warn = S.problems.length ? `<div class="problems">Problems in the board's files (tell Claude): ${S.problems.map(esc).join("; ")}</div>` : "";
   $("list").innerHTML = warn + (shown.length ? shown.map(card).join("") :
     `<div class="empty">${sub==="needs" ? "Nothing is waiting here. Claude adds a card when something needs you." : "Nothing here yet."}</div>`);
-  const notClosed = S.cards.filter(c => c.status !== "closed");
-  $("count").textContent = `${notClosed.filter(c => c.answer).length} answered · ${notClosed.filter(c => c.locked).length} locked`;
   document.querySelectorAll("textarea").forEach(grow);
 }
 function grow(el){ el.style.height = "auto"; el.style.height = Math.max(70, el.scrollHeight + 2) + "px"; }   // a note box fits its text: never a scrollbar
@@ -861,6 +892,11 @@ load(); setInterval(load, 15000);
 </script></body></html>"""
 
 
+LOCAL_CSP = ("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' https:; "
+             "style-src 'unsafe-inline' https:; font-src https: data:; img-src https: data:; connect-src 'none'; "
+             "base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
+
+
 class Handler(BaseHTTPRequestHandler):
     token = ""
     port = 0
@@ -875,18 +911,23 @@ class Handler(BaseHTTPRequestHandler):
     def _host_ok(self) -> bool:
         return self.headers.get("Host") in (f"{HOST}:{self.port}", f"localhost:{self.port}")
 
-    def _send(self, code: int, body, ctype: str = "application/json; charset=utf-8", nonce: str = "none"):
+    def _send(self, code: int, body, ctype: str = "application/json; charset=utf-8", nonce: str = "none",
+              local: bool = False):
         data = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "same-origin")
-        self.send_header("Content-Security-Policy",
-                         f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; "
-                         "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+        if local:                                  # a repo's own board: sandboxed even when opened directly, no fetches out
+            self.send_header("Content-Security-Policy", LOCAL_CSP)
+        else:
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy",
+                             f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; "
+                             "connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; "
+                             "frame-ancestors 'none'")
         self.end_headers()
         self.wfile.write(data)
 
@@ -905,6 +946,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, page, "text/html; charset=utf-8", nonce=nonce)
         if path == "/api/state":
             return self._send(200, json.dumps(state(), ensure_ascii=False))
+        if path.startswith("/local/"):
+            m = re.fullmatch(r"([a-z0-9-]{1,32})\.html", path[len("/local/"):])    # the raw path: no decoding, no `..`
+            if not m or m.group(1) not in local_boards():
+                return self._err(404, "not found")
+            try:
+                data = (HERE / "local" / f"{m.group(1)}.html").read_bytes()
+            except OSError:
+                return self._err(404, "not found")
+            return self._send(200, data, "text/html; charset=utf-8", local=True)
         if path == "/api/identity":
             return self._send(200, json.dumps({"board_id": self.board_id, "home": str(home_dir())}))
         return self._err(404, "not found")

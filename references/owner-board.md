@@ -12,6 +12,7 @@ after compaction, `/clear`, a new window or another account. The rules are summa
 |---|---|---|
 | `<home>/board/board.py` | the board: CLI, server and the module API (a copy of the engine's `assets/board/board.py`) | yes |
 | `<home>/board/board.json` | `port` and `board_id`, written once and never changed; optional `tabs` | yes |
+| `<home>/board/local/<name>.html` | a repo's own board, one file per tab (optional; see *A repo's own boards*) | yes |
 | `<home>/board/data/` | cards, answers, notes, closes, the stored plan and draft bytes, the read mark | no (git-ignored) |
 
 The port is derived from the home's resolved path (SHA-256, folded into 8800-8999), bind-tested when the board is
@@ -68,6 +69,16 @@ output. <!-- rule:guide-ensure-line -->
 
 Tabs come from `"tabs": ["..."]` in `board.json`; the default is `decisions` alone, and `decisions` is always
 there. A send card goes to an `email` tab when the repo has one, else to `decisions`.
+
+### A repo's own boards
+
+`board.py` is the engine's and an upgrade replaces it, so it is never edited downstream. A repo that wants a view of
+its own (its plan page, a status page) puts one HTML file per board in `<home>/board/local/`: `local/<name>.html`,
+the name `a-z 0-9 -`, 1-32 characters. Each file is a tab named after it, after the card tabs; a file named like a card
+tab (`decisions.html`) shows above that tab's cards. Nothing is configured: the board lists the folder. Other files
+there are ignored. The page runs as written inside a sandboxed frame: its scripts run, but it has no access to the
+board's token or API and it makes no network fetches (inline code and `https:` scripts, styles, fonts and images load).
+The folder is committed to git and no upgrade or `scaffold.py` run reads or writes it.
 
 ### The module API, for a tool that acts on an approval
 

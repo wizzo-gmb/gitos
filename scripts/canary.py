@@ -2765,7 +2765,8 @@ def check_board_copy(home: Path, skill_dir: "Path | None") -> list[dict]:
              "finding": f"<home>/{BOARD_DIRNAME}/board.py differs from the engine's copy at the same or a later "
                         f"BOARD_VERSION ({int(mh.group(1))}), so it is a local edit that forked from BOARD_VERSION "
                         f"{int(mh.group(1))} -> `scaffold.py` leaves it as it is, and a later engine BOARD_VERSION "
-                        f"replaces it: re-apply the edit after that upgrade"}]
+                        f"replaces it: move the local view into <home>/{BOARD_DIRNAME}/local/<name>.html (the board "
+                        f"loads it as a tab, upgrades leave it alone) and restore board.py"}]
 
 
 def check_board(home: Path) -> tuple[list[dict], bool]:
