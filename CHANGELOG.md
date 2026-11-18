@@ -18,6 +18,17 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v60 — 2026-11-17
+breaking: no
+
+- **Note boxes grow with their text (board).** Each note box starts at 70px and grows as the owner types, so it
+  never shows a scrollbar. `BOARD_VERSION` is 2, so `/gitos upgrade` refreshes every home's `board.py`.
+- **The publish tools remove files the engine dropped (WO-123).** `sync_to_live.py --apply` and `publish_to_public.py
+  --apply` now delete a file under a payload path (`SKILL.md`, `VERSION`, `CHANGELOG.md`, `assets/`, `scripts/`,
+  `references/`) that the engine no longer carries, so a retired file stops shipping; the dry run names each one.
+  Files outside those paths (the skill's `agents/`, the public repo's `.git`, `LICENSE`, `README.md`) are left alone.
+  `publish_to_public.py --prune` is removed; `sync_to_live.py --mirror` still adds the deletion of live files outside the payload paths.
+
 ## v59 — 2026-11-17
 breaking: yes (the Artifact owner board is removed; every owner approval moves to the local board, which `/gitos upgrade` step 4s builds)
 

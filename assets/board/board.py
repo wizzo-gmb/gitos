@@ -76,7 +76,7 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-BOARD_VERSION = 1
+BOARD_VERSION = 2
 HOST = "127.0.0.1"
 PORT_LO, PORT_HI = 8800, 8999
 BASE_TABS = ("decisions",)
@@ -727,7 +727,7 @@ details summary{color:var(--muted);font-size:13px;cursor:pointer}
 .opt:hover{border-color:var(--accent)}.opt.sel{background:var(--accent);border-color:var(--accent);color:var(--onaccent);font-weight:600}
 .opt:disabled{cursor:default;opacity:.55}.opt.sel:disabled{opacity:1}
 .opt.recd{border-color:var(--accent)}.rec{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;background:var(--tint);color:var(--accent);border-radius:4px;padding:0 6px;margin-left:8px;vertical-align:1px}.opt.sel .rec{background:var(--onaccent);color:var(--accent)}
-textarea{width:100%;min-height:36px;height:36px;resize:vertical;font:inherit;font-size:14px;background:var(--code);color:var(--text);border:1px solid var(--edge);border-radius:6px;padding:7px 8px}
+textarea{width:100%;min-height:70px;height:70px;resize:none;overflow-y:hidden;font:inherit;font-size:14px;background:var(--code);color:var(--text);border:1px solid var(--edge);border-radius:6px;padding:7px 8px}
 .row{display:flex;gap:8px;align-items:center}.row textarea{flex:1}
 .btn{background:none;border:1px solid var(--edge);border-radius:6px;padding:4px 10px;font:inherit;font-size:13px;line-height:20px;cursor:pointer;white-space:nowrap;color:var(--muted)}.btn:hover{color:var(--text)}
 .ans,.lock,.closed{color:var(--muted);font-size:14px;margin:6px 0 0}.voidmsg{color:var(--warn);font-size:14px;margin:6px 0 0}
@@ -779,7 +779,7 @@ async function load(force){
   if(!S.tabs.includes(tab)) tab = S.tabs[0];
   $("repo").textContent = `${S.name} · ${S.where} · 127.0.0.1:${S.port}`;
   render();
-  for(const id in typed){ const el = document.getElementById("n-" + id); if(el) el.value = typed[id]; }
+  for(const id in typed){ const el = document.getElementById("n-" + id); if(el){ el.value = typed[id]; grow(el); } }
   $("stamp").textContent = "Up to date " + new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
 }
 function render(){
@@ -798,7 +798,9 @@ function render(){
     `<div class="empty">${sub==="needs" ? "Nothing is waiting here. Claude adds a card when something needs you." : "Nothing here yet."}</div>`);
   const notClosed = S.cards.filter(c => c.status !== "closed");
   $("count").textContent = `${notClosed.filter(c => c.answer).length} answered · ${notClosed.filter(c => c.locked).length} locked`;
+  document.querySelectorAll("textarea").forEach(grow);
 }
+function grow(el){ el.style.height = "auto"; el.style.height = Math.max(70, el.scrollHeight + 2) + "px"; }   // a note box fits its text: never a scrollbar
 function table(rows){
   return `<table><tr><th>What</th><th class="num">Count</th><th>What goes there</th></tr>${rows.map(r => `<tr><td>${esc(r[0])}</td><td class="num">${esc(r[1])}</td><td>${esc(r[2])}</td></tr>`).join("")}</table>`;
 }
@@ -853,6 +855,7 @@ document.addEventListener("click", async e => {
     catch(err){ $("footmsg").textContent = "Copy failed."; }
   }
 });
+document.addEventListener("input", e => { if(e.target.tagName === "TEXTAREA") grow(e.target); });
 window.addEventListener("hashchange", () => { tab = location.hash.slice(1) || S.tabs[0]; render(); });
 load(); setInterval(load, 15000);
 </script></body></html>"""
