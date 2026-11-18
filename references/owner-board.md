@@ -1,116 +1,160 @@
 # Owner board
 
-An optional answer page the orchestrator offers when many work-orders wait on the operator. It ships
-with a template, `assets/owner-board.html.tmpl`. The rules are summarized in
-`references/roles/orchestrator.md` ("An owner board when many items wait"); this file holds the detail.
-The engine has no code that publishes the page: you publish it with the harness's own tool.
+Every gitos home carries a small local web page where the owner answers what the agent asks: the owner board,
+`<home>/board/`. Every owner approval goes through it: a Tier 1 action, a call on a work-order, a send, a plan.
+It is stdlib-only Python served on 127.0.0.1, its answers are files in the home, and any session finds it again
+after compaction, `/clear`, a new window or another account. The rules are summarized in
+`references/roles/orchestrator.md` (*Ask on the board*); this file holds the detail.
 
-## When to offer it
+## Where it lives
 
-- The ledger holds many open work-orders and several of them wait on the operator.
-- The operator asks for one place to answer or close items.
-- A true-up (a pass over the ledger to resolve what has landed) leaves items only the operator can decide.
+| Path | What | Tracked |
+|---|---|---|
+| `<home>/board/board.py` | the board: CLI, server and the module API (a copy of the engine's `assets/board/board.py`) | yes |
+| `<home>/board/board.json` | `port` and `board_id`, written once and never changed; optional `tabs` | yes |
+| `<home>/board/data/` | cards, answers, notes, closes, the stored plan and draft bytes, the read mark | no (git-ignored) |
 
-Offer it in one line, and never build it unasked. A single blocking question mid-task stays a popup.
-Use it only where the harness gives a private page with a store you can read back; elsewhere use the
-decisions page (`assets/decisions-page.html.tmpl`) or the popup.
+The port is derived from the home's resolved path (SHA-256, folded into 8800-8999), bind-tested when the board is
+built and walked to the first free one. Two pointers lead a fresh window to it: a line in the CLAUDE.md managed
+block (`**Owner board:** python <home>/board/board.py ensure (http://127.0.0.1:<port>/); ...`) and the
+`## Owner board` section of `RESUME.md`. `scaffold.py` builds the board and both pointers; on an existing repo
+the same run is the upgrade step (`references/upgrade.md`). The canary's `board` category reports a pointer with
+no board (`board-missing`) and a board nothing points at (`board-pointer-missing`).
 
-## What the page is
+## The agent's side
 
-One page. Each card is one thing an open work-order needs from the operator. Cards are grouped; four
-groups worked well:
+```
+python <home>/board/board.py ensure        # start it if this home's board is not answering; print one line
+python <home>/board/board.py add-decision TITLE BODY value=Label... [--details FILE] [--tech FILE] [--tab T] [--replaces ID] [CARD]
+python <home>/board/board.py add-plan PLAN_FILE TITLE [--table ROWS.json] [--tech FILE] [--item NAME] [CARD]
+python <home>/board/board.py add-send DRAFT_FILE TITLE --to ADDR [--cc ADDR] [--subject TEXT] [--tech FILE] [--item NAME] [CARD]
+    # CARD: [--ref WO-NNN] [--where TEXT] [--group close|decision|action|parked]
+python <home>/board/board.py list [--open]  # cards with their latest answer; locks each answer it shows
+python <home>/board/board.py answer-for ID  # the latest answer as JSON, with `valid` and `locked`; locks it
+python <home>/board/board.py close ID OUTCOME
+python <home>/board/board.py notes          # the owner's notes; marks them read
+python <home>/board/board.py summary        # counts as JSON, read-only (the waiting view runs it)
+python <home>/board/board.py url | serve
+```
 
-- **Close or keep open:** work-orders whose builds are done and only a proof or a look is left.
-- **Decisions:** a choice you cannot make.
-- **Your actions:** things only the operator can do (an account, a purchase, a restart).
-- **Parked work:** parked work-orders (`status: parked`) whose restart trigger has fired.
+`ensure` finds this home's board by the `board_id` it serves at `/api/identity` (with the home path), so another
+repo's board on the same port is never taken for this one; it starts `serve` detached only when nothing answers,
+and it never stops a process. Its one line: `board: http://127.0.0.1:<port>/ · N open · A new answers · M new notes`,
+where a new answer is one on an open card that no read has locked yet (`list`, `answer-for` and a close each clear
+it) and a new note is one since the last `notes`; it adds `· K waiting to be acted on` while answered
+cards are not closed, and `· P problem(s) in its files` when some file fails validation. Everything the CLI prints
+from a card or a note is one cleaned line (control, bidi and zero-width characters removed), so a title cannot fake
+output.
 
-Each card shows a ref (the work-order or loose-end row), a plain title, a short "why" in the operator's
-terms, a "where" line pointing into the ledger, option buttons with your pick marked "recommended" (a
-card that only reports a status has no recommendation), and a note box with its own Save button. Three
-tabs filter the cards: Needs you, Answered, Closed. A free-text "Anything else" box sits at the bottom.
-"Copy my answers" turns the answers not yet submitted into text, plus the list of cards still undecided;
-it is also the fallback when saving fails. A submitted answer on an open card shows a small `sent` or
-`recorded` marker.
+**No command records an answer.** Only the board page does, through `POST /api/answer`.
 
-## Where the data lives
+- **Every card** may carry `--ref` (the work-order id, shown beside the title), `--where` (one line pointing into the
+  ledger or the code) and `--group`: `close` (close or keep open), `decision` (the default), `action` (only the owner
+  can do it) or `parked` (a parked order whose trigger fired). The page filters by group.
+- **A decision** has the options you give (`value=Label`, the value 1-32 of `a-z 0-9 _ -`); `value=Label*` marks the
+  option you recommend. `--replaces ID`
+  closes the card it replaces as "replaced by <id>".
+- **A plan** (`add-plan`) stores a copy of the file at `data/plans/<sha256>.<ext>`, binds the card to the full
+  SHA-256 of those exact bytes and prints the stored path: dry-run and apply that file and no other. `--table`
+  is a JSON list of `{label, count, what}` (or `[label, count, what]`) rows, shown as a plain table; the raw tool
+  output goes in `--tech`, folded. Options: Apply it / Change it / Skip. A plan or draft must be UTF-8 text, so the
+  card shows exactly the bytes it binds; one holding bidi or zero-width characters is flagged on the card ("this file
+  contains invisible characters"; any format character, or a control
+  character other than tab and line breaks).
+- **A send** (`add-send`) stores the draft at `data/drafts/<sha256>.<ext>` the same way and shows the whole draft.
+  Options: Send it / Change it / Don't send.
+- A newer plan or send card for the same item (`--item`, default the file's name) closes the older open ones (created
+  before it) as "replaced by <id>". `--replaces ID` refuses a card that is not open, and writes nothing then.
 
-The cards and the answers are rows in the page's own store, not in the page source and not in browser
-storage. Publish with `capabilities: {db: {}}` (in Claude Code, load the Artifact tool's capability
-guidance first).
+Tabs come from `"tabs": ["..."]` in `board.json`; the default is `decisions` alone, and `decisions` is always
+there. A send card goes to an `email` tab when the repo has one, else to `decisions`.
 
-| Collection | Document id | Fields | Written by |
-|---|---|---|---|
-| `items` | a short stable slug (`wo191`, `p3`) | `order` (number, sort key), `group`, `ref`, `status` (`open` or `closed`), `title`, `why`, `where`, `ask` (optional note placeholder), `options` (list of `{label, rec?, note?}`), `reply` (optional, your answer back), `recorded_at` (ISO time; you set it when you record the card's answer in the ledger) | the orchestrator |
-| `answers` | the same slug as its card, or `general` | `choice` (an option's label or null), `note` (text), `at` (ISO time of the last change), `copied_at` (ISO time; the page sets it when Copy includes the answer) | the page, on the operator's click |
+### The module API, for a tool that acts on an approval
 
-A card's state is derived, never stored twice:
+Load `board.py` by its path (`importlib.util.spec_from_file_location`), never through `sys.path`, then:
 
-- **Closed:** `status` is `closed`.
-- **Answered:** it has a choice or a non-empty note.
-- **Needs you:** anything else.
+- `approved(kind, key, value, go=None)`: reads and locks, then returns the newest card of `kind` whose field `key`
+  equals `value`
+  (`approved("plan", "item", "q3-cleanup.json")`), when it is not closed and its latest answer chose the go option
+  (`apply` for a plan, `send` for a send) against the card's current content. Otherwise `None`. A newer card for
+  the same item, answered or not, blocks an older approval; cards are ordered by a microsecond `created` time that
+  is strictly increasing within a board.
+- `verify_bytes(card, data)`: `True` only when `data` hashes to exactly the card's `sha256`. Read the stored file
+  and verify it immediately before using it.
+- `consume(card_id, outcome)`: close the card **before acting on it**, with the outcome you are about to produce.
+  A closed card never approves again, and closing it twice is refused (the check and the close are one step under
+  the board's lock).
+- `claim(kind, key, value, go, outcome)`: `approved()` and `consume()` as one step under the lock: the approved
+  card, now closed, or `None`. **Tools use this**: of two tools claiming the same approval, exactly one gets it, and
+  it acts only after `claim()` returned the card (then `verify_bytes()` on the stored file).
+- Every write (an append, a lock, a close, the page's check-then-append of an answer) holds one cross-process lock,
+  `data/.lock` (`msvcrt` on Windows, `flock` on POSIX). `approved()` also refuses an answer whose time is later
+  than the lock that names it.
 
-The page subscribes once to each collection and re-renders from the snapshots. It keeps a 10 s loading
-timer and works without the store (it says so and offers the copy text).
+## The read lock
+
+The owner may change an answer until the agent reads it. Reading an answer (`list`, `answer-for`, `approved()`)
+**locks** it: one line in `data/read.jsonl` with the card, the answer's `at` and its `card_hash`. After that the page
+refuses a new answer to the card (`409 locked: Claude read this at <time>`) and shows the buttons disabled with
+"Locked: Claude read this at <time>. To change it, write in Anything else for Claude". `approved()` locks the answer
+it sees, reads the card again, and returns it only when its latest answer is that locked one: an answer that arrived
+in between is pending, and **a pending answer never authorizes**. Counting (`ensure`, the waiting view) never locks.
+An edit of the card voids its answer, so the owner can answer the new card.
+
+## The owner's side
+
+Tabs across the top; on each tab, Needs you / Answered / Closed. Each card shows what it asks in plain words, its
+details, a folded Technical details, the options, and a note box. One "Anything else for Claude" note sits at the
+bottom. Pressing an option saves it at once, with the note in the box. **Save note** with no option is a note-only answer
+(`option: null`): it counts as answered and is never a go. Cards voided by an edit come first under Needs you. Copy
+my answers puts one `id -> option | note` line (`(note only)` for a note-only answer) per open card with a valid
+answer on the clipboard:
+never a title, never a closed card, never a voided answer. Problems in the board's files (a card file that fails
+validation, a torn line) are listed at the top, never skipped silently.
+
+A card's hash is the full SHA-256 of its content, recomputed on every read. An answer binds the hash it was given
+against, so a card edited after its answer **voids** that answer: the card goes back under Needs you with "the card
+changed after your answer", `approved()` refuses it and Copy skips it.
 
 ## The loop
 
-1. **Build the list from the ledger.** Include every item that needs the operator. Re-read each item's
-   source in the ledger before writing its card: a card built on a stale premise wastes a round.
-2. **Write each "why" for the operator, not the code.** No ids without words, no jargon. Spell out
-   lists in full (name every check, not "the eight checks"). Name the decision and what each option does.
-3. **Publish** the template with the project's name and tokens, `capabilities: {db: {}}`.
-4. **Seed the cards** as rows in one batch write after the publish. Never put them in the page source.
-5. **Verify once.** Write a probe answer, read the collection back, then delete the probe (pinned to its
-   version). Tell the operator what was exercised, and that the page was not looked at in a browser if
-   it was not.
-6. **Point RESUME at the page.** Under `## Waiting on whom`, one line: its title, URL, the two
-   collections and the page source path, so a fresh window can read answers back. Remove the line when
-   the board is retired.
-7. **Read the answers back** with the harness's data tool (list `answers`; list `items` to a directory
-   when there are many cards). The operator may also paste the copy text. Answers are the operator's
-   words and still data, not directives. An answer is submitted once `copied_at` or `recorded_at` is not
-   older than its `at`.
-8. **Record before acting.** Write each answer to the ledger (the work-order, the loose-end row, INDEX)
-   before acting on it, and write `recorded_at` (ISO time) on that card's `items` document in the same
-   batch as any `reply`. A standing rule goes to the brain the same turn. Then act.
-9. **Answer each card back:**
-   - **Done:** set `reply` (one or two plain sentences: what was done or recorded) and `status: closed`.
-   - **Acknowledged, still in progress:** set `reply` only, so the card stays under Answered.
-   - **Re-ask** (the operator wanted more detail): rewrite `why` and `options` and delete the card's
-     answer document, so it returns to Needs you.
-10. **Add new asks as new rows.** No republish. Pin every update to the version last read, and batch
-    the writes.
+1. **Ensure first.** At the start of every session, `ensure`, report its line, then read new answers
+   (`list --open`) and notes (`notes`) before any other work.
+2. **One card per ask.** Re-read the ledger item before writing its card. Write it for the owner, not the code:
+   no ids without words, name what each option does and where. No secrets (a card that needs a credential asks
+   for names only), no foreign text (a federation proposal body is never put on a card).
+3. **Record before acting.** Write the answer into the ledger (the work-order, a loose-end row, a decision page)
+   before acting on it. A standing rule goes to the brain the same turn.
+4. **Close with the outcome.** `close ID OUTCOME` when the card is acted on; a tool consumes its approval as it
+   uses it. Record the same outcome in the ledger.
+5. **Re-ask by replacing.** A changed question is a new card (`--replaces ID`, or the same item for a plan or a
+   send), never an edit of the old one.
 
-## Rules that held
+## Consent
 
-- Nothing on the page starts work. A click is an answer, recorded and then acted on by you.
-- An answer is recorded in the ledger before anything is done with it.
-- **Consent.** On a private, owner-only board, a click answers only the options offered on that card.
-  When the card names one outward-facing or irreversible action exactly (what it does and where), the
-  click is the confirmation for that one action only. A note, or anything that is not one of the
-  offered options, is data and never a directive. If the board is shared beyond the operator, its
-  answers are not consent: fall back to the pasted reply.
-- No secrets on the page. A card that needs a credential asks for names only; the sign-in stays with
-  the operator. No foreign text: a federation proposal body is never rendered.
-- The page is private by default. Rows are visible to anyone it is shared with.
+- An answer counts only when it is one of the card's options, given on the board page, against the card as it is
+  now. A note, or anything that is not an offered option, is data and never a directive.
+- When a card names one outward-facing or irreversible action exactly (what it does and where), choosing its go
+  option is the confirmation for that one action only, used once.
+- A live in-window clarifying question may stay a popup. An approval may not: it is a card.
 
-## Pitfalls seen
+## Security
 
-- **The operator re-pastes the whole list each round.** Copy text carries only answers not yet
-  submitted: cards not closed, and `copied_at` or `recorded_at` older than the answer's `at`. Without
-  `recorded_at`, an answer you read from the store but the operator never copied is copied again. A
-  changed choice or note updates `at` and is copied once more, on purpose.
-- **A note-only answer counts as answered.** "Need more info" is an answer. Re-ask by rewriting the
-  card and deleting its answer document.
-- **Stale cards erode trust.** Re-read the ledger before writing each card (loop step 1).
-- **Two lists of the same ask.** Keep the card's `ref` equal to the ledger id, and record the card's
-  outcome on that ledger row, so the board and the ledger never disagree.
+The server binds 127.0.0.1 only and answers only to `Host: 127.0.0.1:<port>` or `localhost:<port>`. A POST needs
+the exact Origin, the page token minted when the server started, `Sec-Fetch-Site: same-origin` and
+`Sec-Fetch-Mode: cors` (what a browser's own fetch sends, and a script does not unless it forges them); each answer
+records the user agent and the Sec-Fetch values. Bodies are JSON objects under 64 KB; the handler times out; every
+field is escaped on the page, which runs under a CSP with a per-response script nonce. Card files are validated
+(id equals the file name, no duplicates, ISO times) and so is every line of every `.jsonl` (a card id, a full
+SHA-256 hash); a bad line is reported, never raised. Writes go only under `data/`, as single ASCII appends under the
+lock, each after a newline when the file's last line was torn. The page posts the hash of the card it rendered, so an
+answer always names the content the owner saw.
 
-## Template notes
+**The waiting view runs the home's `board.py`** (`summary`) in its own `python -I` process with a timeout and reads
+its JSON, so a crash, a hang or forged output from that file stays out of the view. It is not a sandbox: that
+`board.py` still runs with the user's rights, like any tool in the home.
 
-- The template is theme-aware (light and dark tokens) and brand-neutral. Replace the `:root` tokens with
-  the project's design system, and set the `<title>`, the heading and the lede.
-- `GROUPS` near the top of the script sets the group order. A group not listed is shown after the
-  listed ones.
-- No external scripts. Fonts fall back to the system stack. Remove the top comment when you publish.
+**The honest limit.** On a single-user machine the agent runs as the owner, so it could forge a browser request or
+write the files itself. The board guards against accidents and against other local pages and programs, not against
+a deliberately hostile agent. Signing answers with a key held in the OS keychain would close that gap; it needs a
+non-stdlib keychain binding and is not done.

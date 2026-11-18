@@ -18,6 +18,43 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v59 — 2026-11-17
+breaking: yes (the Artifact owner board is removed; every owner approval moves to the local board, which `/gitos upgrade` step 4s builds)
+
+- **A local, durable owner board in every home; the Artifact owner board is retired (WO-122).** Owner approvals on an
+  Artifact board were lost with the page on `/clear`, a new window or another account. Every home now carries
+  `<home>/board/` (`board.py` from the new `assets/board/board.py`, `board.json` with a port derived from the home's
+  path and a `board_id`; `data/` git-ignored), a stdlib web page on 127.0.0.1 that `board.py ensure` starts when this
+  home's board is not answering and reports in one line. Every owner approval is a card there: decisions, plans and
+  sends, the last two bound to the full SHA-256 of a stored copy of the exact bytes; tools call `approved()`,
+  `verify_bytes()` and `consume()`, so an approval is used once. No command records an answer; only the page does,
+  behind a Host allow-list, the exact Origin, a per-start page token and browser Sec-Fetch headers. An edited card
+  voids its answer and asks again; cards order by a microsecond time. `scaffold.py` builds the board, the CLAUDE.md
+  block line and RESUME's `## Owner board` section, and is the upgrade step (4s) for a repo without one; the canary
+  gains the optional `board` category (`board-missing`, `board-pointer-missing`); the waiting view reads open cards and
+  unread answers and notes from disk. The orchestrator runs `ensure` first in every session (*Ask on the board*).
+  `assets/owner-board.html.tmpl` is removed. The page (operator-approved layout): an option button saves at once,
+  Save note alone is a note-only answer (answered, never a go), filter chips by group (`--group`), `--ref` and
+  `--where` lines, `value=Label*` recommended, voided cards first, one coral accent. An answer **locks** when the agent
+  reads it (`list`, `answer-for`, `approved()`; `data/read.jsonl`): the page then refuses a change, and `approved()`
+  authorizes only a locked answer. The default tabs are `decisions` alone. After an independent review: the page
+  posts the hash of the card it rendered; one cross-process lock (`data/.lock`) covers every write, so an answer and
+  a read or two closes never interleave; `claim()` approves and closes in one step; malformed `.jsonl` lines (a
+  non-ASCII hash) are reported, not raised; answered cards not yet acted on are counted; CLI output is cleaned of
+  control and bidi characters; plans and drafts must be UTF-8 and invisible characters are flagged; the waiting view
+  runs the home's `board.py` in an isolated subprocess (not a sandbox). A new answer is one no read has locked, so
+  `answer-for` and a close clear it; `answer-for` reports the current answer, valid only once locked.
+- **The decisions-page gate sees a `<link>` again (WO-122).** Its external-reference regex held a literal backspace
+  where `\b` was meant, so a planted `<link>` stylesheet passed; a control now proves it is caught.
+
+- **Migration keeps every Parked row; an empty heading is not a report (WO-121).** `ledger_migrate.py` treated only `P<n>` rows
+  of the hand-kept INDEX Parked table as candidates and, on `--write`, replaced the whole section, so rows with named ids
+  (`214-P1`, `nt8-freeze`, `L63`, `004`) were dropped without a word. Now every data row is a candidate whatever its id (the
+  id is the parked order's `origin:`), a named id already held by a parked order is not converted twice, and the section is
+  rewritten only when every row is converted, routed-closed, already held or reported `LEFT`. The canary's filled-notes test
+  for a slice ignores any bare `###`/`####` heading, not just the five labels, so an untouched proposed slice is no longer
+  named as waiting for adjudication. The canary (`parked-no-trigger`, `parked-dangling`) and the waiting view read the hand-kept table through one helper, any id.
+
 ## v58 — 2026-11-16
 breaking: yes
 

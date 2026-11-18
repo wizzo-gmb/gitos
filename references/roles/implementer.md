@@ -50,7 +50,8 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    **Defer only what is clearly out of the order's scope, or would cross into a new scope** (a different
    subsystem, a design decision, the operator's decision, or a file another in-flight order owns), and say which in
    one line under *Follow-ups*; the orchestrator rejects a deferral without that line and hands the item back as
-   scope. Nothing is dropped. An out-of-scope edit you did not list is a defect.
+   scope. Nothing is dropped. An owner approval you need is never asked in chat: name it in your notes, and the
+   orchestrator asks it as a card on the owner board (`references/owner-board.md`). An out-of-scope edit you did not list is a defect.
    **A follow-up routed into your slice is part of your scope:** a slice whose `origin:` names loose-end items lands
    them; say in the notes which you closed and which you did not.
    **Disciplines at the step they apply** (`references/disciplines.md`): (a) a gate or check you add or change

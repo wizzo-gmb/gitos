@@ -30,6 +30,8 @@ cover:
                              a parked order with no restart trigger, an item a second store also
                              holds, a resolved work-order with implementer notes never
                              adjudicated, an adjudication pointing at nothing. Report-only)
+  - owner board (optional)  (<home>/board/ files vs the CLAUDE.md block line and the RESUME section that
+                             point at them: a pointer with no board, or a board nothing points at)
   - federation (optional)   (a FEDERATED repo's OWN presence record: missing, corrupt, or not
                              refreshed recently = the bootstrap heartbeat is not running; plus
                              its OWN intake hygiene — a malformed proposal, one from a sender
@@ -1935,14 +1937,13 @@ NOTES_HEADING = "## Implementer notes"
 # answer) with no Adjudication block is a finding.
 NOTE_PLACEHOLDER_RE = re.compile(r"^\[.*\]$")
 NOTE_NONE_RE = re.compile(r"^(nothing notable|nothing|none|n/?a)[.!\s]*$", re.IGNORECASE)
-NOTE_LABEL_RE = re.compile(r"^#{3,4}\s*(?:Deviations|Surprises|Durable facts|Process notes|Follow-ups)\s*:?\s*$",
-                           re.IGNORECASE)
+NOTE_LABEL_RE = re.compile(r"^#{3,4}(?!#)")                  # any bare ###/#### heading line, whatever it says
 
 
 def notes_filled(notes: list[str], skip_labels: bool = False) -> bool:
     """True when an `## Implementer notes` section holds anything past placeholders and a whole-section "nothing
-    notable". `skip_labels` also ignores a bare `### Label` heading (a slice file is laid out with the five of them,
-    empty, so a heading alone says nothing). One definition, shared by the resolved-order check and `open_notes_waiting`."""
+    notable". `skip_labels` also ignores any bare `###`/`####` heading line (a slice file is laid out with five of them,
+    empty, and an implementer may add its own, so a heading with nothing under it says nothing; text under any heading counts). One definition, shared by the resolved-order check and `open_notes_waiting`."""
     body = [s for s in (ln.strip() for ln in notes)
             if s and not NOTE_PLACEHOLDER_RE.match(s) and not s.startswith("<!--")
             and not (skip_labels and NOTE_LABEL_RE.match(s))]
@@ -1996,7 +1997,6 @@ def open_notes_waiting(home: Path) -> list[dict]:
 PLACEHOLDER_TRIGGER_RE = re.compile(
     r"^(?:|[-—–?.]+|tbd|todo|n/?a|none|unknown|later|someday|<[^>]*>|\{\{[^}]*\}\})$",
     re.IGNORECASE)
-PARKED_ID_RE = re.compile(r"P\d+")
 PROMOTION_RE = re.compile(r"(?:→|->)\s*WO-(\d{3})(?!\d)")
 ADJ_WO_RE = re.compile(r"(?:→|->)\s*WO-(\d{3})(?!\d)")
 ADJ_P_RE = re.compile(r"(?:→|->)\s*(P\d+)\b")
@@ -2259,15 +2259,33 @@ def _pile_items(home: Path) -> dict:
     return out
 
 
-def _open_parked_rows(idx_text: "str | None") -> list:
-    """[(P<n>, row cells)] of the hand-kept INDEX Parked rows still open (no `->` routing in the row)."""
-    block = section_lines(idx_text or "", PARKED_HEADING) or []
+PARKED_REGION_MARK = "<!-- gitos:index parked -->"
+PARKED_HAND_HEADER = "| ID | Item | Restart trigger |"
+
+
+def parked_table_rows(idx_text: "str | None") -> list:
+    """The data rows (lists of cells) of the hand-kept INDEX `## Parked` table, whatever the shape of their id
+    (`P1`, `214-P1`, `nt8-freeze`, `L63`, `004`). Not the header, the separator, the template's placeholder row (no id,
+    no item) nor the rows of the generated `<!-- gitos:index parked -->` region (a view of the parked orders, not a
+    hand-kept table). One definition: the canary, `waiting.py` and `ledger_migrate.py` all read the table through it."""
+    text = idx_text or ""
+    block = section_lines(text, PARKED_HEADING)
+    if block is None or (PARKED_REGION_MARK in text and PARKED_HAND_HEADER not in text):
+        return []
     out = []
     for row in _table_rows(block) or []:
         pid = clean_cell(row[0]) if row else ""
-        if PARKED_ID_RE.fullmatch(pid) and not any("->" in c or "→" in c for c in row):
-            out.append((pid, row))
+        item = clean_cell(row[1]) if len(row) > 1 else ""
+        if PLACEHOLDER_TRIGGER_RE.fullmatch(pid) and PLACEHOLDER_TRIGGER_RE.fullmatch(item):
+            continue
+        out.append(row)
     return out
+
+
+def _open_parked_rows(idx_text: "str | None") -> list:
+    """[(id, row cells)] of the hand-kept INDEX Parked rows still open (no `->` routing in the row)."""
+    return [(clean_cell(row[0]) if row else "", row) for row in parked_table_rows(idx_text)
+            if not any("->" in c or "→" in c for c in row)]
 
 
 FRONT_RE = re.compile(r"\A\ufeff?---\r?\n(.*?)^---[ \t]*\r?$", re.S | re.M)
@@ -2295,7 +2313,12 @@ def check_not_now_stores(home: Path, rows: list) -> list[dict]:
     something only it holds; `ledger_migrate.py <home>` moves it onto the list."""
     state = {r[0]: (parse_loose_state(r[4]) or ("?", ""))[0] for r in rows if LOOSE_ID_RE.fullmatch(r[0])}
     imported = {r[2][len("import:"):]: r[0] for r in rows if r[2].startswith("import:P")}
-    origins = {o: nnn for nnn, meta in parked_orders(home) for o in re.findall(r"\b[LP]\d+\b", meta.get("origin", ""))}
+    origins = {}
+    for nnn, meta in parked_orders(home):
+        og = " ".join(meta.get("origin", "").split())
+        for o in [og] + re.findall(r"\b[LP]\d+\b", og):
+            if o:
+                origins.setdefault(o, nnn)
     items: list[dict] = []
     left: list[str] = []
 
@@ -2499,12 +2522,9 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
             items.append({"kind": "parked-no-trigger", "wo": f"WO-{nnn}",
                           "finding": f"WO-{nnn} is parked with no `trigger:` -> name the event that restarts it in "
                                      "its front matter, or open it (remove `status: parked`)"})
-    parked_block = section_lines(idx_text, PARKED_HEADING)
     parked_ids: set[str] = set()
-    for row in (_table_rows(parked_block) or []) if parked_block is not None else []:
-        pid = clean_cell(row[0]) if row else ""
-        if not PARKED_ID_RE.fullmatch(pid):
-            continue
+    for row in parked_table_rows(idx_text):
+        pid = (clean_cell(row[0]) if row else "") or "(no id)"
         parked_ids.add(pid)
         trigger = clean_cell(row[2]) if len(row) > 2 else ""
         if PLACEHOLDER_TRIGGER_RE.fullmatch(trigger):
@@ -2640,6 +2660,55 @@ def check_system_one(home: Path, skill_dir: "Path | None") -> tuple[list[dict], 
                                  "against scripts/system_one_questions.py"})
     return items, None, True
 
+
+
+# ------------------------------------------------- the board category (OPTIONAL, WO-122)
+# The owner board lives at <home>/board/ (board.py + board.json) and is found again through two pointers: a line in
+# the CLAUDE.md managed block and the `## Owner board` section of RESUME.md. NOT-APPLICABLE IS NOT SKIPPED: a home
+# with neither the files nor a pointer predates the board (upgrade builds it) and gets no line. A pointer to files
+# that are not there is `board-missing`; files that nothing points at are `board-pointer-missing`. The CLAUDE.md line
+# is judged only when the managed block exists, and the RESUME line only when RESUME.md exists (those absences are
+# the anchor and resume categories' findings, not this one's).
+OPTIONAL_CATEGORIES = OPTIONAL_CATEGORIES + ("board",)
+BOARD_DIRNAME = "board"
+BOARD_FILES = ("board.py", "board.json")
+BOARD_CLAUDE_TOKEN = "board/board.py ensure"
+BOARD_RESUME_RE = re.compile(r"(?m)^##\s+Owner board\b")
+
+
+def check_board(home: Path) -> tuple[list[dict], bool]:
+    """-> (items, applicable)."""
+    bdir = home / BOARD_DIRNAME
+    have = [f for f in BOARD_FILES if (bdir / f).is_file()]
+    missing_files = [f for f in BOARD_FILES if f not in have]
+    claude_text = _read(home.parent / "CLAUDE.md") or ""
+    block = None
+    if CLAUDE_ANCHOR_START in claude_text and CLAUDE_ANCHOR_END in claude_text:
+        i = claude_text.index(CLAUDE_ANCHOR_START)
+        block = claude_text[i:claude_text.index(CLAUDE_ANCHOR_END, i)]
+    resume_text = _read(home / RESUME_FILENAME)
+    claude_ptr = block is not None and BOARD_CLAUDE_TOKEN in block
+    resume_ptr = resume_text is not None and BOARD_RESUME_RE.search(resume_text) is not None
+    if not have and not claude_ptr and not resume_ptr:
+        return [], False
+    items: list[dict] = []
+    if missing_files:
+        items.append({"kind": "board-missing", "missing": missing_files,
+                      "finding": f"the owner board is pointed at but <home>/{BOARD_DIRNAME}/ lacks "
+                                 f"{', '.join(missing_files)} -> re-run `scaffold.py <root> --git skip` (the upgrade "
+                                 f"step) to build it; it never touches board.json or data/"})
+    if have:
+        absent = []
+        if block is not None and not claude_ptr:
+            absent.append("the CLAUDE.md block line")
+        if resume_text is not None and not resume_ptr:
+            absent.append("the RESUME.md `## Owner board` section")
+        if absent:
+            items.append({"kind": "board-pointer-missing", "missing": absent,
+                          "finding": f"the owner board exists but {' and '.join(absent)} does not point at it -> "
+                                     f"re-run `scaffold.py <root> --git skip` to write the pointers, so a fresh "
+                                     f"window finds the board"})
+    return items, True
 
 def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         registry: "str | None" = None, now: "datetime | None" = None) -> dict:
@@ -2830,6 +2899,12 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
         else:
             skip("restore", c_reason)
 
+    # owner board: optional, absent for a home that has neither the board nor a pointer to one.
+    b_items, b_applicable = check_board(home)
+    if b_applicable:
+        r["board"] = b_items
+        checked.add("board")
+
     active = CATEGORIES + tuple(k for k in OPTIONAL_CATEGORIES if k in r)
     for k in active:          # a category with findings is by definition checked
         if r[k]:
@@ -2972,6 +3047,8 @@ def print_report(r: dict) -> None:
         sections.append(("Dispatch tier gate (repo .claude/settings.json)", "dispatch"))
     if "restore" in r:
         sections.append(("Post-compaction restore hook (repo .claude/settings.json)", "restore"))
+    if "board" in r:
+        sections.append(("Owner board (<home>/board/ and its two pointers)", "board"))
     skips: dict[str, list[dict]] = {}
     for s in r["skipped"]:
         skips.setdefault(s["check"].split(":")[0], []).append(s)

@@ -388,14 +388,15 @@ owns SYNC / PRESERVE / MERGE. "Bridge" means only that file.
 Opt-in model and effort routing per dispatch, by tier (light / standard / deep) (`references/model-optimization.md`).
 
 **Owner board**
-An optional private page where the operator answers many cards at once (`references/owner-board.md`); a card's
-answer is recorded in the ledger before anything acts on it.
+The local answer page every home carries at `<home>/board/` (`references/owner-board.md`), served on 127.0.0.1 and
+started by `board.py ensure`. Every owner approval is a card there, never in chat or an Artifact; an answer counts
+only against the card as it is now, is recorded in the ledger before anything acts on it, and is used once.
 
 **Waiting view** (`loose_ends.py status`, `scripts/waiting.py`)
 The one place that lists everything waiting on the operator: drain `ask` proposals, loose-ends rows in state
 `waiting:`, pending federation intake (a count), Parked rows whose restart trigger may have fired (a work-order it
-names is resolved, or a date it names has passed), and a live owner board, which it says it did not read. A view
-computed from the stores, never a store: RESUME's "Waiting on whom" points at it instead of restating it.
+names is resolved, or a date it names has passed), and the owner board's open cards and unread answers and notes,
+read from its files. A view computed from the stores, never a store: RESUME's "Waiting on whom" points at it instead of restating it.
 
 **Offer** (the one consent round) (`scripts/offer.py`)
 Every opt-in the engine has (model optimization, lenses, System One, federation, legacy registers, the harness popup),

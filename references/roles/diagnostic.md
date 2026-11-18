@@ -263,6 +263,8 @@ Inside an orchestrator session that list is your return; invoked directly, tell 
 take it to the orchestrator (in this window or another: the role changes, it does not stretch).
 The orchestrator dispatches, verifies and resolves (`references/roles/orchestrator.md` →
 *Dispatch + verify*). You never dispatch an implementer, move a work-order or mark it resolved.
+A call only the owner can make is an approval: the orchestrator asks it as a card on the owner board
+(`references/owner-board.md`); you never ask the owner for one in chat.
 
 ## Out of scope
 

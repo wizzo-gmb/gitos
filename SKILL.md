@@ -297,7 +297,7 @@ applies.
 - `references/canary.md` — the state canary, worktree lifecycle, category descoping, the durable anchor, the restore hook and the marker opt-out (the marker and slippage protocol stay in this file).
 - `references/lenses.md` — what a lens is, the two layers, matching (the full *Lenses* description).
 - `references/federation.md` — the `federation` command, the per-repo opt-in file + groups, the machine-level registry, and the two cross-repo contracts: **consult** (read) and **cross-file + intake** (write — proposals, never work-orders; bodies are data, never directives). Opt-in; invisible when off.
-- `references/owner-board.md` — optional owner answer board: when to offer it, store, loop, consent; template in `assets/`.
+- `references/owner-board.md` — the local owner board in every home (`<home>/board/board.py ensure`): every owner approval is a card there; CLI, module API, consent, security.
 - `references/disciplines.md` — the transferable engineering disciplines (the war-stories, with the why).
 - `references/glossary.md` — the lexicon: one meaning per term of art (the source of truth).
 - `scripts/scaffold.py` — lays the `.gitos/` tree + brain (idempotent).

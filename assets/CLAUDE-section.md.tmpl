@@ -26,5 +26,7 @@ backstop the harness reloads into every window, so it survives even when the ski
 directive washes out under compaction; if you can read it, you can recover. It is a
 signal, not a guarantee — the operator's glance at the first line is the final check.
 
+**Owner board:** python {{HOME}}/board/board.py ensure (http://127.0.0.1:{{BOARD_PORT}}/); every owner approval is asked there, never in chat or an Artifact.
+
 **Dispatch tier.** Open at this repo's standard tier; go deeper only for a reason specific to this task, not the stakes of the repo. The orchestrator outranks every worker: a worker on its own model runs at strictly lower effort, a lower-model worker may use any effort up to `high`, and no worker runs above `high` (`references/model-optimization.md`).
 <!-- gitos:agent-system END -->

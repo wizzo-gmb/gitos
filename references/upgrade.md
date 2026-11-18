@@ -371,6 +371,18 @@ gating `loose-ends-two-stores`. `drop --to P<n>`, `drain accept --parked P<n>`, 
 `drain accept --trigger` are retired: park by authoring a parked work-order, then `drop L<n> --to WO-NNN` or
 `drain accept ID --work-order NNN`.
 
+**4s. Owner board (before 4q).**
+Every home carries a local owner board at `<home>/board/` (`references/owner-board.md`). Run `python
+<SKILL_DIR>/scripts/scaffold.py <root> --git skip`: it builds `<home>/board/` when absent (`board.py` from the engine's
+`assets/board/board.py`, and `board.json` with the port derived from the home's path, bind-tested once), refreshes
+`board.py` when its `BOARD_VERSION` is older than the engine's (a copy that differs at the same version is reported and
+left), adds `<home>/board/data/` to `.gitignore`, writes the CLAUDE.md block line and inserts the `## Owner board`
+section into `RESUME.md` when it lacks one. It never touches an existing `board.json` or anything under `data/`, so
+the port and the answers survive every upgrade. Then run `python <home>/board/board.py ensure` and report its line.
+The canary's `board` category reports a pointer with no board (`board-missing`) and a board nothing points at
+(`board-pointer-missing`). The Artifact owner board is retired: if RESUME still names one under `## Waiting on whom`,
+remove that line.
+
 **4q. The one offer round.**
 Run `python <SKILL_DIR>/scripts/offer.py <repo-root>` **last in step 4**, after the data migrations and the home
 tools, so every question is computed against the repo as upgraded. It asks each subsystem's own check which

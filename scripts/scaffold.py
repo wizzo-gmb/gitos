@@ -344,6 +344,102 @@ def worktree_module():
         return None
 
 
+# ---------------------------------------------------------------- the owner board (WO-122)
+BOARD_SRC = ASSETS / "board" / "board.py"
+BOARD_VERSION_RE = re.compile(rb"(?m)^BOARD_VERSION = (\d+)\s*$")
+BOARD_IGNORE_COMMENT = "# The owner board's data (answers, notes, cards) stays on this machine; board.py and board.json are tracked."
+
+
+def board_module():
+    """The engine's board source (`assets/board/board.py`), loaded BY PATH; it computes the port and board.json."""
+    spec = importlib.util.spec_from_file_location("_gitos_scaffold_board", BOARD_SRC)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _board_version(data: bytes) -> "int | None":
+    m = BOARD_VERSION_RE.search(data)
+    return int(m.group(1)) if m else None
+
+
+def ensure_board(root: Path, home: Path) -> int:
+    """Build or refresh `<home>/board/`. board.py: copied when absent, refreshed when its BOARD_VERSION is older than
+    the engine's, reported and left when it differs at the same version. board.json: written once (the derived,
+    bind-tested port and a random board_id) and never touched again; data/ is never touched. -> the board's port."""
+    board = home / "board"
+    dest = board / "board.py"
+    src = BOARD_SRC.read_bytes()
+    if not dest.exists():
+        board.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(src)
+        report(True, dest, root)
+    else:
+        have = dest.read_bytes()
+        mine, theirs = _board_version(src), _board_version(have)
+        rel = str(dest.relative_to(root)).replace("\\", "/")
+        if have.replace(b"\r\n", b"\n") == src.replace(b"\r\n", b"\n"):
+            print(f"SKIP current {rel}")
+        elif theirs is None or (mine is not None and theirs < mine):
+            dest.write_bytes(src)
+            WRITTEN.append(rel)
+            print(f"OK   refreshed {rel} (BOARD_VERSION {theirs} -> {mine}; the prior bytes are in git)")
+        else:
+            print(f"NOTE {rel} differs from the engine copy at BOARD_VERSION {theirs}; left as it is")
+    cfg_path = board / "board.json"
+    existed = cfg_path.is_file()
+    cfg = board_module().make_config(board)
+    report(not existed, cfg_path, root)
+    return int(cfg["port"])
+
+
+def ensure_resume_board(resume: Path, section: str) -> bool:
+    """Insert the `## Owner board` section into an existing RESUME that lacks it (before `## Waiting on whom`, else
+    before `## Next three steps`, else at the end). Nothing else is rewritten. -> True when it wrote."""
+    raw = resume.read_bytes().decode("utf-8")
+    if re.search(r"(?m)^##\s+Owner board\b", raw):
+        return False
+    eol = "\r\n" if "\r\n" in raw else "\n"
+    block = section.replace("\r\n", "\n").replace("\n", eol)
+    m = re.search(r"(?m)^## Waiting on whom", raw) or re.search(r"(?m)^## Next three steps", raw)
+    if m:
+        new = raw[:m.start()] + block + raw[m.start():]
+    else:
+        new = raw.rstrip("\r\n") + eol + eol + block
+    resume.write_bytes(new.encode("utf-8"))
+    return True
+
+
+def resume_board_section(rendered_resume: str) -> str:
+    """The `## Owner board` section of the rendered RESUME template, through its closing `---` line."""
+    text = rendered_resume.replace("\r\n", "\n")
+    i = text.index("## Owner board")
+    j = text.index("\n---\n", i) + len("\n---\n")
+    return text[i:j] + "\n"
+
+
+def ensure_board_ignored(root: Path, home_label: str) -> bool:
+    """Make `<home>/board/data/` ignored in a git repo. -> True when a line was appended."""
+    line = f"{home_label}/board/data/"
+    try:
+        cp = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", f"{line}x"],
+                            capture_output=True, text=True)
+        if cp.returncode == 0:
+            return False
+    except OSError:
+        pass
+    path = root / ".gitignore"
+    data = path.read_bytes() if path.exists() else b""
+    if line.encode("utf-8") in data.replace(b"\r\n", b"\n").split(b"\n"):
+        return False
+    eol = b"\r\n" if b"\r\n" in data else b"\n"
+    if data and not data.endswith(b"\n"):
+        data += eol
+    data += ("\n" + BOARD_IGNORE_COMMENT + "\n" + line + "\n").encode("utf-8").replace(b"\n", eol)
+    path.write_bytes(data)
+    return True
+
+
 def detect_home(root: Path, requested: str) -> tuple[Path, str]:
     """Return (home_dir, label). label in {'.gitos','.pipeline','outputs/debug','docs/agents'}."""
     if requested != "auto":
@@ -469,6 +565,13 @@ def starter_gitignore(home_label: str, brain_on: bool) -> str:
         "",
         "# The optimization baseline is per session — this ONE transient file stays untracked.",
         f"{home_label}/model-optimization-session.json",
+    ]
+    # The owner board's data is this machine's (answers, notes, the bound plan and draft bytes); board.py and
+    # board.json are tracked, so a clone carries the board and its port but none of the answers.
+    lines += [
+        "",
+        BOARD_IGNORE_COMMENT,
+        f"{home_label}/board/data/",
     ]
     return "\n".join(lines) + "\n"
 
@@ -624,6 +727,13 @@ def main() -> int:
             # bytes, not write_text: a text-mode write converts newlines to CRLF on Windows
             repo_decl.write_bytes((json.dumps(_hmod.starter_declaration(), indent=2) + "\n").encode("utf-8"))
             print(f"OK   wrote {repo_decl.relative_to(root)} (starter, adopted: false)")
+
+    # ---- the owner board (WO-122) ------------------------------------------
+    # `<home>/board/`: every owner approval is a card on this local page. Built before the CLAUDE.md block and
+    # the RESUME, which both carry its port. Full-role scaffolds only; the same pass is upgrade's step for a repo
+    # without one (references/upgrade.md).
+    if not diagnostic_only:
+        tokens["BOARD_PORT"] = str(ensure_board(root, home))
 
     # ---- agents (operator-imported steering lenses) -----------------------
     # The four roles apply on-demand "lens" context (read-on-demand approach context, NOT
@@ -877,6 +987,10 @@ def main() -> int:
                 print(f"OK   appended `{wt.IGNORE_LINE}` to .gitignore (agent worktrees are never tracked)")
             else:
                 print(f"SKIP .gitignore already ignores {wt.IGNORE_LINE}")
+        if ensure_board_ignored(root, home_label):
+            print(f"OK   appended `{home_label}/board/data/` to .gitignore (the board's answers stay local)")
+        else:
+            print(f"SKIP .gitignore already ignores {home_label}/board/data/")
 
     # ---- live session resume (WO-053) -------------------------------------
     # `<home>/RESUME.md` is the store for what is true RIGHT NOW: replaced wholesale at every
@@ -893,9 +1007,12 @@ def main() -> int:
     # there would be a file nothing maintains. Not brain-gated — the resume points AT the brain
     # and does not need one to exist.
     if not diagnostic_only:
-        report(write_if_missing(home / "RESUME.md",
-                                render(read_template("RESUME.md.tmpl"), **tokens)),
-               home / "RESUME.md", root)
+        resume_text = render(read_template("RESUME.md.tmpl"), **tokens)
+        report(write_if_missing(home / "RESUME.md", resume_text), home / "RESUME.md", root)
+        # An existing RESUME gets only the `## Owner board` section, when it lacks one (WO-122).
+        if ensure_resume_board(home / "RESUME.md", resume_board_section(resume_text)):
+            print(f"OK   added the Owner board section to {home_label}/RESUME.md")
+            WRITTEN.append(f"{home_label}/RESUME.md (Owner board section)")
 
     if home_existed:
         # Upgrade re-run on an already set-up repo: the inception steps below are wrong here.

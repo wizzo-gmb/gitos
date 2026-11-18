@@ -12,9 +12,9 @@ It is idempotent: run again after a crash, or after `--write`, it finds what is 
     (own id, Added, Source, text) as `proposed: <kind>`, or a `new` row it holds becomes `proposed: <kind>`;
   * a `parked: <trigger>` row (retired by WO-116) becomes a parked work-order: a new order file with front matter
     `status: parked`, `trigger: <trigger>` and `origin: L<n>`, and the row leaves the list;
-  * an open hand-kept INDEX Parked row (`P<n>`, no `->` in it) becomes a parked work-order the same way
-    (`origin: P<n>`); a closed one (`-> WO-NNN`, `-> dropped ...`) is routed and goes; the section becomes the
-    generated region `<!-- gitos:index parked -->` (`ledger_index.py` writes it from the parked orders);
+  * an open hand-kept INDEX Parked row (any id: `P<n>`, `214-P1`, `nt8-freeze`, `L63`, `004`; no `->` in it) becomes a
+    parked work-order the same way (`origin:` is the id, verbatim); a closed one (`-> WO-NNN`, `-> dropped ...`) is
+    routed and goes; the section becomes the generated region `<!-- gitos:index parked -->` (`ledger_index.py` writes it from the parked orders);
   * an open carried box (`- [ ] L<n> (slice: ..) ..`) of an open order goes back on the list as `new` (own id) and
     the box is ticked `-> L<n>`;
   * `drain/declined/`, `drain/accepted/` and `drain/routed.txt` are removed: a declined item is already a
@@ -23,6 +23,8 @@ It is idempotent: run again after a crash, or after `--write`, it finds what is 
 
 What cannot be moved with confidence (an item a pile file holds while its row is in another state, a routed id that
 is still a row, a Parked row with no trigger, a box line that is not a box) is reported and left alone.
+The Parked section is rewritten only when every row of the table is accounted for (converted, routed-closed, already
+held, or reported LEFT).
 
 An open order `work-orders/WO-NNN-slug.md` whose `## Slices` section holds two or more `### S<n>` sections
 becomes the folder form (see slice.py): the file is `git mv`-ed to `WO-NNN/order.md` (history follows), each slice
@@ -347,8 +349,13 @@ def migrate_not_now(home: Path, write: bool, out=print) -> int:
     idx = home / "INDEX.md"
     idx_text = _read(idx) if idx.is_file() else ""
     imported = {r["source"][len("import:"):] for r in rows.values() if r["source"].startswith("import:P")}
-    origins = {o: nnn for nnn, meta in cn.parked_orders(home) for o in re.findall(r"\b[LP]\d+\b", meta.get("origin", ""))}
-    parked_new, parked_left, parked_gone = [], [], []
+    origins = {}
+    for nnn, meta in cn.parked_orders(home):
+        og = " ".join(meta.get("origin", "").split())
+        for o in [og] + re.findall(r"\b[LP]\d+\b", og):
+            if o:
+                origins.setdefault(o, nnn)
+    parked_new, parked_left, parked_gone, from_index = [], [], [], set()
     # 2a. the retired `parked:` rows (WO-116)
     for lid, r in rows.items():
         if state[lid] != "parked":
@@ -360,32 +367,38 @@ def migrate_not_now(home: Path, write: bool, out=print) -> int:
                                f"loose end {lid} ({r['source']}), added {r['added']}"))
         parked_gone.append(lid)
     block = cn.section_lines(idx_text, cn.PARKED_HEADING) if idx_text else None
-    for row in (cn._table_rows(block) or []) if block is not None else []:
+    n_read = n_done = 0
+    for row in cn.parked_table_rows(idx_text):      # the hand-kept rows, any id (one definition, canary.py)
         pid = cn.clean_cell(row[0]) if row else ""
-        if not cn.PARKED_ID_RE.fullmatch(pid):
-            continue
+        item = _shorten(row[1] if len(row) > 1 else "")
+        n_read += 1
         if any("->" in c or "→" in c for c in row):
             say(f"Parked {pid} is closed (routed): it goes with the hand-kept table")
+            n_done += 1
             continue
-        item = _shorten(row[1] if len(row) > 1 else "")
         trig = " ".join((row[2] if len(row) > 2 else "").split())
-        if pid in imported:
+        if pid in imported or pid in origins:
+            n_done += 1
             continue
-        if cn.PLACEHOLDER_TRIGGER_RE.fullmatch(cn.clean_cell(trig)) or not item:
+        if not pid or cn.PLACEHOLDER_TRIGGER_RE.fullmatch(cn.clean_cell(trig)) or not item:
             parked_left.append(pid)
-            out(f"not-now: LEFT Parked {pid}: no item or no restart trigger; name one, then run again")
+            n_done += 1
+            out(f"not-now: LEFT Parked {pid or '(no id)'}: no id, no item or no restart trigger; name one, then run again")
             continue
         when = re.search(r"\d{4}-\d\d-\d\d", cn.clean_cell(row[4]) if len(row) > 4 else "")
-        if pid in origins:
-            continue
         when = when.group(0) if when else ""
         parked_new.append((pid, item, trig, f"INDEX Parked {pid}" + (f", parked {when}" if when else "")))
+        from_index.add(pid)
+        n_done += 1
+    if n_done < n_read:                             # safety net: a row nobody accounted for keeps the section
+        parked_left.append("?")
+        out(f"not-now: LEFT Parked: {n_read - n_done} row(s) of the table were not accounted for; the section stays")
     nums = [int(n) for d in (home / "work-orders", home / "work-orders" / "resolved") for n in cn._wo_files(d)[0]]
     made = []
     for k, (origin, item, trig, evidence) in enumerate(parked_new):
         name, text = _parked_order(f"{max(nums + [0]) + 1 + k:03d}", item, trig, origin, evidence)
         made.append((name, text))
-        say(f"{'Parked ' if origin.startswith('P') else ''}{origin} -> a parked order work-orders/{name} "
+        say(f"{'Parked ' if origin in from_index else ''}{origin} -> a parked order work-orders/{name} "
             f"(trigger: {trig[:60]}{'...' if len(trig) > 60 else ''})")
     region = idx_text and block is not None and not parked_left and (
         "<!-- gitos:index parked -->" not in idx_text or "| ID | Item | Restart trigger |" in idx_text)

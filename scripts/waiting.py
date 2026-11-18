@@ -9,7 +9,11 @@ the operator, one line each, from the stores that already hold it:
     intake   proposals other repos filed into <home>/intake/ (a count; `federation.py intake` lists them)
     parked   a parked work-order (`status: parked`; or a hand-kept INDEX Parked row) whose `trigger:` may have
              fired: a work-order it names is resolved, or a date it names has passed. A trigger in words is the orchestrator's to judge.
-    board    an owner board RESUME names. Its store is read through the harness, never here: said as "not read".
+    board    the owner board's cards on disk (<home>/board/data, WO-122): each card that needs the owner (an
+             answer voided by a later edit counts), each answered card not yet acted on, and the answers and notes
+             the agent has not read yet. Read by running the home's board.py `summary` in a separate process
+             (`python -I`, a timeout): a crash, a hang or forged output stays out of this view. It is not a sandbox;
+             that board.py runs with the user's rights.
 
 A view, never a store: nothing is written and nothing is remembered. A source that is missing is skipped; one that
 cannot be read is reported as itself ("not read (reason)") and the others still print. Nothing waiting prints nothing.
@@ -21,7 +25,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
+import unicodedata
 from datetime import date
 from importlib import util as importlib_util
 from pathlib import Path
@@ -158,11 +164,9 @@ def _parked_index(home: Path) -> list:
     if not p.is_file():
         return []
     c = _sibling("_gitos_canary_w", "canary.py")
-    block = c.section_lines(p.read_text(encoding="utf-8"), c.PARKED_HEADING)
     out = []
-    for row in (c._table_rows(block) or []) if block is not None else []:
-        if len(row) > 2 and c.PARKED_ID_RE.fullmatch(c.clean_cell(row[0])) \
-                and not any(CLOSED_ROW.search(cell) for cell in row):
+    for row in c.parked_table_rows(p.read_text(encoding="utf-8")):
+        if len(row) > 2 and c.clean_cell(row[0]) and not any(CLOSED_ROW.search(cell) for cell in row):
             out.append((c.clean_cell(row[0]), c.clean_cell(row[2])))
     return out
 
@@ -179,18 +183,43 @@ def src_parked(home: Path, now: "date | None" = None) -> dict:
     return _source("parked", items)
 
 
+BOARD_TIMEOUT = 20                   # seconds the board's own `summary` may take
+
+
+def _clean(text) -> str:
+    """One printable line from another program's text: control and format characters dropped, whitespace collapsed."""
+    s = "".join(ch if unicodedata.category(ch) not in ("Cc", "Cf") else " " for ch in str(text))
+    return _short(s)
+
+
 def src_board(home: Path) -> dict:
-    p = home / "RESUME.md"
-    try:
-        text = p.read_text(encoding="utf-8") if p.is_file() else ""
-    except (OSError, UnicodeDecodeError):
+    """The owner board, read by the home's own board.py (`summary`, JSON) in a separate `python -I` process with a
+    timeout, so its crash, hang or forged output cannot break this view (not a sandbox: it runs with the user's
+    rights). No <home>/board/board.py: absent. A summary that fails, times out or is not JSON is said as `not read`."""
+    board_py = home / "board" / "board.py"
+    if not board_py.is_file():
         return _source("board", status="absent")
-    text = re.sub(r"(?s)<!--.*?-->", "", text)               # a template's comment is not a live board
-    m = re.search(r"(?ims)^##\s*Waiting on whom\s*$(.*?)(?=^##\s|\Z)", text)
-    if not m or not re.search(r"board", m.group(1), re.IGNORECASE):
-        return _source("board", status="absent")
-    return _source("board", status="not read",
-                   note="its store is read through the harness, not here: ask the orchestrator to read it")
+    cp = subprocess.run([sys.executable, "-I", "-B", str(board_py), "summary"], capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=BOARD_TIMEOUT, cwd=str(board_py.parent),
+                        stdin=subprocess.DEVNULL)
+    if cp.returncode != 0:
+        raise RuntimeError(f"board.py summary exited {cp.returncode}: {(cp.stderr or cp.stdout).strip()[-200:]}")
+    c = json.loads(cp.stdout)
+    items = []
+    for card in c["needs"]:
+        changed = " (the card changed after the answer; asked again)" if card.get("voided") else ""
+        items.append({"ref": _clean(card["id"]), "text": _clean(str(card["title"]) + changed)})
+    for card in c["acted"]:
+        items.append({"ref": _clean(card["id"]), "text": _clean("answered, not acted on: " + str(card["title"]))})
+    if c["new_answers"]:
+        items.append({"ref": "answers", "text": f"{int(c['new_answers'])} new answer(s) not read yet: "
+                                                f"`board.py list --open`"})
+    if c["new_notes"]:
+        items.append({"ref": "notes", "text": f"{int(c['new_notes'])} new note(s) not read yet: `board.py notes`"})
+    if c["problems"]:
+        items.append({"ref": "problems", "text": _clean(f"{len(c['problems'])} problem(s) in the board's files: "
+                                                        + "; ".join(map(str, c["problems"])))})
+    return _source("board", items)
 
 
 def collect(home, rows=None, now: "date | None" = None) -> list:
