@@ -31,7 +31,9 @@ cover:
                              holds, a resolved work-order with implementer notes never
                              adjudicated, an adjudication pointing at nothing. Report-only)
   - owner board (optional)  (<home>/board/ files vs the CLAUDE.md block line and the RESUME section that
-                             point at them: a pointer with no board, or a board nothing points at)
+                             point at them: a pointer with no board, or a board nothing points at; a repo
+                             routed to a hub (<home>/board-route.json): the route, the hub's files, its tab and
+                             the pointers; advisory when a board on 127.0.0.1 shares a machine with Docker)
   - federation (optional)   (a FEDERATED repo's OWN presence record: missing, corrupt, or not
                              refreshed recently = the bootstrap heartbeat is not running; plus
                              its OWN intake hygiene — a malformed proposal, one from a sender
@@ -63,6 +65,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import Counter
@@ -2737,11 +2740,115 @@ def check_system_one(home: Path, skill_dir: "Path | None") -> tuple[list[dict], 
 # that are not there is `board-missing`; files that nothing points at are `board-pointer-missing`. The CLAUDE.md line
 # is judged only when the managed block exists, and the RESUME line only when RESUME.md exists (those absences are
 # the anchor and resume categories' findings, not this one's).
+#
+# A repo may instead route to a hub (`<home>/board-route.json`, WO-132): one owner board for a workspace of repos, each in
+# its own tab. Such a home keeps no board of its own and both pointers name the hub. `board-exposed` is advisory: a
+# board on 127.0.0.1 with Docker on the machine is the machine's fact, not a fault of the repo, and gating on it would
+# redden every board there (the descoping trap this file warns of for federation).
 OPTIONAL_CATEGORIES = OPTIONAL_CATEGORIES + ("board",)
 BOARD_DIRNAME = "board"
 BOARD_FILES = ("board.py", "board.json")
 BOARD_CLAUDE_TOKEN = "board/board.py ensure"
 BOARD_RESUME_RE = re.compile(r"(?m)^##\s+Owner board\b")
+BOARD_ROUTE_FILE = "board-route.json"
+BOARD_TAB_RE = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
+
+
+def docker_present() -> bool:
+    """A `docker` CLI on PATH, or a Docker Desktop install (same test as board.py's, which `ensure` warns with)."""
+    desktop = (Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Docker" / "Docker" / "Docker Desktop.exe",
+               Path("/Applications/Docker.app"))
+    return shutil.which("docker") is not None or any(p.exists() for p in desktop)
+
+
+def board_route(home: Path) -> "tuple[dict | None, str | None]":
+    """(hub route, why): the route when `<home>/board-route.json` names a hub; `why` when the file is unusable (not
+    JSON, no `mode`, or a hub route whose `board` is not an absolute path or whose `tab` is not a short name). Mode
+    `local` or no file: (None, None)."""
+    raw = _read(home / BOARD_ROUTE_FILE)
+    if raw is None:
+        return None, None
+    try:
+        r = json.loads(raw)
+    except ValueError:
+        return None, "is not JSON"
+    if not isinstance(r, dict) or r.get("mode") not in ("local", "hub"):
+        return None, "needs `mode`: `local` or `hub`"
+    if r["mode"] == "local":
+        return None, None
+    if not isinstance(r.get("board"), str) or not Path(r["board"]).is_absolute():
+        return None, "is a hub route without `board` (the absolute path of the hub's board dir)"
+    if not isinstance(r.get("tab"), str) or not BOARD_TAB_RE.fullmatch(r["tab"]):
+        return None, "is a hub route without `tab` (a short name: a-z 0-9 -, 1-24, starting with a letter)"
+    return r, None
+
+
+def board_pointers(home: Path) -> "tuple[str | None, str | None]":
+    """(the CLAUDE.md managed block, RESUME.md text): None for what is not there."""
+    claude_text = _read(home.parent / "CLAUDE.md") or ""
+    block = None
+    if CLAUDE_ANCHOR_START in claude_text and CLAUDE_ANCHOR_END in claude_text:
+        i = claude_text.index(CLAUDE_ANCHOR_START)
+        block = claude_text[i:claude_text.index(CLAUDE_ANCHOR_END, i)]
+    return block, _read(home / RESUME_FILENAME)
+
+
+def board_exposed(home: Path) -> list[dict]:
+    """Advisory `board-exposed`: this home's board listens on 127.0.0.1 and Docker is on the machine, so a container
+    reaches it through Docker Desktop's host gateway and can read the page (its token too) and answer."""
+    try:
+        cfg = json.loads(_read(home / BOARD_DIRNAME / "board.json") or "")
+    except ValueError:
+        return []
+    if not isinstance(cfg, dict) or cfg.get("host", "127.0.0.1") != "127.0.0.1" or not docker_present():
+        return []
+    return [{"kind": "board-exposed", "advisory": True,
+             "finding": f'<home>/{BOARD_DIRNAME}/board.json has no `host` (127.0.0.1) and Docker is installed -> a container '
+                        f'can reach this board: set "host": "127.0.0.2" in it and restart the board '
+                        f'(references/owner-board.md, Hub)'}]
+
+
+def check_board_hub(home: Path, route: "dict | None", why: "str | None") -> list[dict]:
+    """The findings of a home routed to a hub: the route file, the hub's files, this repo's tab there, no board left
+    here, and both pointers naming the hub."""
+    if route is None:
+        return [{"kind": "board-route-unparseable",
+                 "finding": f'<home>/{BOARD_ROUTE_FILE} {why} -> write {{"mode": "hub", "board": "<absolute path of the '
+                            f'hub\'s board dir>", "tab": "<short name>"}}, or delete the file for a board of this repo\'s own'}]
+    hub, tab, items = Path(route["board"]), route["tab"], []
+    missing = [f for f in BOARD_FILES if not (hub / f).is_file()]
+    if missing:
+        items.append({"kind": "board-hub-missing", "missing": missing,
+                      "finding": f"the hub at {hub} lacks {', '.join(missing)} -> install gitos in the hub's home "
+                                 f"(scaffold.py builds its board) or correct `board` in <home>/{BOARD_ROUTE_FILE}"})
+    else:
+        try:
+            routes = json.loads(_read(hub / "board.json") or "").get("routes")
+        except (ValueError, AttributeError):
+            routes = None
+        mine = os.path.normcase(str(home.parent.resolve()))
+        if not (isinstance(routes, dict) and isinstance(routes.get(tab), str)
+                and os.path.normcase(str(Path(routes[tab]).resolve())) == mine):
+            items.append({"kind": "board-tab-unregistered",
+                          "finding": f"the hub's board.json does not route tab `{tab}` to this repo -> re-run "
+                                     f"`scaffold.py <root> --git skip` (it runs `board.py register-tab` on the hub)"})
+    if (home / BOARD_DIRNAME).exists():
+        items.append({"kind": "board-unrouted",
+                      "finding": f"<home>/{BOARD_DIRNAME}/ is still here but <home>/{BOARD_ROUTE_FILE} routes to a hub -> "
+                                 f"re-ask its open cards on the hub, `git rm` its board.py and board.json, delete its "
+                                 f"data/, and have the operator stop its server (references/upgrade.md step 4s)"})
+    token = f"{hub.as_posix()}/board.py ensure --tab {tab}"
+    block, resume_text = board_pointers(home)
+    absent = []
+    if block is not None and token not in block:
+        absent.append("the CLAUDE.md block line")
+    if resume_text is not None and token not in resume_text:
+        absent.append("the RESUME.md `## Owner board` section")
+    if absent:
+        items.append({"kind": "board-pointer-missing", "missing": absent,
+                      "finding": f"{' and '.join(absent)} does not name the hub (`{token}`) -> re-run "
+                                 f"`scaffold.py <root> --git skip` to write the pointers"})
+    return items
 
 
 def check_board_copy(home: Path, skill_dir: "Path | None") -> list[dict]:
@@ -2771,15 +2878,13 @@ def check_board_copy(home: Path, skill_dir: "Path | None") -> list[dict]:
 
 def check_board(home: Path) -> tuple[list[dict], bool]:
     """-> (items, applicable)."""
+    route, why = board_route(home)
+    if route is not None or why is not None:
+        return check_board_hub(home, route, why), True
     bdir = home / BOARD_DIRNAME
     have = [f for f in BOARD_FILES if (bdir / f).is_file()]
     missing_files = [f for f in BOARD_FILES if f not in have]
-    claude_text = _read(home.parent / "CLAUDE.md") or ""
-    block = None
-    if CLAUDE_ANCHOR_START in claude_text and CLAUDE_ANCHOR_END in claude_text:
-        i = claude_text.index(CLAUDE_ANCHOR_START)
-        block = claude_text[i:claude_text.index(CLAUDE_ANCHOR_END, i)]
-    resume_text = _read(home / RESUME_FILENAME)
+    block, resume_text = board_pointers(home)
     claude_ptr = block is not None and BOARD_CLAUDE_TOKEN in block
     resume_ptr = resume_text is not None and BOARD_RESUME_RE.search(resume_text) is not None
     if not have and not claude_ptr and not resume_ptr:
@@ -2801,6 +2906,7 @@ def check_board(home: Path) -> tuple[list[dict], bool]:
                           "finding": f"the owner board exists but {' and '.join(absent)} does not point at it -> "
                                      f"re-run `scaffold.py <root> --git skip` to write the pointers, so a fresh "
                                      f"window finds the board"})
+        items += board_exposed(home)
     return items, True
 
 def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,

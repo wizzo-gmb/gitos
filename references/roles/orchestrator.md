@@ -27,14 +27,16 @@ refusals) is named here once and is not repeated.
 
 ## Ask on the board
 
-- **Ask on the board (WO-122).** Every owner approval is a card on this home's local owner board,
-  `<home>/board/` (`references/owner-board.md`): a Tier 1 action, a call on a work-order, a send, a plan. Never
+- **Ask on the board (WO-122).** Every owner approval is a card on this home's owner board (its own,
+  `<home>/board/`, or the hub its `board-route.json` names; in hub mode every command takes `--tab <tab>`;
+  `references/owner-board.md`): a Tier 1 action, a call on a work-order, a send, a plan. Never
   in chat, a popup or an Artifact. A live in-window clarifying question may stay a popup; an approval may not. <!-- rule:board-card -->
-  - **First:** run `python <home>/board/board.py ensure` before anything else in a session (it starts the
+  - **First:** run the `ensure` command the CLAUDE.md block gives (`python <home>/board/board.py ensure`, or on a
+    hub `python <hub>/board.py ensure --tab <tab>`) before anything else in a session (it starts the
     board only when this home's board is not answering, and never stops anything) and report its one line
     (`board: http://127.0.0.1:<port>/ · N open · A new answers · M new notes`). Then read the new answers
-    (`board.py list --open`) and notes (`board.py notes`) before any other work. No `<home>/board/`: upgrade
-    builds it (`references/upgrade.md`). <!-- rule:board-ensure-first -->
+    (`board.py list --open`) and notes (`board.py notes`) before any other work. No `<home>/board/` and no
+    `board-route.json`: upgrade builds it (`references/upgrade.md`). <!-- rule:board-ensure-first -->
   - **Ask:** `board.py add-decision TITLE BODY value=Label...`, `add-plan PLAN_FILE TITLE --table ROWS.json`,
     `add-send DRAFT_FILE TITLE --to ...`, each with `--ref WO-NNN`, a `--where` line and a `--group`
     (`close`, `decision`, `action`, `parked`); `value=Label*` marks your recommendation. Write each card for the
@@ -70,10 +72,10 @@ refusals) is named here once and is not repeated.
 
 Run in order; the detail of a step is in `orchestrator/first-action.md` (steps 6 and 8: `orchestrator/federation.md`).
 
-0. **Owner board, before anything else.** Run `python <home>/board/board.py ensure` (summary line 0), then
+0. **Owner board, before anything else.** Run this home's board `ensure` (*Ask on the board*; summary line 0), then
    read the new answers and notes it counts (`board.py list --open`, `board.py notes`) before any other work:
-   an answer the owner gave since the last window is the newest instruction you have. No `<home>/board/` →
-   the repo predates the board, and upgrade builds it (`references/upgrade.md`). → *Ask on the board.* <!-- rule:board-step-zero -->
+   an answer the owner gave since the last window is the newest instruction you have. No `<home>/board/` and no
+   `board-route.json` → the repo predates the board, and upgrade builds it (`references/upgrade.md`). → *Ask on the board.* <!-- rule:board-step-zero -->
 1. Read `<home>/HANDOFF.md` once (the birth certificate; immutable).
 2. Read `<home>/INDEX.md` (the generated board) and `<home>/RESUME.md` (where the last window left off).
 3. Read `<home>/brain/BRAIN.md` and `brain/wiki/index.md`, then the pages today's task needs; run `lenses.py status`.

@@ -2,8 +2,9 @@
 
 Every gitos home carries a small local web page where the owner answers what the agent asks: the owner board,
 `<home>/board/`. Every owner approval goes through it: a Tier 1 action, a call on a work-order, a send, a plan.
-It is stdlib-only Python served on 127.0.0.1, its answers are files in the home, and any session finds it again
-after compaction, `/clear`, a new window or another account. The rules are summarized in
+It is stdlib-only Python served on a loopback address (127.0.0.1 unless `board.json` says otherwise), its answers are
+files in the home, and any session finds it again after compaction, `/clear`, a new window or another account. A
+workspace of several repos can share one board, the *Hub* below. The rules are summarized in
 `references/roles/orchestrator.md` (*Ask on the board*); this file holds the detail.
 
 ## Where it lives
@@ -11,9 +12,11 @@ after compaction, `/clear`, a new window or another account. The rules are summa
 | Path | What | Tracked |
 |---|---|---|
 | `<home>/board/board.py` | the board: CLI, server and the module API (a copy of the engine's `assets/board/board.py`) | yes |
-| `<home>/board/board.json` | `port` and `board_id`, written once and never changed; optional `tabs` | yes |
+| `<home>/board/board.json` | `port` and `board_id`, written once; optional `host`, `tabs`, and a hub's `routes` (`register-tab` adds a tab and its route) | yes |
+| `<home>/board-route.json` | a repo that uses a hub's board instead of its own (see *Hub*) | yes |
 | `<home>/board/local/<name>.html` | a repo's own board, one file per tab (optional; see *A repo's own boards*) | yes |
 | `<home>/board/data/` | cards, answers, notes, closes, the stored plan and draft bytes, the read mark | no (git-ignored) |
+| `<home>/board/inbox/`, `outbox/` | a hub's card requests from seats, and the answers mirrored back (see *Hub*) | no (git-ignored) |
 
 The port is derived from the home's resolved path (SHA-256, folded into 8800-8999), bind-tested when the board is
 built and walked to the first free one. Two pointers lead a fresh window to it: a line in the CLAUDE.md managed
@@ -25,22 +28,29 @@ no board (`board-missing`) and a board nothing points at (`board-pointer-missing
 ## The agent's side
 
 ```
-python <home>/board/board.py ensure        # start it if this home's board is not answering; print one line
+python <home>/board/board.py ensure [--tab T]   # start it if this home's board is not answering; print one line
 python <home>/board/board.py add-decision TITLE BODY value=Label... [--details FILE] [--tech FILE] [--tab T] [--replaces ID] [CARD]
-python <home>/board/board.py add-plan PLAN_FILE TITLE [--table ROWS.json] [--tech FILE] [--item NAME] [CARD]
-python <home>/board/board.py add-send DRAFT_FILE TITLE --to ADDR [--cc ADDR] [--subject TEXT] [--tech FILE] [--item NAME] [CARD]
+python <home>/board/board.py add-plan PLAN_FILE TITLE [--table ROWS.json] [--tech FILE] [--item NAME] [--tab T] [CARD]
+python <home>/board/board.py add-send DRAFT_FILE TITLE --to ADDR [--cc ADDR] [--subject TEXT] [--tech FILE] [--item NAME] [--tab T] [CARD]
     # CARD: [--ref WO-NNN] [--where TEXT] [--group close|decision|action|parked]
-python <home>/board/board.py list [--open]  # cards with their latest answer; locks each answer it shows
-python <home>/board/board.py answer-for ID  # the latest answer as JSON, with `valid` and `locked`; locks it
-python <home>/board/board.py close ID OUTCOME
-python <home>/board/board.py notes          # the owner's notes; marks them read
-python <home>/board/board.py summary        # counts as JSON, read-only (the waiting view runs it)
+python <home>/board/board.py list [--open] [--tab T]  # cards with their latest answer; locks each answer it shows
+python <home>/board/board.py answer-for ID [--tab T]  # the latest answer as JSON, with `valid` and `locked`; locks it
+python <home>/board/board.py close ID OUTCOME [--tab T]
+python <home>/board/board.py notes [--tab T]          # the owner's notes; marks them read
+python <home>/board/board.py summary [--tab T]        # counts as JSON, read-only (the waiting view runs it)
+python <home>/board/board.py register-tab TAB --repo PATH   # a hub: route a repo's tab here (see Hub)
 python <home>/board/board.py url | serve
 ```
 
+`--tab T` limits a command to one tab (a hub repo works only in its own tab): `list`, `summary` and `notes` show that tab
+alone, `answer-for` and `close` find no card of another tab, `--replaces` and a newer plan or send for the same item
+reach only the same tab, and `add-plan` and `add-send` put the card on that tab (default `decisions`; a send goes to
+`email` when the board has that tab).
+
 `ensure` finds this home's board by the `board_id` it serves at `/api/identity` (with the home path), so another
 repo's board on the same port is never taken for this one; it starts `serve` detached only when nothing answers,
-and it never stops a process. Its one line: `board: http://127.0.0.1:<port>/ · N open · A new answers · M new notes`,
+and it never stops a process. Its one line: `board: http://127.0.0.1:<port>/ · N open · A new answers · M new notes`
+(`--tab T`: that tab's counts, and the address ends `#T`),
 where a new answer is one on an open card that no read has locked yet (`list`, `answer-for` and a close each clear
 it) and a new note is one since the last `notes`; it adds `· K waiting to be acted on` while answered
 cards are not closed, and `· P problem(s) in its files` when some file fails validation. Everything the CLI prints
@@ -84,8 +94,8 @@ The folder is committed to git and no upgrade or `scaffold.py` run reads or writ
 
 Load `board.py` by its path (`importlib.util.spec_from_file_location`), never through `sys.path`, then:
 
-- `approved(kind, key, value, go=None)`: reads and locks, then returns the newest card of `kind` whose field `key`
-  equals `value`
+- `approved(kind, key, value, go=None, tab=None)`: reads and locks, then returns the newest card of `kind` (in `tab`,
+  on a hub) whose field `key` equals `value`
   (`approved("plan", "item", "q3-cleanup.json")`), when it is not closed and its latest answer chose the go option
   (`apply` for a plan, `send` for a send) against the card's current content. Otherwise `None`. A newer card for
   the same item, answered or not, blocks an older approval; cards are ordered by a microsecond `created` time that
@@ -94,8 +104,8 @@ Load `board.py` by its path (`importlib.util.spec_from_file_location`), never th
   and verify it immediately before using it. <!-- rule:guide-api-verify -->
 - `consume(card_id, outcome)`: close the card **before acting on it**, with the outcome you are about to produce.
   A closed card never approves again, and closing it twice is refused (the check and the close are one step under
-  the board's lock). <!-- rule:guide-api-consume -->
-- `claim(kind, key, value, go, outcome)`: `approved()` and `consume()` as one step under the lock: the approved
+  the board's lock). A seat's card (`source: inbox`, see *Hub*) is never approved: a tool acts on what its own repo asked. <!-- rule:guide-api-consume -->
+- `claim(kind, key, value, go, outcome, tab=None)`: `approved()` and `consume()` as one step under the lock: the approved
   card, now closed, or `None`. **Tools use this**: of two tools claiming the same approval, exactly one gets it, and
   it acts only after `claim()` returned the card (then `verify_bytes()` on the stored file). <!-- rule:guide-api-claim -->
 - Every write (an append, a lock, a close, the page's check-then-append of an answer) holds one cross-process lock,
@@ -127,6 +137,47 @@ A card's hash is the full SHA-256 of its content, recomputed on every read. An a
 against, so a card edited after its answer **voids** that answer: the card goes back under Needs you with "the card
 changed after your answer", `approved()` refuses it and Copy skips it.
 
+## Hub
+
+A workspace of several gitos repos has one **hub**: a gitos home whose board is the central owner board. Every other
+repo in the workspace points at it and has no board of its own; its questions land in their own tab on the hub page, and
+the owner answers on that page and nowhere else. **A repo with no route file keeps its own board, as above.**
+
+`<home>/board-route.json` (committed): `{"mode": "hub", "board": "<absolute path of the hub's board dir>", "tab":
+"<short name>"}`. `mode` is `local` or `hub`; the tab is `a-z 0-9 -`, 1-24 characters, a letter first (a long repo name
+needs a short tab). In hub mode the CLAUDE.md line and RESUME section name `python <hub>/board.py ensure --tab <tab>`,
+every command takes `--tab <tab>`, `approved()` and `claim()` take `tab=`, and the waiting view reads the hub's
+`summary --tab <tab>`.
+
+**Set one up.**
+1. Install gitos in a folder outside the seats' reach: that home's board is the hub. Set `"host": "127.0.0.2"` in its
+   `board.json` and restart the board: Docker Desktop's host gateway forwards a container to 127.0.0.1 only, and a
+   container can send any header, so a board on 127.0.0.1 can be read (the page token with it) and answered by a seat.
+   `ensure` warns on stderr when Docker is present and `host` is 127.0.0.1, and the canary reports `board-exposed`
+   (advisory).
+2. In each repo write `board-route.json` and run `scaffold.py <root> --git skip`. It builds no board there; it runs the
+   hub's own `board.py register-tab <tab> --repo <root>` (adds the tab and its route to the hub's `board.json`, makes
+   `inbox/` and `outbox/<tab>/` with a `.gitignore` for both, and refuses a tab already routed to another repo), then
+   writes the two pointers. Running it again changes nothing. The canary's `board` category reports a route file that
+   does not parse (`board-route-unparseable`), a hub without its files (`board-hub-missing`), a tab the hub does not route to
+   this repo (`board-tab-unregistered`), a `<home>/board/` left behind (`board-unrouted`) and pointers that do not name
+   the hub (`board-pointer-missing`).
+3. Mount `inbox/` read-write and `outbox/<tab>/` read-only into each seat.
+
+**Seats propose; they never answer.** A seat keeps its routine calls. What needs the owner it asks as a card request:
+a file `inbox/<name>.json`, written under another name and renamed when complete:
+`{"tab", "title", "body", "options": [{"value", "label"}], "ref"?, "group"?}`. Decision cards only: no plan or send (the
+hub cannot bind files it did not receive), no details, no answer. The serving process (and `list`) turns a valid request
+into a card marked `source: inbox` (the page says "proposed by a seat"; its text is escaped as everything is); an invalid
+one (not JSON, over 64 KB, an unknown field, an unknown tab, invisible characters, a title over 200 or a body over 4,000
+characters) moves to `inbox/rejected/` with a `.reason` file and shows as a problem until that folder is cleared.
+Creating a card never answers it. The seat reads answers from `outbox/<tab>/<card id>.json`
+(`card`, `card_hash`, `answer`, `answered_at`). Writing that file **is the read that locks the answer**: the server
+mirrors once a minute and only an answer at least a minute old, so the owner can still change a fresh answer; a changed
+or voided card loses its file. `list` and `answer-for` never lock a seat's card, and `approved()` never approves one.
+
+**Moving a repo that has a board to a hub:** `references/upgrade.md` step 4s.
+
 ## The loop
 
 1. **Ensure first.** At the start of every session, `ensure`, report its line, then read new answers
@@ -151,8 +202,9 @@ changed after your answer", `approved()` refuses it and Copy skips it.
 
 ## Security
 
-The server binds 127.0.0.1 only and answers only to `Host: 127.0.0.1:<port>` or `localhost:<port>`. A POST needs
-the exact Origin, the page token minted when the server started, `Sec-Fetch-Site: same-origin` and
+The server binds one loopback address (`host` in `board.json`: 127.0.0.1, or any of 127.0.0.2-127.0.0.254; nothing
+else) and answers only to `Host: <host>:<port>` (and `localhost:<port>` when the host is 127.0.0.1). A POST needs
+the exact Origin (`http://<host>:<port>`), the page token minted when the server started, `Sec-Fetch-Site: same-origin` and
 `Sec-Fetch-Mode: cors` (what a browser's own fetch sends, and a script does not unless it forges them); each answer
 records the user agent and the Sec-Fetch values. Bodies are JSON objects under 64 KB; the handler times out; every
 field is escaped on the page, which runs under a CSP with a per-response script nonce. Card files are validated

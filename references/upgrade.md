@@ -373,7 +373,15 @@ gating `loose-ends-two-stores`. `drop --to P<n>`, `drain accept --parked P<n>`, 
 `drain accept ID --work-order NNN`.
 
 **4s. Owner board (before 4q).**
-Every home carries a local owner board at `<home>/board/` (`references/owner-board.md`). First run `git log --oneline -- <home>/board/board.py`: a commit that is not an engine upgrade is a local edit; read its diff and carry its view into `<home>/board/local/<name>.html` (the board loads each such file as a tab and no upgrade touches the folder). Run `python
+Every home uses an owner board (`references/owner-board.md`): its own at `<home>/board/`, or a hub's. **First ask once**, with the
+interactive question UI: own board, or a hub (the path of the hub's board dir and a short tab)? Own board: the rest of this
+step. A hub: write `<home>/board-route.json` (`{"mode": "hub", "board": "<absolute path of the hub's board dir>", "tab":
+"<tab>"}`), run `python <SKILL_DIR>/scripts/scaffold.py <root> --git skip` (it builds no board here, runs `register-tab` on the
+hub and writes the two pointers), then `python <hub>/board.py ensure --tab <tab>` and report its line. A repo that already has a
+board and moves to a hub: run `python <home>/board/board.py list --open` first and re-ask each open or answered-not-acted card on
+the hub (`add-decision ... --tab <tab>`); then `git rm` its `board/board.py` and `board/board.json`, delete its `board/data/` and
+ask the operator to stop its server (never stop it yourself). The canary's `board-unrouted` stays until `<home>/board/` is gone.
+For an own board, first run `git log --oneline -- <home>/board/board.py`: a commit that is not an engine upgrade is a local edit; read its diff and carry its view into `<home>/board/local/<name>.html` (the board loads each such file as a tab and no upgrade touches the folder). Run `python
 <SKILL_DIR>/scripts/scaffold.py <root> --git skip`: it builds `<home>/board/` when absent (`board.py` from the engine's
 `assets/board/board.py`, and `board.json` with the port derived from the home's path, bind-tested once), refreshes
 `board.py` when its `BOARD_VERSION` is older than the engine's (a copy that differs at the same version is reported and
@@ -392,7 +400,7 @@ after the data migrations and the home tools, and skip it when step 3 found the 
    target (a `## Unreleased` block counts as the next version). A version that adds an audit carries one line in its
    entry under the `breaking:` line, `audit: <name> (<where its procedure is>)`. Collect them all and run each; a repo upgrading across several
    versions runs every audit of every version it crosses, once.
-2. **v62's audits are two.** `audit: brain (references/upgrade.md step 4u)` and `audit: tests (scripts/audit_tests.py)`.
+2. **v62's audits are two** (the version after v63 adds a third, last in this list). `audit: brain (references/upgrade.md step 4u)` and `audit: tests (scripts/audit_tests.py)`.
    - *Brain.* Run 4p and then 4u on the repo's brain, for **every** repo whose range holds the line, a repo already
      stamped v61 included (one whose v61 upgrade ran 4p, or ran nothing of the audit, gets 4u now, not by hand
      later). 4u acts inside the upgrade; what it leaves over (the pages it listed as unsure, a brain too large to
@@ -403,6 +411,9 @@ after the data migrations and the home tools, and skip it when step 3 found the 
      conventions the repo uses. The suite's wall time is not measured: ask the operator for it if it is not known.
      Each area with files over the limit is one finding (split them by area or concern); fixtures over 1 MB are
      one finding (slim them, or keep a named one that needs its size).
+   - *Owner board route* (`audit: owner board route (references/upgrade.md step 4s)`). A repo that already has
+     `<home>/board/` and no `board-route.json` is asked 4s's question now: own board (nothing changes) or a hub. A repo
+     with no board gets 4s's whole step anyway.
 3. **One card, never silence.** Turn the findings into proposed work-orders (a title, the evidence with its counts,
    what the order would do) and put them on ONE owner-board card, group `decision`:
    `python <home>/board/board.py add-decision "<N> orders proposed by the v<target> audits" "<one numbered line per

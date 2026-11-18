@@ -51,7 +51,7 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    subsystem, a design decision, the operator's decision, or a file another in-flight order owns), and say which in
    one line under *Follow-ups*; the orchestrator rejects a deferral without that line and hands the item back as
    scope. Nothing is dropped. An owner approval you need is never asked in chat: name it in your notes, and the
-   orchestrator asks it as a card on the owner board (`references/owner-board.md`). An out-of-scope edit you did not list is a defect.
+   orchestrator asks it as a card on the owner board, or hub (`references/owner-board.md`). An out-of-scope edit you did not list is a defect.
    **A follow-up routed into your slice is part of your scope:** a slice whose `origin:` names loose-end items lands
    them; say in the notes which you closed and which you did not.
    **Disciplines at the step they apply** (`references/disciplines.md`): (a) a gate or check you add or change
@@ -114,8 +114,8 @@ budget, the pinned Option). Everything below holds without being restated.
 - **Tool copies.** A script the engine ships whose byte-copy the home keeps (`<home>/tools/`) is changed in both places and the two
   stay byte-identical.
 - **No release.** No `VERSION` bump, sync or publish unless the order names it; a changelog entry only when the order names it.
-- **Processes and data you did not start are not yours.** Never stop a process you did not start (the owner board's server
-  included) and never touch `<home>/board/data/`: the answers there are the owner's.
+- **Processes and data you did not start are not yours.** Never stop a process you did not start (the owner board's, or hub's, server
+  included) and never touch the board's `data/` (`<home>/board/data/`, or the hub's): the answers there are the owner's.
 - **Tests and notes.** Iterate on the narrow selection and run the full suite once at the end (step 2); fill the notes under their
   five labels (step 3); stop what you started (step 4).
 

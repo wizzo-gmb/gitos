@@ -408,10 +408,10 @@ def _board_version(data: bytes) -> "int | None":
     return int(m.group(1)) if m else None
 
 
-def ensure_board(root: Path, home: Path) -> int:
+def ensure_board(root: Path, home: Path) -> dict:
     """Build or refresh `<home>/board/`. board.py: copied when absent, refreshed when its BOARD_VERSION is older than
     the engine's, reported and left when it differs at the same version. board.json: written once (the derived,
-    bind-tested port and a random board_id) and never touched again; data/ is never touched. -> the board's port."""
+    bind-tested port and a random board_id) and never touched again; data/ is never touched. -> board.json."""
     board = home / "board"
     dest = board / "board.py"
     src = BOARD_SRC.read_bytes()
@@ -435,17 +435,52 @@ def ensure_board(root: Path, home: Path) -> int:
     existed = cfg_path.is_file()
     cfg = board_module().make_config(board)
     report(not existed, cfg_path, root)
-    return int(cfg["port"])
+    return cfg
 
 
-def ensure_resume_board(resume: Path, section: str) -> bool:
+def board_tokens(root: Path, home: Path, label: str) -> "tuple[dict, bool]":
+    """The tokens the CLAUDE.md block and RESUME carry for the owner board, and whether this home routes to a hub.
+    Its own board: built or refreshed here. A hub (`<home>/board-route.json`): nothing is built here and none of the hub's
+    files is written except through the hub's own `board.py register-tab`. Raises ValueError, said as an error."""
+    board = board_module()
+    try:
+        route = board.route(home)
+    except board.BoardError as e:
+        raise ValueError(str(e))
+    if route is None:
+        cfg = ensure_board(root, home)
+        return {"BOARD_CMD": f"python {label}/board/board.py ensure", "BOARD_WHERE": f"`{label}/board/` · port {cfg['port']}",
+                "BOARD_URL": f"http://{board.host_of(cfg)}:{cfg['port']}/"}, False
+    hub, tab = Path(route["board"]), route["tab"]
+    if not (hub / "board.py").is_file() or not (hub / "board.json").is_file():
+        raise ValueError(f"board-route.json names a hub with no board.py and board.json at {hub}")
+    cp = subprocess.run([sys.executable, str(hub / "board.py"), "register-tab", tab, "--repo", str(root)],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(hub))
+    if cp.returncode != 0:
+        raise ValueError(f"the hub did not register tab {tab}: {(cp.stderr or cp.stdout).strip()[-300:]}")
+    print(f"OK   {cp.stdout.strip()}")
+    cfg = json.loads((hub / "board.json").read_text(encoding="utf-8"))
+    where = hub.as_posix()
+    return {"BOARD_CMD": f"python {where}/board.py ensure --tab {tab}", "BOARD_WHERE": f"the hub `{where}` · tab `{tab}`",
+            "BOARD_URL": f"http://{board.host_of(cfg)}:{cfg['port']}/#{tab}"}, True
+
+
+def ensure_resume_board(resume: Path, section: str, replace: bool = False) -> bool:
     """Insert the `## Owner board` section into an existing RESUME that lacks it (before `## Waiting on whom`, else
-    before `## Next three steps`, else at the end). Nothing else is rewritten. -> True when it wrote."""
+    before `## Next three steps`, else at the end). Nothing else is rewritten, unless `replace` (a hub route) and the
+    section there says something else: then that section is replaced. -> True when it wrote."""
     raw = resume.read_bytes().decode("utf-8")
-    if re.search(r"(?m)^##\s+Owner board\b", raw):
-        return False
     eol = "\r\n" if "\r\n" in raw else "\n"
     block = section.replace("\r\n", "\n").replace("\n", eol)
+    have = re.search(r"(?m)^##\s+Owner board\b", raw)
+    if have:
+        end = raw.find(eol + "---" + eol, have.start())
+        end = len(raw) if end < 0 else end + len(eol + "---" + eol)
+        end += len(eol) if raw.startswith(eol, end) else 0
+        if not replace or raw[have.start():end] == block:
+            return False
+        resume.write_bytes((raw[:have.start()] + block + raw[end:]).encode("utf-8"))
+        return True
     m = re.search(r"(?m)^## Waiting on whom", raw) or re.search(r"(?m)^## Next three steps", raw)
     if m:
         new = raw[:m.start()] + block + raw[m.start():]
@@ -784,8 +819,14 @@ def main() -> int:
     # `<home>/board/`: every owner approval is a card on this local page. Built before the CLAUDE.md block and
     # the RESUME, which both carry its port. Full-role scaffolds only; the same pass is upgrade's step for a repo
     # without one (references/upgrade.md).
+    hub_mode = False
     if not diagnostic_only:
-        tokens["BOARD_PORT"] = str(ensure_board(root, home))
+        try:
+            board_tok, hub_mode = board_tokens(root, home, home_label)
+        except ValueError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
+        tokens.update(board_tok)
 
     # ---- agents (operator-imported steering lenses) -----------------------
     # The four roles apply on-demand "lens" context (read-on-demand approach context, NOT
@@ -1039,7 +1080,9 @@ def main() -> int:
                 print(f"OK   appended `{wt.IGNORE_LINE}` to .gitignore (agent worktrees are never tracked)")
             else:
                 print(f"SKIP .gitignore already ignores {wt.IGNORE_LINE}")
-        if ensure_board_ignored(root, home_label):
+        if hub_mode:
+            pass                                   # no board here, so no board data to ignore
+        elif ensure_board_ignored(root, home_label):
             print(f"OK   appended `{home_label}/board/data/` to .gitignore (the board's answers stay local)")
         else:
             print(f"SKIP .gitignore already ignores {home_label}/board/data/")
@@ -1062,7 +1105,7 @@ def main() -> int:
         resume_text = render(read_template("RESUME.md.tmpl"), **tokens)
         report(write_if_missing(home / "RESUME.md", resume_text), home / "RESUME.md", root)
         # An existing RESUME gets only the `## Owner board` section, when it lacks one (WO-122).
-        if ensure_resume_board(home / "RESUME.md", resume_board_section(resume_text)):
+        if ensure_resume_board(home / "RESUME.md", resume_board_section(resume_text), replace=hub_mode):
             print(f"OK   added the Owner board section to {home_label}/RESUME.md")
             WRITTEN.append(f"{home_label}/RESUME.md (Owner board section)")
 

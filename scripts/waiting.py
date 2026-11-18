@@ -11,7 +11,8 @@ the operator, one line each, from the stores that already hold it:
              fired: a work-order it names is resolved, or a date it names has passed. A trigger in words is the orchestrator's to judge.
     board    the owner board's cards on disk (<home>/board/data, WO-122): each card that needs the owner (an
              answer voided by a later edit counts), each answered card not yet acted on, and the answers and notes
-             the agent has not read yet. Read by running the home's board.py `summary` in a separate process
+             the agent has not read yet. A home routed to a hub (<home>/board-route.json, WO-132) reads the hub's
+             `summary --tab <its tab>`. Read by running the board.py `summary` in a separate process
              (`python -I`, a timeout): a crash, a hang or forged output stays out of this view. It is not a sandbox;
              that board.py runs with the user's rights.
 
@@ -192,20 +193,35 @@ def _clean(text) -> str:
     return _short(s)
 
 
+def _board_route(home: Path):
+    """The home's hub route (`board.route`, read with the engine's own board.py, beside this script), or None."""
+    spec = importlib_util.spec_from_file_location("_gitos_waiting_board",
+                                                  Path(__file__).resolve().parent.parent / "assets" / "board" / "board.py")
+    board = importlib_util.module_from_spec(spec)
+    spec.loader.exec_module(board)
+    return board.route(home)
+
+
 def src_board(home: Path) -> dict:
-    """The owner board, read by the home's own board.py (`summary`, JSON) in a separate `python -I` process with a
-    timeout, so its crash, hang or forged output cannot break this view (not a sandbox: it runs with the user's
-    rights). No <home>/board/board.py: absent. A summary that fails, times out or is not JSON is said as `not read`."""
-    board_py = home / "board" / "board.py"
+    """The owner board, read by its own board.py (`summary`, JSON) in a separate `python -I` process with a timeout,
+    so its crash, hang or forged output cannot break this view (not a sandbox: it runs with the user's rights). The
+    home's `<home>/board/board.py`, or the hub's with `--tab` when `<home>/board-route.json` routes to one. No board.py
+    on a home's own board: absent. A summary that fails, times out or is not JSON, or a route or hub that cannot be
+    read, is said as `not read`."""
+    route = _board_route(home)
+    board_py = Path(route["board"]) / "board.py" if route else home / "board" / "board.py"
     if not board_py.is_file():
+        if route:
+            raise RuntimeError(f"the hub's board.py is missing at {board_py}")
         return _source("board", status="absent")
-    cp = subprocess.run([sys.executable, "-I", "-B", str(board_py), "summary"], capture_output=True, text=True,
+    cp = subprocess.run([sys.executable, "-I", "-B", str(board_py), "summary", *(["--tab", route["tab"]] if route else [])],
+                        capture_output=True, text=True,
                         encoding="utf-8", errors="replace", timeout=BOARD_TIMEOUT, cwd=str(board_py.parent),
                         stdin=subprocess.DEVNULL)
     if cp.returncode != 0:
         raise RuntimeError(f"board.py summary exited {cp.returncode}: {(cp.stderr or cp.stdout).strip()[-200:]}")
     c = json.loads(cp.stdout)
-    items = []
+    items, scope = [], f" --tab {route['tab']}" if route else ""
     for card in c["needs"]:
         changed = " (the card changed after the answer; asked again)" if card.get("voided") else ""
         items.append({"ref": _clean(card["id"]), "text": _clean(str(card["title"]) + changed)})
@@ -213,9 +229,9 @@ def src_board(home: Path) -> dict:
         items.append({"ref": _clean(card["id"]), "text": _clean("answered, not acted on: " + str(card["title"]))})
     if c["new_answers"]:
         items.append({"ref": "answers", "text": f"{int(c['new_answers'])} new answer(s) not read yet: "
-                                                f"`board.py list --open`"})
+                                                f"`board.py list --open{scope}`"})
     if c["new_notes"]:
-        items.append({"ref": "notes", "text": f"{int(c['new_notes'])} new note(s) not read yet: `board.py notes`"})
+        items.append({"ref": "notes", "text": f"{int(c['new_notes'])} new note(s) not read yet: `board.py notes{scope}`"})
     if c["problems"]:
         items.append({"ref": "problems", "text": _clean(f"{len(c['problems'])} problem(s) in the board's files: "
                                                         + "; ".join(map(str, c["problems"])))})

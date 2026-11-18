@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
 """board.py - the owner board of one gitos home. Standard library only.
 
-A small web page on 127.0.0.1 where the owner answers what the agent asks: every owner approval is a card here.
-It lives at <home>/board/: this file and board.json (port, board_id) are tracked; data/ is git-ignored.
+A small web page on a loopback address (127.0.0.1 unless board.json says `host`) where the owner answers what the agent
+asks: every owner approval is a card here. It lives at <home>/board/: this file and board.json (port, board_id, optional
+host, tabs, routes) are tracked; data/, inbox/ and outbox/ are git-ignored.
 
 Agent side. No command here records an answer: only the board page does, through POST /api/answer.
-  ensure                       start this home's board when it is not answering, then print one line:
+  ensure [--tab T]             start this home's board when it is not answering, then print one line:
                                board: http://127.0.0.1:<port>/ · N open · A new answers · M new notes
+                               (a warning goes to stderr when Docker is present and `host` is 127.0.0.1)
   serve                        run the board in the foreground (`ensure` starts this detached)
   url                          print the board's address
   add-decision TITLE BODY value=Label... [--details FILE] [--tech FILE] [--tab T] [--replaces ID] [CARD]
-  add-plan PLAN_FILE TITLE [--table ROWS.json] [--tech FILE] [--item NAME] [CARD]
-  add-send DRAFT_FILE TITLE --to ADDR [--cc ADDR] [--subject TEXT] [--tech FILE] [--item NAME] [CARD]
+  add-plan PLAN_FILE TITLE [--table ROWS.json] [--tech FILE] [--item NAME] [--tab T] [CARD]
+  add-send DRAFT_FILE TITLE --to ADDR [--cc ADDR] [--subject TEXT] [--tech FILE] [--item NAME] [--tab T] [CARD]
                                CARD: [--ref WO-NNN] [--where TEXT] [--group close|decision|action|parked];
                                `value=Label*` marks the recommended option
-  list [--open]                the cards with their latest answer (locks each answer it shows, so it is no longer new)
-  answer-for ID                the card's latest answer as JSON with `valid` and `locked` (exit 1 when none);
+  list [--open] [--tab T]      the cards with their latest answer (locks each answer it shows, so it is no longer new)
+  answer-for ID [--tab T]      the card's latest answer as JSON with `valid` and `locked` (exit 1 when none);
                                locks the answer
-  close ID OUTCOME             move a card to Closed with what happened
-  notes                        the owner's notes (marks them read)
-  summary                      open, unread and not-acted-on counts as JSON (read-only; the waiting view runs it)
+  close ID OUTCOME [--tab T]   move a card to Closed with what happened
+  notes [--tab T]              the owner's notes (marks them read)
+  summary [--tab T]            open, unread and not-acted-on counts as JSON (read-only; the waiting view runs it)
+  register-tab TAB --repo PATH on a hub: add TAB, routed to the repo at PATH (board.json), and make inbox/ and outbox/TAB/
+With --tab T a command sees only that tab's cards and notes; on a hub every repo works in its own tab.
 
 add-plan and add-send store a copy of the file at data/plans/<sha256>.<ext> or data/drafts/<sha256>.<ext>, bind the
 card to the full SHA-256 of those exact bytes and print the stored path: dry-run and apply THAT file. A newer card for
@@ -50,6 +54,14 @@ silently.
 
 Tabs come from "tabs": [...] in board.json; the default is `decisions` alone, which is always present.
 
+A hub (one board for several repos, each in its own tab; board.json `host` 127.0.0.2, `routes` from register-tab):
+seats propose cards by dropping <board dir>/inbox/<name>.json, written under another name and renamed when complete:
+{"tab", "title", "body", "options": [{"value", "label"}], "ref"?, "group"?}. The server (and `list`) turns a valid
+request into a decision card marked `source: inbox` and moves an invalid one to inbox/rejected/ with a reason (shown as
+a problem); a request never answers anything. The owner answers on the page only. The server writes an answer to
+outbox/<tab>/<card id>.json once it is a minute old, and that write is the read that locks it; a changed or voided card
+loses its file. Nothing in inbox/ or outbox/ is ever a consent.
+
 A repo's own boards: every <board dir>/local/<name>.html (name `a-z 0-9 -`, 1-32 characters) is one more tab, shown in
 a sandboxed iframe (scripts run; no board API, no network fetch) from GET /local/<name>.html. Upgrades never touch
 local/. A local board named like a card tab shows above that tab's cards.
@@ -64,10 +76,12 @@ import contextlib
 import hashlib
 import hmac
 import html
+import ipaddress
 import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import socketserver
 import subprocess
@@ -80,8 +94,8 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-BOARD_VERSION = 3
-HOST = "127.0.0.1"
+BOARD_VERSION = 4
+DEFAULT_HOST = "127.0.0.1"
 PORT_LO, PORT_HI = 8800, 8999
 BASE_TABS = ("decisions",)
 GROUPS = ("close", "decision", "action", "parked")
@@ -89,6 +103,9 @@ KINDS = ("decision", "plan", "send")
 GO = {"plan": "apply", "send": "send"}
 MAX_BODY = 64 * 1024
 MAX_NOTE = 4000
+INBOX_KEYS = ("tab", "title", "body", "options", "ref", "group")
+INBOX_BATCH = 20                                     # request files taken per pass
+INBOX_EVERY, MIRROR_EVERY, MIRROR_AFTER = 5, 60, 60  # seconds: look at inbox/, mirror, an answer's age before its mirror
 ID_RE = re.compile(r"^\d{8}-\d{6}-\d{6}-[0-9a-f]{4}$")
 ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -202,14 +219,45 @@ def derive_port(home) -> int:
     return PORT_LO + int(h, 16) % (PORT_HI - PORT_LO + 1)
 
 
-def port_free(port: int) -> bool:
+def valid_host(host) -> bool:
+    """127.0.0.1 - 127.0.0.254: the loopback addresses a board may bind. A hub leaves 127.0.0.1, which Docker Desktop's
+    host gateway forwards a container to, for another one."""
+    try:
+        ip = ipaddress.IPv4Address(host)
+    except ValueError:
+        return False
+    return isinstance(host, str) and str(ip) == host and ip in ipaddress.ip_network("127.0.0.0/24") \
+        and host not in ("127.0.0.0", "127.0.0.255")
+
+
+def host_of(cfg: dict) -> str:
+    return cfg.get("host", DEFAULT_HOST)
+
+
+def docker_present() -> bool:
+    """A `docker` CLI on PATH, or a Docker Desktop install (it forwards a container's host gateway to 127.0.0.1)."""
+    desktop = (Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Docker" / "Docker" / "Docker Desktop.exe",
+               Path("/Applications/Docker.app"))
+    return shutil.which("docker") is not None or any(p.exists() for p in desktop)
+
+
+def docker_warning(cfg: dict) -> "str | None":
+    """The `ensure` warning: this board listens on 127.0.0.1 and Docker is here, so a container can read the page (token
+    included) and answer. None when `host` is another loopback address or there is no Docker."""
+    if host_of(cfg) == DEFAULT_HOST and docker_present():
+        return ("board: warning: Docker is present and this board listens on 127.0.0.1, which a container reaches through "
+                f'its host gateway; set "host": "127.0.0.2" in {CONFIG} and restart the board')
+    return None
+
+
+def port_free(port: int, host: str = DEFAULT_HOST) -> bool:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         elif os.name != "nt":
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)     # a port in TIME_WAIT is free to a server
-        s.bind((HOST, port))
+        s.bind((host, port))
         return True
     except OSError:
         return False
@@ -246,6 +294,8 @@ def load_config() -> dict:
     if not isinstance(cfg, dict) or not isinstance(cfg.get("port"), int) or not 1024 <= cfg["port"] <= 65535 \
             or not isinstance(cfg.get("board_id"), str) or not cfg["board_id"]:
         raise BoardError(f"{CONFIG} needs an integer `port` (1024-65535) and a `board_id`")
+    if not valid_host(host_of(cfg)):
+        raise BoardError(f"{CONFIG}: `host` must be an address from 127.0.0.1 to 127.0.0.254")
     return cfg
 
 
@@ -262,6 +312,29 @@ def tabs(cfg: "dict | None" = None) -> tuple:
     return tuple(out)
 
 
+def route(home) -> "dict | None":
+    """`<home>/board-route.json` (the one shared reader of it): None when this home keeps its own board (no file, or
+    mode `local`); for a hub `{"mode": "hub", "board": <the hub's board dir, absolute>, "tab": <this repo's tab>}`. A file
+    that does not parse or lacks what its mode needs raises BoardError."""
+    path = Path(home) / "board-route.json"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    try:
+        r = json.loads(raw)
+    except ValueError:
+        raise BoardError(f"{path} is not JSON")
+    if not isinstance(r, dict) or r.get("mode") not in ("local", "hub"):
+        raise BoardError(f"{path}: `mode` is `local` or `hub`")
+    if r["mode"] == "local":
+        return None
+    if not isinstance(r.get("board"), str) or not Path(r["board"]).is_absolute() \
+            or not isinstance(r.get("tab"), str) or not TAB_RE.fullmatch(r["tab"]):
+        raise BoardError(f"{path}: a hub route needs `board` (an absolute path) and `tab` (a-z 0-9 -, 1-24)")
+    return r
+
+
 def local_boards() -> list:
     """The names of the repo's own boards: each `<board dir>/local/<name>.html` that is a plain file and whose name
     matches LOCAL_RE. Anything else in local/ is ignored."""
@@ -273,9 +346,9 @@ def local_boards() -> list:
                   and p.is_file() and not p.is_symlink())
 
 
-def url(cfg: "dict | None" = None) -> str:
+def url(cfg: "dict | None" = None, tab: "str | None" = None) -> str:
     cfg = cfg or load_config()
-    return f"http://{HOST}:{cfg['port']}/"
+    return f"http://{host_of(cfg)}:{cfg['port']}/" + (f"#{tab}" if tab else "")
 
 
 # ------------------------------------------------------------------ files
@@ -371,6 +444,8 @@ def card_problem(c, fn: str, tab_set: tuple) -> "str | None":
     for k in ("details", "tech", "item", "to", "cc", "subject", "file", "ref", "where", "warning"):
         if k in c and not isinstance(c[k], str):
             return f"`{k}` is not text"
+    if "source" in c and c["source"] != "inbox":
+        return "`source` is only ever `inbox`"
     if not isinstance(c.get("created"), str) or not ISO_RE.fullmatch(c["created"]):
         return "`created` is not an ISO time with microseconds"
     try:
@@ -463,50 +538,64 @@ def state() -> dict:
         problems.append(f"answers.jsonl names card {cid}, which has no valid card file")
     notes = read_jsonl("notes.jsonl", ("note",), problems)
     try:
-        port = load_config()["port"]
+        cfg = load_config()
     except BoardError:
-        port = ""
-    return {"cards": out, "notes": notes[-20:], "tabs": list(tab_set), "local": local_boards(), "problems": problems,
-            "copy": copy_text(out), "name": home_dir().parent.name, "where": f"{home_dir().name}/{HERE.name}",
-            "port": port, "now": iso(now_dt())}
+        cfg = {}
+    return {"cards": out, "notes": notes[-20:], "tabs": list(tab_set), "local": local_boards(),
+            "problems": problems + inbox_problems(), "copy": copy_text(out), "name": home_dir().parent.name,
+            "where": f"{home_dir().name}/{HERE.name}", "host": host_of(cfg), "port": cfg.get("port", ""),
+            "now": iso(now_dt())}
+
+
+def note_tab(n: dict) -> str:
+    """The tab a note was saved on; a note from before tabs belongs to the default tab."""
+    return n["tab"] if isinstance(n.get("tab"), str) else BASE_TABS[0]
+
+
+def note_counts() -> dict:
+    out: dict = {}
+    for n in read_jsonl("notes.jsonl", ("note",), []):
+        out[note_tab(n)] = out.get(note_tab(n), 0) + 1
+    return out
 
 
 def read_mark() -> dict:
-    """How many notes the agent has read (`notes`). Answers need no mark: reading one locks it."""
+    """How many notes of each tab the agent has read (`notes`). Answers need no mark: reading one locks it."""
     try:
-        m = json.loads((DATA / "read-mark.json").read_text(encoding="utf-8"))
-        return {"notes": int(m.get("notes", 0))}
-    except (OSError, ValueError, TypeError, AttributeError):
-        return {"notes": 0}
+        return {t: int(n) for t, n in json.loads((DATA / "read-mark.json").read_text(encoding="utf-8"))["tabs"].items()}
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        return {}
 
 
-def counts() -> dict:
-    """Open cards, and answers and notes the agent has not read yet. Read-only. A new answer is the current answer of a
-    card that is not closed and that no read has locked: `answer-for`, `list` or a close each clear it."""
-    problems: list = []
+def counts(tab: "str | None" = None) -> dict:
+    """Open cards, and answers and notes the agent has not read yet (one tab's, or all). Read-only. A new answer is the
+    current answer of a card that is not closed and that no read has locked: `answer-for`, `list` or a close each clear
+    it."""
     s = state()
-    n_notes = len(read_jsonl("notes.jsonl", ("note",), problems))
+    cards = [c for c in s["cards"] if tab in (None, c["tab"])]
     mark = read_mark()
-    return {"open": sum(1 for c in s["cards"] if c["status"] != "closed"),
-            "needs": [c for c in s["cards"] if c["status"] == "needs"],
-            "acted": [c for c in s["cards"] if c["status"] == "answered"],
-            "new_answers": sum(1 for c in s["cards"] if c["status"] == "answered" and not c["locked"]),
-            "new_notes": max(0, n_notes - mark["notes"]),
+    return {"open": sum(1 for c in cards if c["status"] != "closed"),
+            "needs": [c for c in cards if c["status"] == "needs"],
+            "acted": [c for c in cards if c["status"] == "answered"],
+            "new_answers": sum(1 for c in cards if c["status"] == "answered" and not c["locked"]),
+            "new_notes": sum(max(0, n - mark.get(t, 0)) for t, n in note_counts().items() if tab in (None, t)),
             "problems": s["problems"]}
 
 
-def summary() -> dict:
+def summary(tab: "str | None" = None) -> dict:
     """counts() as plain JSON-ready data, every title cleaned: what the waiting view reads (in a subprocess)."""
-    c = counts()
+    c = counts(tab)
     return {"open": c["open"], "new_answers": c["new_answers"], "new_notes": c["new_notes"],
             "needs": [{"id": x["id"], "title": clean(x["title"]), "voided": bool(x["voided"])} for x in c["needs"]],
             "acted": [{"id": x["id"], "title": clean(x["title"]), "locked": bool(x["locked"])} for x in c["acted"]],
             "problems": [clean(p) for p in c["problems"]]}
 
 
-def set_mark() -> None:
-    """Mark every note read (`notes`)."""
-    write_json(DATA / "read-mark.json", {"notes": len(read_jsonl("notes.jsonl", ("note",), []))})
+def set_mark(tab: "str | None" = None) -> None:
+    """Mark the notes read (`notes`): one tab's, or every tab's."""
+    mark = read_mark()
+    mark.update({t: n for t, n in note_counts().items() if tab in (None, t)})
+    write_json(DATA / "read-mark.json", {"tabs": mark})
 
 
 # ------------------------------------------------------------------ agent side
@@ -519,22 +608,23 @@ def new_card(tab: str, kind: str, title: str, body: str, options: list, details:
         raise BoardError(f"tab must be one of {list(tab_set)}")
     if not options:
         raise BoardError("a card needs at least one option")
-    problems: list = []
-    newest = max((datetime.fromisoformat(c["created"]) for c in load_cards(problems, tab_set)), default=None)
-    dt = now_dt()
-    if newest is not None and dt <= newest:
-        dt = newest + timedelta(microseconds=1)
-    cid = dt.strftime("%Y%m%d-%H%M%S-%f") + "-" + secrets.token_hex(2)
-    card = {"id": cid, "tab": tab, "kind": kind, "title": title, "body": body, "details": details,
-            "options": options, "created": iso(dt)}
-    if tech:
-        card["tech"] = tech
-    card.update(extra or {})
-    why = card_problem(card, cid + ".json", tab_set)
-    if why:
-        raise BoardError(f"card refused: {why}")
-    card["card_hash"] = content_hash(card)
-    write_json(CARDS / (cid + ".json"), card)
+    with file_lock():                      # the server's inbox pass and a CLI card never pick the same `created`
+        problems: list = []
+        newest = max((datetime.fromisoformat(c["created"]) for c in load_cards(problems, tab_set)), default=None)
+        dt = now_dt()
+        if newest is not None and dt <= newest:
+            dt = newest + timedelta(microseconds=1)
+        cid = dt.strftime("%Y%m%d-%H%M%S-%f") + "-" + secrets.token_hex(2)
+        card = {"id": cid, "tab": tab, "kind": kind, "title": title, "body": body, "details": details,
+                "options": options, "created": iso(dt)}
+        if tech:
+            card["tech"] = tech
+        card.update(extra or {})
+        why = card_problem(card, cid + ".json", tab_set)
+        if why:
+            raise BoardError(f"card refused: {why}")
+        card["card_hash"] = content_hash(card)
+        write_json(CARDS / (cid + ".json"), card)
     return card
 
 
@@ -594,11 +684,12 @@ def consume(cid: str, outcome: str) -> None:
 
 
 def replace_older(card: dict) -> list:
-    """Close the older open cards of the same kind for the same item as `card`: "replaced by <id>"."""
+    """Close the older open cards of the same kind and tab for the same item as `card`: "replaced by <id>"."""
     done = []
     for c in state()["cards"]:
-        if c["id"] != card["id"] and c["kind"] == card["kind"] and c.get("item") == card.get("item") \
-                and card.get("item") and c["status"] != "closed" and c["created"] < card["created"]:
+        if c["id"] != card["id"] and c["tab"] == card["tab"] and c["kind"] == card["kind"] \
+                and c.get("item") == card.get("item") and card.get("item") and c["status"] != "closed" \
+                and c["created"] < card["created"]:
             consume(c["id"], f"replaced by {card['id']}")
             done.append(c["id"])
     return done
@@ -623,14 +714,21 @@ def lock(card: dict) -> "str | None":
         return at
 
 
-def answer_for(cid: str) -> "dict | None":
-    """`answer-for`: read (and so lock) a card's answer, then report the answer as it is NOW, never a superseded one.
-    `valid` is true only when that answer is locked and its hash matches the card. -> the answer dict, or None."""
-    c = card_by_id(cid)
-    if not c or not (c["answer"] or c["voided"]):
-        return None
-    if c["answer"] and c["status"] != "closed":
+def agent_read(c: dict) -> None:
+    """The agent reads a card's answer: it locks. A seat's card (`source: inbox`) is read by the mirror alone, so the
+    owner keeps the minute to change an answer the seat has not been given."""
+    if c["answer"] and c["status"] != "closed" and c.get("source") != "inbox":
         lock(c)                                    # None when a newer answer arrived: that one is pending
+
+
+def answer_for(cid: str, tab: "str | None" = None) -> "dict | None":
+    """`answer-for`: read (and so lock) a card's answer, then report the answer as it is NOW, never a superseded one.
+    `valid` is true only when that answer is locked and its hash matches the card. With `tab`, a card of another tab
+    is not found. -> the answer dict, or None."""
+    c = card_by_id(cid)
+    if not c or tab not in (None, c["tab"]) or not (c["answer"] or c["voided"]):
+        return None
+    agent_read(c)
     c = card_by_id(cid) or c
     a = c["answer"] or c["voided"]
     valid = bool(c["answer"] and c["locked"] and c["status"] != "closed"
@@ -638,23 +736,26 @@ def answer_for(cid: str) -> "dict | None":
     return dict(a, note=clean(a.get("note", "")), valid=valid, status=c["status"], locked=c["locked"])
 
 
-def _newest(cards: list, kind: str, key: str, value) -> "dict | None":
-    return next((c for c in reversed(cards) if c["kind"] == kind and c.get(key) == value), None)
+def _newest(cards: list, kind: str, key: str, value, tab: "str | None" = None) -> "dict | None":
+    """A seat's card (`source: inbox`) never counts: a tool acts on what its own repo's agent asked, not on a proposal."""
+    return next((c for c in reversed(cards) if c["kind"] == kind and c.get(key) == value
+                 and c.get("source") != "inbox" and tab in (None, c["tab"])), None)
 
 
-def approved(kind: str, key: str, value, go: "str | None" = None) -> "dict | None":
-    """The newest card of `kind` whose `key` field equals `value`, when it is not closed and its latest answer chose
-    the go option against the card's current content AND that answer is locked. Otherwise None. Reading locks the
+def approved(kind: str, key: str, value, go: "str | None" = None, tab: "str | None" = None) -> "dict | None":
+    """The newest card of `kind` (in `tab`, on a hub) whose `key` field equals `value`, when it is not closed and its
+    latest answer chose the go option against the card's current content AND that answer is locked. Otherwise None.
+    Reading locks the
     answer it sees, then the card is read again: an answer that arrived in between is pending, and a pending answer
     never authorizes. A note-only answer is never a go; a newer card for the same item always blocks an older one."""
     go = go or GO.get(kind)
     if not go:
         raise BoardError(f"approved() needs go= for kind {kind!r}")
-    c = _newest(state()["cards"], kind, key, value)
+    c = _newest(state()["cards"], kind, key, value, tab)
     if c is None or c["status"] != "answered":
         return None
     lock(c)
-    c = _newest(state()["cards"], kind, key, value)
+    c = _newest(state()["cards"], kind, key, value, tab)
     if c is None or c["status"] != "answered" or not c["locked"]:
         return None
     a = c["answer"]
@@ -665,11 +766,11 @@ def approved(kind: str, key: str, value, go: "str | None" = None) -> "dict | Non
     return None
 
 
-def claim(kind: str, key: str, value, go: "str | None", outcome: str) -> "dict | None":
+def claim(kind: str, key: str, value, go: "str | None", outcome: str, tab: "str | None" = None) -> "dict | None":
     """approved() and consume() as one step under the board's lock: the approved card, now closed with `outcome`, or
     None. Of two tools claiming the same approval, exactly one gets it. Act only after claim() returns the card."""
     with file_lock():
-        c = approved(kind, key, value, go)
+        c = approved(kind, key, value, go, tab)
         if c is None:
             return None
         consume(c["id"], outcome)
@@ -701,6 +802,166 @@ def read_table(path: str) -> list:
 
 def text_of(path: str) -> str:
     return Path(path).read_bytes().decode("utf-8", errors="replace")
+
+
+# ------------------------------------------------------------------ the hub
+def same_path(a, b) -> bool:
+    return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
+
+
+def register_tab(tab: str, repo: str) -> str:
+    """On a hub: add `tab` to board.json `tabs`, routed to `repo` in `routes`, and make inbox/ and outbox/<tab>/ (with a
+    .gitignore for both). A tab already routed to another repo is refused; the same repo again changes nothing."""
+    if not TAB_RE.fullmatch(tab) or tab in BASE_TABS:
+        raise BoardError(f"a tab is a-z 0-9 - (1-24, starting with a letter) and not {BASE_TABS[0]!r}")
+    if not Path(repo).is_dir():
+        raise BoardError(f"--repo {repo} is not a folder")
+    where = str(Path(repo).resolve())
+    with file_lock():
+        cfg = load_config()
+        routes = cfg["routes"] if isinstance(cfg.get("routes"), dict) else {}
+        if tab in routes and not same_path(routes[tab], where):
+            raise BoardError(f"tab {tab!r} is already routed to {routes[tab]}")
+        cfg["routes"] = dict(routes, **{tab: where})
+        cfg["tabs"] = list(dict.fromkeys([*(cfg["tabs"] if isinstance(cfg.get("tabs"), list) else []), tab]))
+        write_json(CONFIG, cfg)
+    (HERE / "outbox" / tab).mkdir(parents=True, exist_ok=True)
+    (HERE / "inbox").mkdir(exist_ok=True)
+    if not (HERE / ".gitignore").exists():
+        (HERE / ".gitignore").write_bytes(b"inbox/\noutbox/\n")
+    return f"tab {tab} routed to {where}"
+
+
+def _texts(x):
+    if isinstance(x, str):
+        yield x
+    elif isinstance(x, dict):
+        for v in x.values():
+            yield from _texts(v)
+    elif isinstance(x, list):
+        for v in x:
+            yield from _texts(v)
+
+
+def request_problem(req) -> "str | None":
+    """Why an inbox request is not a decision-card request, or None. A seat proposes a decision card and nothing else:
+    no plan or send (the hub cannot bind files it did not receive), no details, no answer. Tab, title, body, options and
+    group are then checked as any card is (`new_card`)."""
+    if not isinstance(req, dict):
+        return "not a JSON object"
+    extra = sorted(set(req) - set(INBOX_KEYS))
+    if extra:
+        return f"unknown field {extra[0]!r}: a request has only {', '.join(INBOX_KEYS)} (a decision card)"
+    opts = req.get("options")
+    if not isinstance(opts, list) or not all(isinstance(o, dict) and set(o) == {"value", "label"} for o in opts):
+        return "`options` must be a list of {value, label}"
+    if len(opts) > 10 or any(len(str(x)) > n for x, n in [(req.get("title", ""), 200), (req.get("body", ""), MAX_NOTE),
+                                                         (req.get("ref", ""), 40), *[(o["label"], 100) for o in opts]]):
+        return "a field is over its size limit (title 200, body 4000, ref 40, 10 options, label 100)"
+    if any(hidden(ch) for t in _texts(req) for ch in t):
+        return "it holds invisible (bidi, zero-width or control) characters"
+    return None
+
+
+def reject(p: Path, why: str) -> None:
+    """Move an invalid request to inbox/rejected/ and say why beside it; `state()` shows each reason as a problem."""
+    folder = p.parent / "rejected"
+    folder.mkdir(exist_ok=True)
+    name = f"{now_dt():%Y%m%d-%H%M%S-%f}-{secrets.token_hex(2)}.json"
+    os.replace(p, folder / name)
+    (folder / (name + ".reason")).write_text(clean(f"{p.name}: {why}") + "\n", encoding="utf-8")
+
+
+def ingest_inbox() -> list:
+    """Turn each request file in <board dir>/inbox/ into a decision card marked `source: inbox`, or reject it (see
+    `reject`). A request only ever creates a card: it carries no answer and none is made. -> the new card ids."""
+    inbox = HERE / "inbox"
+    try:
+        files = sorted(p for p in inbox.iterdir() if p.suffix == ".json")[:INBOX_BATCH]
+    except OSError:
+        return []
+    made = []
+    with file_lock():                              # a busy lock raises here, so it never rejects a valid request
+        for p in files:
+            try:
+                if p.is_symlink() or not p.is_file():
+                    raise BoardError("not a plain file")
+                with open(p, "rb") as f:
+                    raw = f.read(MAX_BODY + 1)
+                if len(raw) > MAX_BODY:
+                    raise BoardError(f"larger than {MAX_BODY} bytes")
+                try:
+                    req = json.loads(raw.decode("utf-8"))
+                except ValueError:
+                    raise BoardError("not UTF-8 JSON")
+                why = request_problem(req)
+                if why:
+                    raise BoardError(why)
+                card = new_card(req.get("tab"), "decision", req.get("title"), req.get("body"), req["options"],
+                                extra=dict({"source": "inbox"}, **{k: req[k] for k in ("ref", "group") if k in req}))
+            except (BoardError, OSError) as e:
+                reject(p, str(e))
+                continue
+            p.unlink()
+            made.append(card["id"])
+    return made
+
+
+def inbox_problems() -> list:
+    """One problem line per rejected request (the owner or the agent clears them by deleting inbox/rejected/)."""
+    try:
+        reasons = sorted((HERE / "inbox" / "rejected").glob("*.reason"))
+    except OSError:
+        return []
+    out = []
+    for p in reasons[:20]:
+        try:
+            out.append("inbox request rejected: " + clean(p.read_text(encoding="utf-8", errors="replace")[:300]))
+        except OSError:
+            continue
+    return out + ([f"{len(reasons) - 20} more rejected inbox requests"] if len(reasons) > 20 else [])
+
+
+def mirror(now: "datetime | None" = None) -> list:
+    """Write each answered seat card's answer to outbox/<tab>/<card id>.json once the answer is MIRROR_AFTER seconds old.
+    Writing the mirror is the read: the answer is locked (read.jsonl) first, so the owner can change a fresh answer until
+    then and never after. A mirror whose card changed, was voided or is gone is deleted. -> the ids newly mirrored."""
+    cutoff = iso((now or now_dt()) - timedelta(seconds=MIRROR_AFTER))
+    cards = {c["id"]: c for c in state()["cards"]}
+    for f in (HERE / "outbox").glob("*/*.json"):
+        if f.stem not in cards or cards[f.stem]["answer"] is None:
+            f.unlink(missing_ok=True)
+    done = []
+    for c in cards.values():
+        if c.get("source") != "inbox" or c["status"] != "answered" or c["answer"]["at"] > cutoff or lock(c) is None:
+            continue
+        a = c["answer"]
+        entry = {"card": dict({k: clean(c[k]) for k in ("title", "ref") if k in c}, id=c["id"], tab=c["tab"]),
+                 "card_hash": c["card_hash"], "answer": {"option": a["option"], "note": clean(a.get("note", ""))},
+                 "answered_at": a["at"]}
+        path = HERE / "outbox" / c["tab"] / f"{c['id']}.json"
+        try:
+            same = json.loads(path.read_text(encoding="utf-8")) == entry
+        except (OSError, ValueError):
+            same = False
+        if not same:
+            write_json(path, entry)
+            done.append(c["id"])
+    return done
+
+
+def maintain() -> None:
+    """The serving process's housekeeping: look at inbox/ every few seconds, mirror answers once a minute."""
+    last = 0.0
+    while True:
+        try:
+            ingest_inbox()
+            if time.time() - last >= MIRROR_EVERY:
+                mirror()
+                last = time.time()
+        except Exception as e:                     # one bad pass never ends the loop; the log says why
+            print(f"maintain: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        time.sleep(INBOX_EVERY)
 
 
 # ------------------------------------------------------------------ the page
@@ -770,7 +1031,7 @@ textarea{width:100%;min-height:70px;height:70px;resize:none;overflow-y:hidden;fo
 <script>
 const TOKEN = "__TOKEN__";
 const GROUPS = [["close","Close or keep open"],["decision","Decisions"],["action","Your actions"],["parked","Parked work"]];
-let S = {cards:[], tabs:["decisions"], local:[], problems:[], copy:"", name:"", where:"", port:""};
+let S = {cards:[], tabs:["decisions"], local:[], problems:[], copy:"", name:"", where:"", host:"", port:""};
 let tab = location.hash.slice(1) || "decisions", sub = "needs", grp = "all";
 const $ = id => document.getElementById(id);
 const LOCAL = /^[a-z0-9-]{1,32}$/;
@@ -798,7 +1059,7 @@ async function load(force){
   for(const c of S.cards){ const el = document.getElementById("n-" + c.id); if(el && el.value) typed[c.id] = el.value; }
   S = next;
   if(!allTabs().includes(tab)) tab = S.tabs[0];
-  $("repo").textContent = `${S.name} · ${S.where} · 127.0.0.1:${S.port}`;
+  $("repo").textContent = `${S.name} · ${S.where} · ${S.host}:${S.port}`;
   render();
   for(const id in typed){ const el = document.getElementById("n-" + id); if(el){ el.value = typed[id]; grow(el); } }
   $("stamp").textContent = "Up to date " + new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
@@ -852,7 +1113,7 @@ function card(c){
     status = `<p class="ans">Answered ${esc(said(c, a))} at ${esc(when(a.at))} · not read yet, you can still change it</p>`;
   }
   const note = dis ? "" : `<div class="row"><textarea id="n-${c.id}" placeholder="Note — press a choice to send it with that, or Save note to answer with the note alone">${esc(a ? a.note : "")}</textarea><button class="btn" data-note="${c.id}" data-h="${h}">Save note</button></div>`;
-  return `<div class="card${c.voided && !closed ? " void" : ""}"><div class="head"><span class="tag">${esc(c.kind)}</span>${c.ref ? `<span class="ref">${esc(c.ref)}</span>` : ""}<h2>${esc(c.title)}</h2></div>
+  return `<div class="card${c.voided && !closed ? " void" : ""}"><div class="head"><span class="tag">${esc(c.kind)}</span>${c.source === "inbox" ? `<span class="tag">proposed by a seat</span>` : ""}${c.ref ? `<span class="ref">${esc(c.ref)}</span>` : ""}<h2>${esc(c.title)}</h2></div>
   <p class="why">${esc(c.body)}</p>${c.where ? `<p class="where">where: ${esc(c.where)}</p>` : ""}
   ${c.table && c.table.length ? table(c.table) : ""}${c.details ? `<pre>${esc(c.details)}</pre>` : ""}
   ${c.tech ? `<details><summary>Technical details</summary><pre>${esc(c.tech)}</pre></details>` : ""}
@@ -878,7 +1139,7 @@ document.addEventListener("click", async e => {
   }
   else if(t.id === "savenote"){
     const v = $("freenote").value.trim(); if(!v) return;
-    try{ await post("/api/note", {note:v}); $("freenote").value = ""; $("notemsg").textContent = "Saved for Claude."; }
+    try{ await post("/api/note", {note:v, tab:S.tabs.includes(tab) ? tab : S.tabs[0]}); $("freenote").value = ""; $("notemsg").textContent = "Saved for Claude."; }
     catch(err){ $("notemsg").textContent = "Not saved: " + err.message; }
   }
   else if(t.id === "copy"){
@@ -899,6 +1160,7 @@ LOCAL_CSP = ("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inli
 
 class Handler(BaseHTTPRequestHandler):
     token = ""
+    host = DEFAULT_HOST
     port = 0
     board_id = ""
     timeout = 10
@@ -908,8 +1170,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _names(self) -> tuple:
+        """The Host values this server answers to: the address it is bound to, and `localhost` only for 127.0.0.1."""
+        return (f"{self.host}:{self.port}",) + ((f"localhost:{self.port}",) if self.host == DEFAULT_HOST else ())
+
     def _host_ok(self) -> bool:
-        return self.headers.get("Host") in (f"{HOST}:{self.port}", f"localhost:{self.port}")
+        return self.headers.get("Host") in self._names()
 
     def _send(self, code: int, body, ctype: str = "application/json; charset=utf-8", nonce: str = "none",
               local: bool = False):
@@ -976,7 +1242,7 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
         if not self._host_ok():
             return self._err(421, "wrong host")
-        if self.headers.get("Origin") not in (f"http://{HOST}:{self.port}", f"http://localhost:{self.port}"):
+        if self.headers.get("Origin") not in [f"http://{n}" for n in self._names()]:
             return self._err(403, "cross-origin request refused")
         # a browser sends these on a same-origin fetch(); a script sends them only by forging them
         if self.headers.get("Sec-Fetch-Site") != "same-origin" or self.headers.get("Sec-Fetch-Mode") != "cors":
@@ -1003,12 +1269,14 @@ class Handler(BaseHTTPRequestHandler):
             except BoardError as e:
                 return self._err(503, str(e))
         if path == "/api/note":
-            note = body.get("note")
+            note, tab = body.get("note"), body.get("tab", BASE_TABS[0])
             if not isinstance(note, str) or not note.strip():
                 return self._err(400, "empty note")
+            if tab not in tabs():
+                return self._err(400, "not one of the board's tabs")
             try:
-                append_jsonl("notes.jsonl", dict({"note": note.strip()[:MAX_NOTE], "at": iso(now_dt()), "via": "board"},
-                                                 **client))
+                append_jsonl("notes.jsonl", dict({"note": note.strip()[:MAX_NOTE], "tab": tab, "at": iso(now_dt()),
+                                                  "via": "board"}, **client))
             except BoardError as e:
                 return self._err(503, str(e))
             return self._send(200, '{"ok":true}')
@@ -1051,13 +1319,13 @@ class Server(ThreadingHTTPServer):
         if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         socketserver.TCPServer.server_bind(self)  # skip HTTPServer's getfqdn(), which can stall for seconds
-        self.server_name, self.server_port = HOST, self.server_address[1]
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def make_server(cfg: dict) -> Server:
-    handler = type("BoardHandler", (Handler,), {"token": secrets.token_urlsafe(24), "port": cfg["port"],
-                                                "board_id": cfg["board_id"]})
-    return Server((HOST, cfg["port"]), handler)
+    handler = type("BoardHandler", (Handler,), {"token": secrets.token_urlsafe(24), "host": host_of(cfg),
+                                                "port": cfg["port"], "board_id": cfg["board_id"]})
+    return Server((host_of(cfg), cfg["port"]), handler)
 
 
 def serve() -> int:
@@ -1065,6 +1333,7 @@ def serve() -> int:
     srv = make_server(cfg)
     write_json(DATA / "server.json", {"pid": os.getpid(), "port": cfg["port"], "started": iso(now_dt())})
     print(f"owner board at {url(cfg)} (Ctrl+C to stop)", flush=True)
+    threading.Thread(target=maintain, daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -1075,8 +1344,8 @@ def serve() -> int:
 
 
 # ------------------------------------------------------------------ ensure
-def identity(port: int, timeout: float = 1.5) -> "dict | None":
-    req = urllib.request.Request(f"http://{HOST}:{port}/api/identity", headers={"Host": f"{HOST}:{port}"})
+def identity(host: str, port: int, timeout: float = 1.5) -> "dict | None":
+    req = urllib.request.Request(f"http://{host}:{port}/api/identity", headers={"Host": f"{host}:{port}"})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         with opener.open(req, timeout=timeout) as r:
@@ -1103,15 +1372,17 @@ def start_detached() -> None:
         subprocess.Popen([sys.executable, str(HERE / "board.py"), "serve"], stdout=log, stderr=log, **kw)
 
 
-def cmd_ensure() -> int:
-    """Start this home's board when it is not answering; never stops anything. Prints one line."""
+def cmd_ensure(tab: "str | None" = None) -> int:
+    """Start this home's board when it is not answering; never stops anything. Prints one line (that tab's counts, with
+    --tab), and a Docker warning on stderr."""
     cfg = load_config()
-    ident = identity(cfg["port"])
-    if ident is None and not port_free(cfg["port"]):
+    host, port = host_of(cfg), cfg["port"]
+    ident = identity(host, port)
+    if ident is None and not port_free(port, host):
         time.sleep(0.5)                      # a board that is still starting answers in a moment
-        ident = identity(cfg["port"])
+        ident = identity(host, port)
     if ident is None:
-        if not port_free(cfg["port"]):
+        if not port_free(port, host):
             print(f"board: port {cfg['port']} is held by another program; the board was not started "
                   f"(free the port, or give this home a new port in {CONFIG})")
             return 1
@@ -1119,7 +1390,7 @@ def cmd_ensure() -> int:
         deadline = time.time() + 15
         while time.time() < deadline and not is_mine(ident, cfg):
             time.sleep(0.2)
-            ident = identity(cfg["port"])
+            ident = identity(host, port)
         if not is_mine(ident, cfg):
             print(f"board: did not start on port {cfg['port']}; see {DATA / 'serve.log'}")
             return 1
@@ -1127,13 +1398,16 @@ def cmd_ensure() -> int:
         print(f"board: port {cfg['port']} answers for another board (not this home's board_id); "
               f"this board was not started")
         return 1
-    c = counts()
-    line = (f"board: {url(cfg)} · {c['open']} open · {c['new_answers']} new answers · {c['new_notes']} new notes")
+    c = counts(tab)
+    line = (f"board: {url(cfg, tab)} · {c['open']} open · {c['new_answers']} new answers · {c['new_notes']} new notes")
     if c["acted"]:
         line += f" · {len(c['acted'])} waiting to be acted on"
     if c["problems"]:
         line += f" · {len(c['problems'])} problem(s) in its files"
     print(line)
+    warning = docker_warning(cfg)
+    if warning:
+        print(warning, file=sys.stderr)
     return 0
 
 
@@ -1153,6 +1427,9 @@ def no_flags(rest: list) -> None:
     bad = [a for a in rest if a.startswith("--")]
     if bad:
         raise BoardError(f"unknown option {bad[0]}")
+
+
+TAB_COMMANDS = ("ensure", "add-decision", "add-plan", "add-send", "list", "answer-for", "close", "notes", "summary")
 
 
 def card_flags(rest: list) -> dict:
@@ -1190,24 +1467,35 @@ def main(argv: "list | None" = None) -> int:
         return 0
     cmd, rest = a[0], a[1:]
     try:
+        tab = take(rest, "--tab")
+        if tab is not None and cmd not in TAB_COMMANDS:
+            raise BoardError(f"{cmd} takes no --tab")
+        if tab is not None and tab not in tabs():
+            raise BoardError(f"tab must be one of {list(tabs())}")
         if cmd == "serve" and not rest:
             return serve()
         if cmd == "ensure" and not rest:
-            return cmd_ensure()
+            return cmd_ensure(tab)
         if cmd == "url" and not rest:
             print(url())
             return 0
+        if cmd == "register-tab":
+            repo = take(rest, "--repo")
+            if len(rest) != 1 or not repo:
+                raise BoardError("usage: register-tab TAB --repo PATH")
+            print(register_tab(rest[0], repo))
+            return 0
         if cmd == "add-decision":
-            details, tech = take(rest, "--details"), take(rest, "--tech")
-            tab, old = take(rest, "--tab") or "decisions", take(rest, "--replaces")
+            details, tech, old = take(rest, "--details"), take(rest, "--tech"), take(rest, "--replaces")
+            tab = tab or BASE_TABS[0]
             extra = card_flags(rest)
             no_flags(rest)
             if len(rest) < 3:
                 raise BoardError("usage: add-decision TITLE BODY value=Label ...")
             if old:
                 prev = card_by_id(old)
-                if prev is None or prev["status"] == "closed":
-                    raise BoardError(f"--replaces: {old} is not an open card; nothing was written")
+                if prev is None or prev["status"] == "closed" or prev["tab"] != tab:
+                    raise BoardError(f"--replaces: {old} is not an open card of tab {tab}; nothing was written")
             card = new_card(tab, "decision", rest[0], rest[1], parse_options(rest[2:]),
                             text_of(details) if details else "", extra=extra, tech=text_of(tech) if tech else "")
             if old:
@@ -1225,7 +1513,7 @@ def main(argv: "list | None" = None) -> int:
                          **invisible_warning(data.decode("utf-8")))
             if table:
                 extra["table"] = read_table(table)
-            card = new_card("decisions", "plan", rest[1],
+            card = new_card(tab or BASE_TABS[0], "plan", rest[1],
                             "Nothing changes until you pick Apply it, and then only exactly this plan.",
                             [{"value": "apply", "label": "Apply it"},
                              {"value": "change", "label": "Change it (say how in the note)"},
@@ -1233,7 +1521,7 @@ def main(argv: "list | None" = None) -> int:
                             details=data.decode("utf-8"), extra=extra,
                             tech=text_of(tech) if tech else "")
             replaced = replace_older(card)
-            print(f"card {card['id']} added to decisions: {card['title']}")
+            print(f"card {card['id']} added to {card['tab']}: {card['title']}")
             print(f"stored: {stored}\n  dry-run and apply THIS file (sha256 {sha})")
             if replaced:
                 print(f"  replaced: {', '.join(replaced)}")
@@ -1255,7 +1543,7 @@ def main(argv: "list | None" = None) -> int:
                 extra["cc"] = cc
             if subject:
                 extra["subject"] = subject
-            card = new_card("email" if "email" in tabs() else "decisions", "send", rest[1], body,
+            card = new_card(tab or ("email" if "email" in tabs() else BASE_TABS[0]), "send", rest[1], body,
                             [{"value": "send", "label": "Send it"},
                              {"value": "change", "label": "Change it (say how in the note)"},
                              {"value": "dont", "label": "Don't send"}],
@@ -1268,34 +1556,37 @@ def main(argv: "list | None" = None) -> int:
                 print(f"  replaced: {', '.join(replaced)}")
             return 0
         if cmd == "list" and rest in ([], ["--open"]):
+            ingest_inbox()
             s = state()
             for c in s["cards"]:
-                if rest and c["status"] == "closed":
+                if tab not in (None, c["tab"]) or (rest and c["status"] == "closed"):
                     continue
                 print_card_line(c)
-                if c["answer"] and c["status"] != "closed":
-                    lock(c)
+                agent_read(c)
             for p in s["problems"]:
                 print(f"problem: {clean(p)}")
             return 0
         if cmd == "answer-for" and len(rest) == 1:
-            got = answer_for(rest[0])
+            got = answer_for(rest[0], tab)
             print(json.dumps(got, ensure_ascii=True) if got else "null")
             return 0 if got else 1
         if cmd == "summary" and not rest:
-            print(json.dumps(summary(), ensure_ascii=True))
+            print(json.dumps(summary(tab), ensure_ascii=True))
             return 0
         if cmd == "close" and len(rest) == 2:
+            if tab and (card_by_id(rest[0]) or {}).get("tab") != tab:
+                raise BoardError(f"no card {rest[0]} in tab {tab}")
             consume(rest[0], rest[1])
             print(f"closed {rest[0]}")
             return 0
         if cmd == "notes" and not rest:
             problems: list = []
             for n in read_jsonl("notes.jsonl", ("note",), problems):
-                print(f"{n['at']}  {clean(n['note'])}")
+                if tab in (None, note_tab(n)):
+                    print(f"{n['at']}  {clean(n['note'])}")
             for p in problems:
                 print(f"problem: {clean(p)}")
-            set_mark()
+            set_mark(tab)
             return 0
     except BoardError as e:
         print(f"board: {e}", file=sys.stderr)

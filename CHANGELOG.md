@@ -18,6 +18,14 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v64 — 2026-11-18
+breaking: no
+audit: owner board route (references/upgrade.md step 4s)
+
+- Owner board hub: a repo routes to one central board (`board-route.json`) and works in its own tab; seats propose cards in an inbox and read answers from a read-only mirror; a board binds a chosen loopback address; `BOARD_VERSION` 4 (WO-132)
+
+---
+
 ## v63 — 2026-11-18
 breaking: no
 
