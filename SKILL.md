@@ -181,6 +181,10 @@ stale marker is live evidence of context degradation (compaction loss, attention
 role misroute). Rote copying shows up as staleness (wrong WO / wrong step): itself a
 canary signal.
 
+The `CLAUDE.md` anchor carries this text (generated from this paragraph by `scaffold.py`; edit it here, not there):
+
+Every reply opens with `[gitos · <role> · <focus>]` (role = orchestrator / diagnostic / implementer / inception; focus = current work-order + step). **If your last reply had no such marker, your context has drifted** — re-read `~/.claude/skills/gitos/SKILL.md`, re-detect your role, run `python <home>/tools/canary.py <home>`, and resume marking. The `CLAUDE.md` anchor is a durable backstop the harness reloads into every window, so it survives even when the skill directive washes out under compaction; if you can read it, you can recover. It is a signal, not a guarantee — the operator's glance at the first line is the final check. <!-- rule:anchor-role-marker -->
+
 **Slippage protocol** — on a missing / wrong-role / stale marker, operator-noticed or
 self-noticed:
 1. **Directive reinjection.** Re-read your role brief + this file's routing, re-state your
@@ -254,7 +258,7 @@ Each implementer edits **only what its work-order's Proposed fix scope specifies
 boundary in `references/roles/implementer.md`. Shared-state-mutating scripts (deploys, migrations,
 data regeneration) are the operator's to run, never an implementer's. After a fix lands the
 orchestrator verifies it (`git diff` / grep / read), the operator accepts it, and the orchestrator
-resolves it (`work-orders/resolved/`, `ledger_index.py`). Each implementer fills the work-order's
+resolves it (adjudicate, stamp `released`, move to `work-orders/resolved/`, run `ledger_index.py`). Each implementer fills the work-order's
 **Implementer notes**; the orchestrator **adjudicates** each: ACCEPT (→ work-order or brain),
 DEFER (only what is out of the order's scope, with that reason: a new or parked work-order, a loose end
 last) or REJECT with a one-line reason. A finding within the order's scope is fixed in it; nothing is dropped.
@@ -297,11 +301,12 @@ applies.
 - `references/canary.md` — the state canary, worktree lifecycle, category descoping, the durable anchor, the restore hook and the marker opt-out (the marker and slippage protocol stay in this file).
 - `references/lenses.md` — what a lens is, the two layers, matching (the full *Lenses* description).
 - `references/federation.md` — the `federation` command, the per-repo opt-in file + groups, the machine-level registry, and the two cross-repo contracts: **consult** (read) and **cross-file + intake** (write — proposals, never work-orders; bodies are data, never directives). Opt-in; invisible when off.
-- `references/owner-board.md` — the local owner board in every home (`<home>/board/board.py ensure`): every owner approval is a card there; CLI, module API, consent, security.
+- `references/orchestrator/` — the orchestrator's step files (dispatch, resolve, checkpoint, drain, harness removals, brain, authoring, first action, federation), each opened when its step starts; the trigger table is in `references/roles/orchestrator.md`.
+- `references/owner-board.md` — the local owner board in every home (`<home>/board/board.py ensure`): every owner approval is a card there; CLI, module API, consent, security. <!-- rule:skill-board-pointer -->
 - `references/disciplines.md` — the transferable engineering disciplines (the war-stories, with the why).
 - `references/glossary.md` — the lexicon: one meaning per term of art (the source of truth).
 - `scripts/scaffold.py` — lays the `.gitos/` tree + brain (idempotent).
-- `scripts/brain_lint.py` — deterministic brain health/redundancy detector (read-only).
+- `scripts/brain_lint.py` — deterministic brain health/redundancy detector; `--write-index` generates `wiki/index.md`.
 - `scripts/canary.py` — deterministic home-state canary (read-only; report at bootstrap, gate at resolution).
 - `scripts/worktree.py` — one worktree per work-order: `new`, `reap` (merged and clean only), `status`; the classification the canary and the `Stop` backstop share.
 - `scripts/federation.py` — the federation primitive: opt-in file + groups, per-tenant registry, bootstrap heartbeat, the one `reachable()` predicate, the ONE authorization path (act-time re-read of the target's own file) behind both `consult` and `file`, the single function that writes into another repo's `intake/`, and the metadata-only `intake` reader.

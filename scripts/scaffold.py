@@ -124,24 +124,6 @@ def write_if_missing(path: Path, content: str) -> bool:
     return True
 
 
-def ensure_parked_section(index_path: Path) -> bool:
-    """Insert the empty `## Parked` section before `## Resolved` in an existing INDEX that lacks
-    it (WO-079). Idempotent: an INDEX that has the heading, or has no `## Resolved` to anchor on,
-    is left byte-identical. Existing rows are never touched. Returns True if it wrote."""
-    raw = index_path.read_bytes().decode("utf-8")
-    if re.search(r"^## Parked", raw, re.MULTILINE):
-        return False
-    m = re.search(r"^## Resolved", raw, re.MULTILINE)
-    if not m:
-        return False
-    tmpl = read_template("INDEX.md.tmpl").replace("\r\n", "\n")
-    section = tmpl[tmpl.index("## Parked"):tmpl.index("## Resolved")]
-    if "\r\n" in raw:
-        section = section.replace("\n", "\r\n")
-    index_path.write_bytes((raw[:m.start()] + section + raw[m.start():]).encode("utf-8"))
-    return True
-
-
 def gitkeep(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     keep = path / ".gitkeep"
@@ -156,8 +138,45 @@ def read_template(rel: str) -> str:
     return tpl.read_text(encoding="utf-8")
 
 
+_RULE_TAG_RE = re.compile(r"<!-- rule:([a-z0-9][a-z0-9-]*) -->")
+_RULE_ITEM_RE = re.compile(r"^\s*([-*]|\d+[a-z]?\.)\s")
+_RULE_PLACEHOLDER_RE = re.compile(r"\{\{RULE:([a-z0-9][a-z0-9-]*)\}\}")
+
+
+def rule_text(rule_id: str, skill_dir: "Path | None" = None) -> str:
+    """The canonical text of the paragraph that carries `<!-- rule:ID -->`, as a copy-ready single line: the tag, the
+    list marker and a leading bold label removed, whitespace collapsed, `<home>` left as written. A copy that must survive
+    compaction (the CLAUDE.md anchor) is generated from this, never typed a second time; `.gitos/tools/rules.json`
+    `copies` pins its hash. Raises when the tag is absent or present more than once under SKILL.md and references/."""
+    base = skill_dir or SKILL_DIR
+    found = []
+    for path in [base / "SKILL.md", *sorted((base / "references").rglob("*.md"))]:
+        lines = path.read_text(encoding="utf-8").replace("\r\n", "\n").split("\n")
+        for i, line in enumerate(lines):
+            if f"<!-- rule:{rule_id} -->" in line:
+                found.append((lines, i))
+    if len(found) != 1:
+        raise ValueError(f"rule:{rule_id} is present {len(found)} times, expected once")
+    lines, i = found[0]
+    s = i
+    while s > 0 and not _RULE_ITEM_RE.match(lines[s]) and lines[s - 1].strip() != "":
+        s -= 1
+    e = i
+    while e + 1 < len(lines) and lines[e + 1].strip() != "" and not _RULE_ITEM_RE.match(lines[e + 1]) \
+            and not lines[e + 1].startswith("#"):
+        e += 1
+    para = " ".join(_RULE_TAG_RE.sub("", "\n".join(lines[s:e + 1])).split())
+    para = re.sub(r"^([-*]|\d+[a-z]?\.)\s+", "", para)
+    return re.sub(r"^\*\*[^*]+\*\*\s*", "", para)
+
+
 def render(text: str, **tokens: str) -> str:
-    """Substitute {{KEY}} tokens via literal replace (safe with JSON/YAML braces)."""
+    """Substitute {{KEY}} tokens via literal replace (safe with JSON/YAML braces). `{{RULE:id}}` is replaced by the
+    canonical text of that rule (`rule_text`), with `<home>` read as the HOME token when one is given."""
+    def _rule(m: "re.Match") -> str:
+        body = rule_text(m.group(1))
+        return body.replace("<home>", tokens["HOME"]) if "HOME" in tokens else body
+    text = _RULE_PLACEHOLDER_RE.sub(_rule, text)
     for key, val in tokens.items():
         text = text.replace("{{" + key + "}}", val)
     return text
@@ -204,7 +223,33 @@ def carried_lines(old_block: str, new_block: str) -> "list[str]":
             if cand and difflib.get_close_matches(line, cand, n=1, cutoff=0.6):
                 continue                      # ordinary drift: a successor is in the new block
             out.append(line)
-    return out
+    return _drop_reflowed(old_lines, new_lines, out)
+
+
+def _drop_reflowed(old_lines: "list[str]", new_lines: "list[str]", carried: "list[str]") -> "list[str]":
+    """A line-level diff reads the same engine paragraph, re-wrapped, as foreign content. A carried line whose old PARAGRAPH
+    (a run of lines between blank lines) is mostly found (in runs of 8 characters or more, in order) inside one paragraph of the incoming block is that
+    paragraph reworded or reflowed, so it is not carried; a paragraph with no such counterpart still is."""
+    def paragraphs(lines: "list[str]") -> "list[tuple[int, int]]":
+        spans, start = [], None
+        for k, ln in enumerate(lines + [""]):
+            if ln.strip() and start is None:
+                start = k
+            elif not ln.strip() and start is not None:
+                spans.append((start, k))
+                start = None
+        return spans
+
+    flat_new = [" ".join(" ".join(new_lines[a:b]).split()) for a, b in paragraphs(new_lines)]
+    kept = list(carried)
+    for a, b in paragraphs(old_lines):
+        text = " ".join(" ".join(old_lines[a:b]).split())
+        for cand in flat_new:
+            sm = difflib.SequenceMatcher(None, text, cand, autojunk=False)
+            if sum(m.size for m in sm.get_matching_blocks() if m.size >= 8) >= 0.6 * len(text):
+                kept = [ln for ln in kept if ln not in old_lines[a:b]]
+                break
+    return kept
 
 
 def ensure_claude_section(claude_path: Path, section: str) -> "tuple[str, list[str]]":
@@ -620,8 +665,6 @@ def main() -> int:
     # ---- work side --------------------------------------------------------
     report(write_if_missing(home / "INDEX.md",
                             render(read_template("INDEX.md.tmpl"), **tokens)), home / "INDEX.md", root)
-    if ensure_parked_section(home / "INDEX.md"):
-        print("OK   added the Parked section to INDEX.md")
     report(write_if_missing(home / "log_vocabulary.md",
                             render(read_template("log_vocabulary.md.tmpl"), **tokens)),
            home / "log_vocabulary.md", root)
@@ -659,12 +702,21 @@ def main() -> int:
         gitkeep(brain / "raw" / "_extracted")
         for sub in ("sources", "entities", "concepts", "decisions"):
             gitkeep(brain / "wiki" / sub)
-        report(write_if_missing(brain / "wiki" / "index.md",
-                                render(read_template("brain/wiki-index.md.tmpl"), **tokens)),
-               brain / "wiki" / "index.md", root)
-        report(write_if_missing(brain / "wiki" / "log.md",
-                                render(read_template("brain/wiki-log.md.tmpl"), **tokens)),
-               brain / "wiki" / "log.md", root)
+        # The index is generated from page front matter (brain_lint --write-index); an empty brain
+        # gets the empty generated index, so the first lint run finds no drift. There is no log.
+        index_path = brain / "wiki" / "index.md"
+        if not index_path.exists():
+            spec = importlib.util.spec_from_file_location("_gitos_scaffold_brain_lint",
+                                                          SKILL_DIR / "scripts" / "brain_lint.py")
+            lint_mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = lint_mod   # a @dataclass resolves its module through sys.modules
+            spec.loader.exec_module(lint_mod)
+            index_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(index_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(lint_mod.build_index([]))
+            report(True, index_path, root)
+        else:
+            report(False, index_path, root)
         meta = {"created": today, "engine_version": engine_version(),
                 "last_ingest": None, "last_lint": None,
                 "counts": {"sources": 0, "entities": 0, "concepts": 0, "decisions": 0}}
@@ -1013,6 +1065,16 @@ def main() -> int:
         if ensure_resume_board(home / "RESUME.md", resume_board_section(resume_text)):
             print(f"OK   added the Owner board section to {home_label}/RESUME.md")
             WRITTEN.append(f"{home_label}/RESUME.md (Owner board section)")
+
+    # The seeded board is generated whole once the brain stamp exists; an INDEX without the board line is left alone.
+    _lispec = importlib.util.spec_from_file_location("_gitos_scaffold_ledger_index", SKILL_DIR / "scripts" / "ledger_index.py")
+    _limod = importlib.util.module_from_spec(_lispec)
+    _lispec.loader.exec_module(_limod)
+    if (home / "INDEX.md").is_file() and _limod.BOARD_MARK in (home / "INDEX.md").read_text(encoding="utf-8"):
+        _text, _diff, _found = _limod.render(home)
+        if _diff:
+            (home / "INDEX.md").write_bytes(_text.encode("utf-8"))
+            print(f"OK   generated the board {home_label}/INDEX.md")
 
     if home_existed:
         # Upgrade re-run on an already set-up repo: the inception steps below are wrong here.

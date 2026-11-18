@@ -11,12 +11,11 @@ has one slice, and a folder once it has two:
     work-orders/WO-NNN/order.md              the spec, frozen at accept (amended only by appended, dated notes)
     work-orders/WO-NNN/slices/SN-<name>.md   front matter `status`, `depends_on`, `commit`, `origin`; the scope,
                                              verification, the five note labels and the adjudication in the body
-    work-orders/WO-NNN/log.md                append-only
 
   * `add` is the orchestrator's. On a single-file order it first converts the order with `git mv` (blame
     survives on `order.md`): the scope section becomes `S1`, the rest stays `order.md`; then it writes the new
     slice as `proposed`. S1 is named by `--s1-name NAME`, else from the first heading words of the scope (a `### S1`
-    slice heading, a heading inside the scope, or its first line), else `scope`; the log line says which. On a
+    slice heading, a heading inside the scope, or its first line), else `scope`; the report line says which. On a
     folder order it writes the next number. It refuses inside an implementer's worktree (one made by
     `worktree.py new NNN --slice SN`).
   * `next` prints the first `ready` slice whose `depends_on` are all `landed` (across orders: by severity,
@@ -35,7 +34,6 @@ import os
 import re
 import subprocess
 import sys
-from datetime import date
 from pathlib import Path
 
 STATUSES = ("proposed", "ready", "in-progress", "implemented", "landed", "dropped")
@@ -241,8 +239,6 @@ def convert(home: Path, path: Path, nnn: str, s1_name: "str | None" = None):
     _write(dest, "\n".join(new_lines).replace("@NAME@", name))
     sl = folder / "slices" / f"S1-{name}.md"
     _write(sl, _slice_text(1, title, "ready", body))
-    _write(folder / "log.md", f"# WO-{nnn} log\n\n- {date.today().isoformat()} converted to the folder form: "
-                              f"the scope became S1 ({name}, ready; named from {source})\n")
     note = ("converted " + path.name + " -> " + _rel(home, dest) + (" (git mv)" if moved else " (plain move: not tracked)")
             + f"; S1-{name} is `ready`, named from {source} (set it by hand if the work has started)")
     return folder, sl, note
@@ -284,9 +280,6 @@ def slice_add(home: Path, wo: str, name: str, depends_on=(), origin: str = "", s
         raise SliceError(f"WO-{nnn} already has a slice named '{name}'; nothing was added")
     dest = folder / "slices" / f"S{num}-{name}.md"
     _write(dest, _slice_text(num, name.replace("-", " "), "proposed", "", tuple(depends_on), origin))
-    log = folder / "log.md"
-    stamp = f"- {date.today().isoformat()} slice S{num}-{name} added (proposed)\n"
-    _write(log, (_read(log) if log.is_file() else f"# WO-{nnn} log\n\n") + stamp)
     top = (_git(folder, "rev-parse", "--show-toplevel") or "").strip()
     if top:
         _git(top, "add", "--", str(folder))
@@ -374,7 +367,7 @@ def slice_brief(home: Path, sid: str):
            "",
            "Read this, then work. Open any other file only by the path given here, and only when you need it.",
            f"Edit only your slice file ({_rel(home, path)}): its notes, and its status from in-progress to "
-           "implemented. Never edit order.md, log.md, another slice file or INDEX.md, and never set a status "
+           "implemented. Never edit order.md, another slice file or INDEX.md, and never set a status "
            "to landed or dropped; the orchestrator does.",
            "", f"## order.md ({_rel(home, folder / 'order.md')})", "", _read(folder / "order.md").strip(), "",
            f"## Your slice ({_rel(home, path)})", "", _read(path).strip(), ""]

@@ -220,7 +220,7 @@ def check_legacy(root, home, **_) -> list:
                 ("Decline", "Records the answer so this file is not asked about again.")]),
             {"Import and drain": [_cmd("loose_ends.py", "import", "--root", root, path)],
              "Decline": [_cmd("loose_ends.py", "legacy", "decline", path, "--root", root)]},
-            follow_up="After an import: run the drain (references/roles/orchestrator.md -> Draining the loose ends)."))
+            follow_up="After an import: run the drain (references/orchestrator/drain.md)."))
     if len(pending) > MAX_LEGACY:
         out[-1]["follow_up"] += f" {len(pending) - MAX_LEGACY} more register file(s) are asked in the next round."
     return out

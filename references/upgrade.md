@@ -184,7 +184,8 @@ Direct the running orchestrator to:
   *Canary*). If `canary.py` reports `anchor-missing` or `anchor-stale`, refresh it: re-run
   `python ~/.claude/skills/gitos/scripts/scaffold.py <root> --git skip` (idempotent — it upserts
   *only* the managed block, creating `CLAUDE.md` if absent, never touching content outside the
-  markers), or edit the block by hand between its markers. **Anything the repo owns — project
+  markers; its canary, board and dispatch-tier text is generated from the canonical paragraphs the briefs carry, so the refresh
+  picks up a changed rule without a new step), or edit the block by hand between its markers. **Anything the repo owns — project
   instructions, the `_meta` block including `_meta.bridge` — belongs outside the markers: the
   refresh replaces the block's engine text, and while it now carries unrecognized in-block
   lines through and reports them, only content outside the markers is untouched by
@@ -259,7 +260,7 @@ run, show the plan, and apply with `--apply` only on their word. Never move a us
 approval; user-scope baseline changes are proposals only. Policy: `references/harness.md`.
 
 **The popup is part of the one round (4q).** `offer.py` includes the popup's questions (`harness.py popup`,
-rules: `references/roles/orchestrator.md`, policy: `references/harness.md`) when `audit` holds removal candidates,
+rules: `references/orchestrator/harness-removals.md`, policy: `references/harness.md`) when `audit` holds removal candidates,
 and the two claude.ai sync questions come with them. Nothing is pre-selected and silence applies nothing. Only the
 ticked candidates go to `sync --confirm NAME`, and only a sync answer of Turn off or Turn back on goes to `sync`
 as the flag that `sync_flags` maps it to. Show the dry run first, then `--apply` on the operator's word. On demand,
@@ -286,13 +287,8 @@ leftovers it lists with `reap --merged` (git's own refusals stay the safety: not
 dirty is removed), and raise any abandoned one to the operator, who merges it or removes it by hand.
 Scaffold has already made sure `.claude/worktrees/` is in `.gitignore` (new worktrees live outside the repo tree; older ones under that path are still found and reaped).
 
-**4k. Parked section.**
-If `<home>/INDEX.md` has no `## Parked` heading, run `python <SKILL_DIR>/scripts/scaffold.py <root>
---git skip`: it inserts the empty `## Parked (deferred, with restart trigger)` section (columns `NNN |
-Title | Restart trigger | Evidence`, generated from the parked work-orders) before `## Resolved`, and rewrites nothing else. An INDEX
-that already has the heading is left byte-identical, so re-running is a no-op. The same pass is what
-lays the section on a new repo. Work-orders resolved before engine v44 are exempt from the canary's
-`loose-ends` check; do not backfill adjudications onto them.
+**4k. Parked section.** Retired: the generated board carries the Parked table (4n lays it). Work-orders resolved before
+engine v44 are exempt from the canary's `loose-ends` check; do not backfill adjudications onto them.
 
 **4l. Legacy loose-ends registers.**
 The loose-ends list is **lazy**: upgrade does not lay `<home>/loose-ends.md` and a repo with no file has an
@@ -304,7 +300,7 @@ the file, never imports a row twice; rows that say done, fixed, closed, merged o
 "probably done" and still imported; records `<!-- legacy: <path> imported -->` in the list header) or
 `loose_ends.py legacy decline <FILE> --root <repo-root>` (records `declined`; this is the one case the file is
 created without an item, and only after the operator answered). After an import, run the drain
-(`references/roles/orchestrator.md` -> *Draining the loose ends*). Sections of implementer notes inside a legacy
+(`references/orchestrator/drain.md`). Sections of implementer notes inside a legacy
 register are not rows: say so, and adjudicate them by hand in the same pass (facts to the brain, follow-ups by
 the deferral rule: a work-order, a parked work-order or, last, `loose_ends.py add`).
 
@@ -322,18 +318,17 @@ resolved orders are left alone. `work-orders/history/` is retired: an empty one 
 longer checks it, and the whole-order size limit (`work-order-oversized`) is gone; the per-file limits of a folder
 order stay.
 
-**4n. Generated INDEX tables.**
-Opt in by laying markers around the tables the repo already has, then let the script write them. In
-`<home>/INDEX.md`, put `<!-- gitos:index open -->` and `<!-- /gitos:index -->` on their own lines around the
-rows of the Open table (below its separator row), and `<!-- gitos:index resolved -->` and
-`<!-- /gitos:index -->` at the top of the Resolved table's rows, above the existing ones. Rows already in the
-Resolved table stay hand-kept below the markers and are never regenerated. Then run
-`python <SKILL_DIR>/scripts/ledger_index.py <home>`: it rewrites only what lies between the markers, from the
-orders' front matter (`severity`, `title`, `evidence`; resolved orders also `summary`, `released` (or the older
-`landed`), `result`), and
-leaves every other byte of the file alone. An INDEX with no markers is left unchanged, and the canary's
-`index-drift` check is skipped for it. New repos get the markers from scaffold. Add the front matter to each
-open order first (`references/work-order-template.md`), or the row is built from its H1 and `## Severity`.
+**4n. The board: lay the generated INDEX, delete `footprints.md` and the per-order logs (v61).**
+`ledger_migrate.py` (4m) does this in the same dry run, as `board:` lines. An INDEX without the `<!-- gitos:index board -->`
+line is replaced by the generated board (`ledger_index.py` writes the whole file from the order files: header, Open, Parked).
+Nothing is dropped silently: a Resolved row goes when its order file is in `work-orders/resolved/` (an order from engine v44 on
+whose file carries no `released:` is stamped from the row's version first); a row with no file, an Open or Parked row no file
+regenerates, and every hand-written section (release notes, Findings DISPROVED, next steps) moves to `RESUME.md` under one dated
+heading, verbatim in a fenced block, for the operator to sort (live state stays in RESUME, a durable decision goes to a brain
+decision page, the rest is deleted; git keeps the old INDEX). It also removes `footprints.md` (a landing's footprint is
+`git show --name-only <sha>`) and every `work-orders/**/WO-NNN/log.md`. Commit this in the repo's own commit, then run
+`python <SKILL_DIR>/scripts/ledger_index.py --check <home>`. The header carries the engine version stamp, so step 5 regenerates the
+board after it writes the stamp. The canary advises `index-oversized` when INDEX.md passes 16 KB.
 
 **4o. Slice-edit hook and folder orders.**
 Run `python <SKILL_DIR>/scripts/slice_guard.py install <repo-root>` (scaffold lays the same entry). It registers a
@@ -359,7 +354,7 @@ Every item that is not yet an order becomes a row of `<home>/loose-ends.md` with
 per move: each item a pending drain proposal holds gets its row back as `proposed: <kind>` (the file stays as its
 attachment); each `parked: <trigger>` row and each open hand-kept INDEX Parked row (`P<n>`) becomes a parked
 work-order (a new order file, `status: parked`, `trigger:`, `origin: L<n>` or `P<n>`; the row leaves the list, a
-closed `P<n>` goes) and the Parked section becomes the generated region `<!-- gitos:index parked -->` with the
+closed `P<n>` goes) and the INDEX becomes the generated board (4n), whose Parked table has the
 columns `NNN | Title | Restart trigger | Evidence`;
 each open carried box of an open order goes back on the list as `new` and the box is ticked `-> L<n>`;
 `drain/declined/`, `drain/accepted/` and `drain/routed.txt` are removed (a declined item is already a `declined:`
@@ -413,18 +408,31 @@ files), and propose to the operator a smaller set: follow-up and "part 2" orders
 that owns that scope (or one order per scope); items already fixed closed with the commit named; everything left
 given an explicit finish order. Report `N open before -> M after`. Nothing changes without the operator's word.
 
+**4p. The brain: front matter, the generated index, no log (v61).**
+Skip when the repo has no `<home>/brain/`. The brain's front matter is the source of truth and `wiki/index.md` is
+generated from it (`references/brain-schema.md` §3-4). Run the home copy of `brain_lint.py` on `<home>/brain`: a page
+without `type`, `description`, `status` and a dated `updated` is reported under `schema`. For each such page add the
+front matter with `type` from its directory, `status: active`, `updated` kept from the page's own date, and a
+`description` taken from the page's first line and shortened to one "read this when ..." line of at most 140
+characters (a decision page is a record: keep its `decided` date as `updated`; a hand-written `maps_to` becomes
+`rests_on`). Then run `brain_lint.py <home>/brain --write-index` to generate the index (it replaces the hand-kept one;
+over 200 lines / 8 KB is an error that names the longest descriptions), and delete `wiki/log.md` (git keeps it:
+`git log -- <home>/brain`). This step adds front matter and nothing else; judging which pages to cut or delete is
+the operator's separate audit against the write test (`brain-schema.md` §1). Commit it in the repo's own commit, then
+run `brain_lint.py <home>/brain --check`.
+
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:
 `<home>/brain/.brainmeta.json` (`engine_version` field) for a repo with a brain, else
-`<home>/HANDOFF.md`.
+`<home>/HANDOFF.md`. Then run `python <SKILL_DIR>/scripts/ledger_index.py <home>` (the board header names the stamp).
 
-**6. Record an ADR + a log line.**
-Add a decision page `<home>/brain/wiki/decisions/engine-upgrade-vN.md` recording: the
-from→to versions, which directives were adopted, and any pointers re-pointed. Append a
-`wiki/log.md` line (`engine upgrade vM → vN`).
+**6. Record a decision only if there is a why.**
+The from→to versions, the adopted directives and the re-pointed pointers are in the stamp and in git, so they are not
+a brain page. Add a decision page (with its front matter) only when the upgrade carried a choice that passes the
+write test (`brain-schema.md` §1): a rejected option, a trap, an operator decision. No log line: the brain has no log.
 
 **7. Report.**
-Show the `git diff` of what changed (the re-pointed pointers, the stamp, the ADR, any
+Show the `git diff` of what changed (the re-pointed pointers, the stamp, any decision page, any
 `<home>/tools/` copy that was newly copied **or refreshed** — name each refreshed tool and
 say the prior bytes are in git), and the `ledger_migrate.py` result (the `not-now:` moves and anything `LEFT`,
 converted orders, skipped orders with their reason, `work-orders/history/` removed) — confirm each explicitly in the

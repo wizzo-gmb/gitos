@@ -22,7 +22,7 @@ Refreshed: {{DATE}} · Home: `{{HOME}}/` · Ledger: `{{HOME}}/INDEX.md` · Brain
 
 <!-- Dispatched workers, branches, worktrees, background jobs. The reattach column is the
      load-bearing one: an item with no reattach line is what holds a rotation
-     (`references/roles/orchestrator.md` → *Checkpoint + rotation*). -->
+     (`references/orchestrator/checkpoint.md`). -->
 
 | What | Where (branch / worktree / job) | Reattach or verify |
 |---|---|---|
@@ -67,7 +67,7 @@ The operator's list: `loose_ends.py status <repo-root>`.
 Standing operator rules (permissions, caps, prohibitions, preferences) live in the brain and
 are **pointed at** from here. This file is replaced at every checkpoint, so a rule written
 into it would be destroyed by the next rotation — the one failure the division exists to
-prevent (`references/roles/orchestrator.md` → *Rules go to files*).
+prevent (`references/orchestrator/authoring.md` → *Rules go to files*).
 
 - `{{HOME}}/brain/wiki/concepts/standing-rules.md` — the operator's standing rules.
 
@@ -77,7 +77,7 @@ prevent (`references/roles/orchestrator.md` → *Rules go to files*).
 
 - Birth record — `{{HOME}}/HANDOFF.md`
 - Work — `{{HOME}}/INDEX.md`, open orders under `{{HOME}}/work-orders/`
-- What landed — `{{HOME}}/footprints.md`
+- What landed — `git log`, and `{{HOME}}/work-orders/resolved/`
 - Knowledge — `{{HOME}}/brain/wiki/index.md`
 - Role + focus marker, and the fresh-window path — `SKILL.md` → *Canary*
 

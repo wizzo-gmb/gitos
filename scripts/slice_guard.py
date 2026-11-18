@@ -7,7 +7,7 @@ runs before Edit, Write, MultiEdit and NotebookEdit:
 
   * No marker for the file's worktree and none for the session's cwd: ALLOW (the orchestrator, or anyone not
     working a slice).
-  * Marker present: REFUSE an edit to a folder order's `order.md` or `log.md`, to any slice file other than
+  * Marker present: REFUSE an edit to a folder order's `order.md`, to any slice file other than
     the implementer's own `slices/SN-*.md`, to `INDEX.md` of a gitos home, and a front-matter `status` change of
     the implementer's own slice to `landed` or `dropped`. Everything else is allowed: code, tests, docs, and the
     implementer's own slice notes and its status move in-progress -> implemented.
@@ -37,7 +37,7 @@ EVENT = "PreToolUse"
 TOOLS = "Edit|Write|MultiEdit|NotebookEdit"
 MARKER = "gitos-slice"
 MARKER_RE = re.compile(r"^WO-(\d{3})/S(\d+)$")
-FOLDER_PATH_RE = re.compile(r"(?:^|/)work-orders/(?:resolved/)?([^/]+)/(order\.md|log\.md|slices/([^/]+\.md))$")
+FOLDER_PATH_RE = re.compile(r"(?:^|/)work-orders/(?:resolved/)?([^/]+)/(order\.md|slices/([^/]+\.md))$")
 NNN_RE = re.compile(r"(\d{3})(?!\d)")
 TERMINAL = ("landed", "dropped")
 

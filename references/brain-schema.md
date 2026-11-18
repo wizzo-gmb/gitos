@@ -1,247 +1,147 @@
 # Brain schema — the orchestrator's memory (canonical)
 
-This is the single source of truth for the per-repo **brain**: a self-contained,
-code-adapted knowledge vault the orchestrator reads, queries, and grows as it
-works with the operator. It is the orchestrator's long-term memory — the thing that
-lets a fresh or post-compaction session resume without re-learning the repo.
+The per-repo **brain** is what the orchestrator knows that nothing else in the repo says. It lets a fresh or
+post-compaction session resume without re-learning the repo, and it is deliberately small: a brain that catalogs
+everything the code, git and the work orders already hold makes the next session slower and no wiser.
 
-The brain is **self-contained**: every repo carries its own brain under
-`.gitos/brain/`. There is no external service, registry, or shared vault. (The
-schema's lineage is a Zettelkasten-style "second brain"; the
-implementation here is standalone and depends on nothing outside the repo.)
+The brain is **self-contained**: every repo carries its own under `.gitos/brain/`. No external service, registry or
+shared vault.
 
 ## Table of contents
 
-1. Directory layout
-2. Page types (source / entity / concept / decision)
-3. Wikilink + frontmatter conventions
-4. Index and log
-5. The maintenance loop (how the orchestrator keeps it true and non-redundant)
+1. The write test (the rule)
+2. Directory layout
+3. Page types and front matter
+4. The generated index; no log
+5. The maintenance loop
 6. Anti-redundancy invariants
-7. `brain_lint.py` — the deterministic backstop
+7. `brain_lint.py`
 
 ---
 
-## 1. Directory layout (inside each repo)
+## 1. The write test
+
+**The brain holds only what cannot be found in the code, git, CLAUDE.md or a work order:** why a decision was made,
+what was rejected and why, conventions that are not obvious, and traps. Before a page is written or extended, ask:
+
+1. Can this be found in a work order, the git log, the code or CLAUDE.md? If so, **do not write it** (a code comment
+   is the home of a fact about code; the order is the record of what an order decided).
+2. Is there already a page for it? If so, **update that page**; do not add a second.
+
+What fails the test: what was built (the code says), the history of events (git says), the order's own adjudication
+(the order says), a catalog of files or tools, a restatement of a reference doc. What passes: the reason a design won
+over its rejected alternatives, the trap a later change would walk into, the operator's standing rule, a convention
+no single file shows.
+
+## 2. Directory layout
 
 ```
 <root>/.gitos/brain/
-├── BRAIN.md               Brain identity: this repo's domain, default tags, entity types, schema pointer, rules
-├── raw/                   Drop-zone for material to ingest (docs, specs, transcripts, exports)
-│   └── _extracted/        Cached text from PDFs/binaries (so re-ingest doesn't re-extract)
+├── BRAIN.md               Brain identity: this repo's domain, default tags, entity types, schema pointer
+├── raw/                   Drop-zone for material to ingest (docs, specs, transcripts)
+│   └── _extracted/        Cached text from PDFs/binaries
 ├── wiki/
 │   ├── sources/           One factual summary per ingested document
-│   ├── entities/          The repo's "nouns": modules, services, components, external systems, data stores, key deps, people, tools
-│   ├── concepts/          Architecture patterns, domain concepts, conventions, invariants — "how this system works"
-│   ├── decisions/         ADR-style decision records — WHY things are the way they are
-│   ├── index.md           Master catalog (Sources / Entities / Concepts / Decisions)
-│   └── log.md             Chronological operation record
-└── .brainmeta.json        Cached metadata (last_ingest, counts)
+│   ├── entities/          The repo's "nouns" that need more than their code says
+│   ├── concepts/          Patterns, conventions, invariants, traps spanning files
+│   ├── decisions/         ADR-style records: WHY, and what was rejected
+│   └── index.md           GENERATED from front matter; never edited by hand
+└── .brainmeta.json        Cached metadata (engine_version, counts)
 ```
 
-`BRAIN.md` is named `BRAIN.md`, **not** `CLAUDE.md`, on purpose: a nested
-`CLAUDE.md` would be auto-loaded by Claude Code when the working directory is
-inside `.gitos/brain/`, polluting the repo-root context. `BRAIN.md` is read
-deliberately by the orchestrator, not ambiently.
+`BRAIN.md` is named `BRAIN.md`, **not** `CLAUDE.md`, on purpose: a nested `CLAUDE.md` would be auto-loaded when the
+working directory is inside `.gitos/brain/`. There is **no `tasks/` and no `projects/`** type and **no log**:
+actionable work lives in the work-order ledger, and the history of the brain is `git log -- .gitos/brain`.
 
-There is **no `tasks/` and no `projects/`** page type. Actionable work lives in
-the pipeline's work-order ledger (`.gitos/INDEX.md` + `work-orders/`), which is
-the single task surface. The brain holds *knowledge*; it links to work-orders for
-*action*. (See §6.)
+## 3. Page types and front matter
 
-## 2. Page types
-
-Four high-signal types. Each is a markdown file under `wiki/<type>/<slug>.md` with
-YAML frontmatter + a body of prose and `[[wikilinks]]`.
-
-### Source page (`wiki/sources/<slug>.md`)
-
-A **factual** summary of one ingested document (a README, a spec, a design doc,
-external API docs, the inception handoff). Interpretation does NOT go here — it
-goes in concepts/decisions. Frontmatter:
+Four types, each a markdown file under `wiki/<type>s/<slug>.md` (directory plural; `type:` singular). The front
+matter is the **source of truth**; the body is prose with `[[wikilinks]]` to other pages.
 
 ```yaml
 ---
-tags: [domain, tag]
-source_type: readme | spec | design-doc | api-doc | handoff | transcript | note
-sources: [original/path/or/filename]      # what this page summarizes
-created: YYYY-MM-DD
+type: source | entity | concept | decision     # must match the directory
+description: one line (at most 140 chars): when to read this page
+status: active | superseded
+superseded_by: <slug of the page that replaces it>   # required when superseded
 updated: YYYY-MM-DD
+rests_on: [path/or/commit, ...]                # optional: what the page depends on
 ---
 ```
-Body (recommended): **Summary**, **Key facts**, **Entities mentioned** (as
-`[[wikilinks]]`), **Concepts covered** (as `[[wikilinks]]`), **Open questions /
-action items** (which become work-orders, linked).
 
-### Entity page (`wiki/entities/<slug>.md`)
+- `description` is what the generated index shows. Write it as "read this when ...", concrete, not a title.
+- `updated` is when the page was last changed or checked. For a decision it is the date the decision was made.
+- `rests_on` lists repo-root-relative paths (a path may carry `#anchor`) or commit hashes the page depends on. The lint
+  reports one that no longer exists, which is the signal that the page may be wrong.
+- `historical: true` (optional) opts a page out of the age test (a page transcribing a fixed source).
 
-A "noun" in the repo: a module/package, a service, a component, an external
-system/API, a data store, a key dependency, a person/stakeholder, a tool.
-Frontmatter:
+**Source** — a factual summary of one ingested document that is not itself in the repo (an external spec, API docs).
+Never a summary of a file the repo holds. **Entity** — a noun (service, module, external system) whose cross-cutting
+facts or traps no single file shows; it maps into code and never copies it. **Concept** — a pattern, convention,
+invariant or trap spanning files. **Decision** — the highest-value type: context in a line, options weighed with the
+reason each lost, the decision and **why**, and what must stay true. A decision is **never rewritten**: a reversal is a
+new decision page, and the old one gets `status: superseded` and `superseded_by` (ADR practice). A decision page
+points at its order with one markdown link and does not restate the order's adjudication; if the whole content is
+that adjudication, there is no page.
 
-```yaml
----
-tags: [entity_type, domain]
-entity_type: module | service | component | external-system | datastore | dependency | person | tool
-maps_to: [src/path/or/symbol]              # where this lives in the code (entities MAP into code)
-sources: [[Source Page]]
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
----
-```
-The `maps_to` field is load-bearing: an entity page is a **map into the code**,
-not a copy of it (see §6). Link to files/symbols; capture only the cross-cutting
-facts that aren't obvious from reading one file.
+## 4. The generated index; no log
 
-### Concept page (`wiki/concepts/<slug>.md`)
+`python <home>/tools/brain_lint.py <home>/brain --write-index` builds `wiki/index.md`: one line per **active** page,
+`[[slug]] — description`, grouped by type, superseded pages left out. It is capped at **200 lines / 8 KB**; over the
+cap is a lint error that names the longest descriptions. Never edit it by hand: edit a page's `description` and
+regenerate (between sessions, so the session start reads a stable file). `brain_lint.py <home>/brain --check` exits 1
+when the schema or the committed index is off; an orphan cannot exist because every page is in the index by
+construction.
 
-An architecture pattern, domain concept, convention, or invariant — the "how this
-system works" knowledge that spans files. Same frontmatter shape as an entity with
-`concept_type: pattern | domain | convention | invariant` instead of `entity_type`.
+There is no `wiki/log.md`. What changed in the brain, and when, is git's: `git log -- <home>/brain`.
 
-### Decision page (`wiki/decisions/<slug>.md`) — the highest-value type
+## 5. The maintenance loop
 
-An ADR-style record of a non-trivial choice made with the operator: what was decided,
-the context, the options weighed, and **why** this one won. This is the knowledge
-that most reliably survives compaction and onboards the next session — code shows
-*what*, decisions explain *why*.
+### Layer 1 — Inline capture: the write test, then upsert
 
-```yaml
----
-status: accepted | superseded | revisited
-decided: YYYY-MM-DD
-supersedes: [[Prior Decision]]             # optional
-superseded_by: [[Later Decision]]          # optional
-work_order: [WO-007]                       # optional — the WO that implements it
-tags: [domain]
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
----
+1. **Write test** (§1). Most facts fail it and are not written. A durable fact from an implementer's notes is sorted
+   at resolve: a **code comment** where the fact lives (most), the tool's **reference doc**, a **brain page** only
+   if it passes the test, or **nowhere**.
+2. **Search first.** Read `wiki/index.md` and grep `wiki/` for a page on this atom.
+3. **Upsert.** Update that page and bump `updated`; create a new page only when the atom is distinct from every
+   existing page. A decision is updated only by a new decision that supersedes it.
+4. **Route by kind.** If it is actionable, it is a work order, not a brain page.
+5. Regenerate the index (`--write-index`). No log entry.
 
-# Decision: <imperative summary>
+### Layer 2 — Checkpoint reconcile
 
-## Context
-## Options considered
-## Decision + why
-## Consequences / what to watch
-```
-
-## 3. Wikilink + frontmatter conventions
-
-- Every reference to another wiki page uses `[[Page Name]]` (human-readable form;
-  the file is the slugified name). **Never** use raw file paths for internal
-  references in body prose — that's what breaks when pages move and what `brain_lint`
-  flags.
-- Links to the *code* (not other wiki pages) DO use real paths/symbols — that's the
-  entity↔code map, and it's intentional.
-- Keep `created` fixed and bump `updated` on every edit. Stale `updated` is how
-  `brain_lint` finds rot.
-
-## 4. Index and log
-
-- `wiki/index.md` — a categorized catalog of every page (Sources / Entities /
-  Concepts / Decisions). Refreshed during the reconcile pass and by `brain_lint`.
-- `wiki/log.md` — a chronological one-line-per-op record (`ingest`, `page-add`,
-  `page-update`, `decision-record`, `merge`, `reconcile`, `lint`). Append on every
-  operation; it's the audit trail of how the brain came to hold what it holds.
-
-## 5. The maintenance loop (self-feedback, keeps the brain true and lean)
-
-The orchestrator doesn't just *seed* the brain at init — it **feeds its working
-experience back into the brain as it builds**, and prunes redundancy. Three layers:
-
-### Layer 1 — Inline capture (continuous): the UPSERT protocol
-
-Whenever you learn or decide something worth remembering, before writing anything:
-
-1. **Search first.** Read `wiki/index.md` and grep `wiki/` for an existing page on
-   this atom (entity / concept / decision / source); read the page before you write. This
-   search-before-write step is the *primary* defense against duplication — most "new" facts belong on a page
-   that already exists.
-2. **Upsert.** UPDATE the existing page (revise the relevant section, bump
-   `updated`, add `[[wikilinks]]`). CREATE a new page ONLY when the atom is
-   genuinely distinct from every existing page.
-3. **Route by kind.** If the atom is *actionable* ("we should refactor X", "fix the
-   retry logic"), it is a **work-order**, not a brain page — file it in the INDEX and
-   have the relevant brain page *link* it. If it's *why / what-is-true*, it's a brain
-   page.
-4. **Reconcile contradictions.** If the new fact contradicts the page, update the
-   page and note both readings with a dated marker so the change is auditable.
-5. **Log.** Append one line to `wiki/log.md`.
-
-### Layer 2 — Checkpoint reconcile (periodic): REFLECT → RECONCILE
-
-At natural checkpoints — a work-order verified, end of a working session, **before a
-likely context compaction**, or roughly every N captured atoms — run a short pass:
-
-- **Reflect.** Ask: "what did this session establish that the brain doesn't hold
-  yet, and what did it *invalidate*?" Look for decisions made, new entities touched,
-  concepts that got clearer, and assumptions that died.
-- **Capture** the deltas via the Layer-1 upsert protocol.
-- **Reconcile.** Re-read the pages you touched. **Merge near-duplicates**: pick the
-  canonical page, fold in the other's content, and replace the loser with a
-  `see [[Canonical]]` redirect stub (or delete it after re-pointing inbound links).
-  Mark superseded content `superseded_by [[X]] (date)`. Fix broken `[[links]]`.
-- **Refresh** `wiki/index.md` and `.brainmeta.json`.
-
-This is the self-feedback loop: working experience becomes durable memory, then gets
-pruned so the brain stays small and true rather than sprawling.
+At a checkpoint (an order resolved, end of a session, before a likely compaction): ask what the session established
+that the brain does not hold **and passes the write test**, and what it invalidated. Re-read the pages you touched,
+merge near-duplicates, mark a replaced decision superseded, fix broken `[[links]]`, regenerate the index.
 
 ### Layer 3 — Deterministic backstop
 
-Run `<home>/tools/brain_lint.py <home>/brain` at checkpoints (the diagnostic
-role can also run it — it's a read-only audit, no new role). It flags structurally
-what reflection misses (§7). Small fixes happen inline in the reconcile pass; large
-restructures become a consolidation **work-order** in the INDEX — knowledge
-maintenance flows through the same work ledger, never a parallel system.
+Run `brain_lint.py <home>/brain` at checkpoints (the diagnostic role can too: it is read-only unless asked to write
+the index). Small fixes happen inline; a large restructure becomes a consolidation work order.
 
-## 6. Anti-redundancy invariants (what the loop enforces)
+## 6. Anti-redundancy invariants
 
-These rules are *why* the loop above works. They kill the main sources of brain
-bloat at once, and keep what remains forward-useful.
+- **One atom, one page.** Everything else links and never copies.
+- **Knowledge, work, birth record and code are four layers.** The brain holds why / what is true; the INDEX holds
+  what work is open; the frozen handoff is the birth record; the code holds what the system does. A brain page links
+  an order and never restates it.
+- **The brain maps into code; it does not mirror it.** No pasted code, no restated docstring.
+- **Prefer update; create only when distinct.**
+- **Forward-positive.** Record issues factually as cause plus correction, because that prevents recurrence; no blame,
+  no editorializing about people, no conversational aside enshrined as fact. This one is semantic: it lives in the
+  reflection pass, not in the lint.
 
-- **One atom, one page.** Each fact / entity / concept / decision has exactly one
-  home page; everything else *links* to it and never copies its content. (This is
-  the copy-without-rename discipline applied to prose: a duplicated paragraph drifts
-  out of sync exactly like a duplicated code identifier does.)
-- **Knowledge ≠ work ≠ birth-record.** A fact lives in exactly ONE layer:
-  - the **brain** (`why` / `what is true`),
-  - the **INDEX** work-orders (`what work is open`),
-  - the frozen **handoff** (`the birth record`).
-  Brain pages *link* work-orders; they never restate them. The handoff is never
-  edited after inception — anything that evolves moves into a brain page, and the
-  handoff stays the immutable record of what was true at birth.
-- **The brain maps into code; it does not mirror it.** Entity/concept pages link to
-  files/symbols (`maps_to`) and capture the cross-cutting *why*; they never paste
-  code or restate a docstring. The code is the source of truth for *what*; the brain
-  is for *why* and for the connections no single file shows.
-- **Prefer update; create only when distinct.** Enforced at write-time by Layer-1
-  search-before-write and audited by Layer-3 lint.
-- **Forward-positive (no self-pollution).** Every page serves forward movement.
-  Record issues, errors, and failures *factually* — their **cause + the
-  corrective/forward action** — because that is what prevents recurrence. Valid
-  issue-records STAY: diagnostic findings, bug work-orders, predecessor lessons,
-  and war-stories are *forward-fuel*, not clutter. What gets pruned is the
-  **dwelling**: no blame, no negative editorializing about people, no enshrining a
-  conversational aside as a durable fact, no logging "wrongness" for its own sake.
-  Test each line: *does it drive the next action, or just dwell on the last
-  problem?* Keep the cause and the correction; drop the longing. This one is
-  **semantic** — `brain_lint` can't enforce it, so it lives in the reflection pass
-  (§5).
+## 7. `brain_lint.py`
 
-## 7. `brain_lint.py` — the deterministic backstop
+`python <home>/tools/brain_lint.py <brain-dir> [--stale-days N] [--root DIR] [--json] [--write-index | --check]`.
+Without a mode flag it only reports. Classes:
 
-`python <home>/tools/brain_lint.py <brain-dir> [--stale-days N] [--json]` scans the brain
-and reports, by class:
-
-- **duplicate / near-duplicate pages** — same slug-stem, or high overlap in title
-  tokens + shared `[[wikilink]]`-target sets (two pages "about the same thing").
-- **orphans** — pages with no inbound `[[links]]` and not in `index.md` (unreachable
-  knowledge).
-- **stale** — pages whose `updated` is older than `--stale-days` (default 60).
+- **duplicate / near-duplicate pages** — same slug, or high title-token and shared-wikilink overlap.
+- **stale** — an active page whose `updated` is older than `--stale-days` (default 90; decision pages and
+  `historical: true` pages are exempt from the age test and the exemption is counted in the report), a `rests_on`
+  path or commit that no longer exists, a `superseded_by` that does not resolve.
 - **broken wikilinks** — `[[targets]]` with no matching page.
-- **cross-layer redundancy** — a brain page that names/echoes a work-order id, or
-  whose body is mostly a fenced code block (mirroring code instead of mapping it).
-
-It is read-only: it reports, it never edits. The orchestrator acts on the report in
-the reconcile pass (small) or via a consolidation work-order (large).
+- **cross-layer redundancy** — a page naming two or more different work-order ids in prose (a markdown link to an
+  order is a pointer and is not counted), or whose body is mostly a fenced code block.
+- **schema** — missing or invalid `type`, `description`, `status`, `superseded_by`, `updated`.
+- **index** — `wiki/index.md` over its cap, or not equal to the generated index.

@@ -1,12 +1,12 @@
 # GitOS engine — CHANGELOG
 
 One entry per `VERSION` bump (the integer in `VERSION` at the repo root is the engine
-version; each bump adds exactly one entry here, newest first).
+version; each bump adds exactly one entry here, newest first). An entry is its header, its `breaking:` line and one
+line per change naming its order (`- Owner board in every home (WO-122)`); the detail is in the order file and the release commit.
 
 **Bump rule.** `VERSION` increments by +1 on any change to engine *directives* (the
 behaviour-governing payload: `SKILL.md`, `references/`, scaffold/upgrade behaviour). Pure
-doc/cosmetic edits don't bump. (Rule pinned by the engine's version-bump-semantics
-decision — WO-002.)
+doc/cosmetic edits don't bump. (Rule pinned by WO-002.)
 
 **`breaking:` flag.** Each entry carries `breaking: yes` or `breaking: no`. A version is
 `breaking: yes` if adopting it requires a downstream repo to take migration action *beyond*
@@ -18,2003 +18,510 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v61 — 2026-11-17
+breaking: yes (the INDEX becomes a generated board; `ledger_migrate.py` lays it, moves hand-written sections to RESUME.md and deletes `footprints.md` and the per-order `log.md` files)
+
+- The INDEX is the board and nothing else: generated header, Open and Parked, no Resolved table, no hand-written sections (WO-124)
+- `footprints.md` and the per-order `log.md` are retired; a footprint is `git show --name-only <sha>` (WO-124)
+- `ledger_migrate.py` lays the board, moves hand-written sections to RESUME.md, stamps `released:` and deletes both files (WO-124)
+- Canary: `index-oversized` advisory over 16 KB, and the resolved-notes check reads each order's `released:` (WO-124)
+- CHANGELOG is one line per change (WO-124)
+- The brain is back to its rule: page front matter is the source of truth, `wiki/index.md` is generated and capped, `wiki/log.md` is gone, `brain_lint` checks schema and stale `rests_on` (WO-126)
+- The selftest is split per area, dev-only (WO-127)
+- Rule tags replace the brief phrase gates (WO-127)
+- Implementer brief: run the narrow check while iterating, the full suite once (WO-127)
+- The orchestrator brief is a core of at most 15 KB with step files in `references/orchestrator/` opened by a trigger table; every rule keeps its tag and hash (WO-128)
+- The CLAUDE.md anchor's canary, board and dispatch-tier text is generated from the canonical paragraphs; a reworded block refreshes cleanly (WO-128)
+- Implementer brief holds the standing dispatch rules (commits, tool copies, no release, processes and data not its own), so a dispatch is a pointer (WO-128)
+
+---
+
 ## v60 — 2026-11-17
 breaking: no
 
-- **Note boxes grow with their text (board).** Each note box starts at 70px and grows as the owner types, so it
-  never shows a scrollbar. `BOARD_VERSION` is 2, so `/gitos upgrade` refreshes every home's `board.py`.
-- **The publish tools remove files the engine dropped (WO-123).** `sync_to_live.py --apply` and `publish_to_public.py
-  --apply` now delete a file under a payload path (`SKILL.md`, `VERSION`, `CHANGELOG.md`, `assets/`, `scripts/`,
-  `references/`) that the engine no longer carries, so a retired file stops shipping; the dry run names each one.
-  Files outside those paths (the skill's `agents/`, the public repo's `.git`, `LICENSE`, `README.md`) are left alone.
-  `publish_to_public.py --prune` is removed; `sync_to_live.py --mirror` still adds the deletion of live files outside the payload paths.
+- Note boxes grow with their text (board) (WO-123)
+- The publish tools remove files the engine dropped (WO-123)
+
+---
 
 ## v59 — 2026-11-17
 breaking: yes (the Artifact owner board is removed; every owner approval moves to the local board, which `/gitos upgrade` step 4s builds)
 
-- **A local, durable owner board in every home; the Artifact owner board is retired (WO-122).** Owner approvals on an
-  Artifact board were lost with the page on `/clear`, a new window or another account. Every home now carries
-  `<home>/board/` (`board.py` from the new `assets/board/board.py`, `board.json` with a port derived from the home's
-  path and a `board_id`; `data/` git-ignored), a stdlib web page on 127.0.0.1 that `board.py ensure` starts when this
-  home's board is not answering and reports in one line. Every owner approval is a card there: decisions, plans and
-  sends, the last two bound to the full SHA-256 of a stored copy of the exact bytes; tools call `approved()`,
-  `verify_bytes()` and `consume()`, so an approval is used once. No command records an answer; only the page does,
-  behind a Host allow-list, the exact Origin, a per-start page token and browser Sec-Fetch headers. An edited card
-  voids its answer and asks again; cards order by a microsecond time. `scaffold.py` builds the board, the CLAUDE.md
-  block line and RESUME's `## Owner board` section, and is the upgrade step (4s) for a repo without one; the canary
-  gains the optional `board` category (`board-missing`, `board-pointer-missing`); the waiting view reads open cards and
-  unread answers and notes from disk. The orchestrator runs `ensure` first in every session (*Ask on the board*).
-  `assets/owner-board.html.tmpl` is removed. The page (operator-approved layout): an option button saves at once,
-  Save note alone is a note-only answer (answered, never a go), filter chips by group (`--group`), `--ref` and
-  `--where` lines, `value=Label*` recommended, voided cards first, one coral accent. An answer **locks** when the agent
-  reads it (`list`, `answer-for`, `approved()`; `data/read.jsonl`): the page then refuses a change, and `approved()`
-  authorizes only a locked answer. The default tabs are `decisions` alone. After an independent review: the page
-  posts the hash of the card it rendered; one cross-process lock (`data/.lock`) covers every write, so an answer and
-  a read or two closes never interleave; `claim()` approves and closes in one step; malformed `.jsonl` lines (a
-  non-ASCII hash) are reported, not raised; answered cards not yet acted on are counted; CLI output is cleaned of
-  control and bidi characters; plans and drafts must be UTF-8 and invisible characters are flagged; the waiting view
-  runs the home's `board.py` in an isolated subprocess (not a sandbox). A new answer is one no read has locked, so
-  `answer-for` and a close clear it; `answer-for` reports the current answer, valid only once locked.
-- **The decisions-page gate sees a `<link>` again (WO-122).** Its external-reference regex held a literal backspace
-  where `\b` was meant, so a planted `<link>` stylesheet passed; a control now proves it is caught.
+- A local, durable owner board in every home; the Artifact owner board is retired (WO-122)
+- The decisions-page gate sees a `<link>` again (WO-122)
+- Migration keeps every Parked row; an empty heading is not a report (WO-121)
 
-- **Migration keeps every Parked row; an empty heading is not a report (WO-121).** `ledger_migrate.py` treated only `P<n>` rows
-  of the hand-kept INDEX Parked table as candidates and, on `--write`, replaced the whole section, so rows with named ids
-  (`214-P1`, `nt8-freeze`, `L63`, `004`) were dropped without a word. Now every data row is a candidate whatever its id (the
-  id is the parked order's `origin:`), a named id already held by a parked order is not converted twice, and the section is
-  rewritten only when every row is converted, routed-closed, already held or reported `LEFT`. The canary's filled-notes test
-  for a slice ignores any bare `###`/`####` heading, not just the five labels, so an untouched proposed slice is no longer
-  named as waiting for adjudication. The canary (`parked-no-trigger`, `parked-dangling`) and the waiting view read the hand-kept table through one helper, any id.
+---
 
 ## v58 — 2026-11-16
 breaking: yes
 
-- **An order finishes what it finds (WO-116).** A finding made while working an order is fixed in that order when it
-  sits within the order's scope of work, listed under Deviations and covered by the order's checks; an unlisted
-  out-of-scope edit is still a defect. **Nothing is dropped.** A finding may be deferred only when it is clearly out of
-  the order's scope or its fix would cross into a new scope (another subsystem, a design or operator decision, a file
-  another in-flight order owns), with that reason stated; at review a deferral without the reason is rejected and goes
-  back into the order. Discipline (o) finish-what-you-find.
-- **Deferral forms are last resorts.** A new work-order, a parked work-order, or (rarest) a loose end. A loose end must
-  pass five tests (concrete; fix known and small; self-contained; not owned; a reason it cannot be done now), and
-  `loose_ends.py add` refuses a row without `--fix` and `--why-not-now`. The canary reports (advisory
-  `loose-ends-last-resort`) more than 3 open rows or one older than 14 days.
-- **Parked work-orders replace the `parked:` list state** (breaking, reverses part of v57). A parked order is an order
-  file with front matter `status: parked` and `trigger:`; INDEX `## Parked` is generated from those orders;
-  `parked:` rows and `drain accept --trigger` are refused; a parked order with no trigger is `parked-no-trigger`.
-  **Migration:** `ledger_migrate.py <home>` (dry run), then `--write`, turns `parked:` rows and hand-kept `P<n>` rows
-  into parked orders.
-- **Convergence.** A second follow-up order on the same scope is not opened (the open order gets a slice); each
-  checkpoint reports the open count and says when it rose twice. Upgrade step **4r** consolidates an existing backlog
-  once: group open orders, parked orders and loose ends by scope, fold follow-ups into the owning order, close what is
-  fixed, propose a finish order; nothing changes without the operator's word.
-
-- **Unreviewed notes are flagged at Stop (WO-117).** The Stop hook prints one line naming an open order or slice
-  whose Implementer notes are filled and not adjudicated.
-- **A current repo still gets the offer round (WO-120).** Upgrade step 3 at the current version runs the one offer
-  round (4q) before stopping, so an opt-in that appeared later is offered.
-- **The drain is never by hand.** When the local model is down, a dispatched helper drains through the same path.
-- **System One machine setup ships as templates (WO-119)** under `assets/system-one/` (systemd unit, Windows logon
-  tasks, port forward, firewall rule), every machine-specific value a `@@MARKER@@`.
-- **The decisions page was checked in a real browser engine (WO-118):** desktop and phone, light and dark, copy output.
+- An order finishes what it finds (WO-116)
+- Deferral forms are last resorts (WO-116)
+- Parked work-orders replace the `parked:` list state (WO-116)
+- Convergence: A second follow-up order on the same scope is not opened (the open order gets a slice); each... (WO-116)
+- Unreviewed notes are flagged at Stop (WO-117)
+- A current repo still gets the offer round (WO-120)
+- The drain is never by hand (WO-120)
+- System One machine setup ships as templates (WO-119)
+- The decisions page was checked in a real browser engine (WO-118)
 
 ---
 
 ## v57 — 2026-11-16
 breaking: yes
 
-- **One "not now" list (WO-115).** Every item that is not yet an order is one row of `loose-ends.md` with a state:
-  `new`, `proposed: <kind>`, `parked: <trigger>`, `waiting: <question>` or `declined: <reason>`. The row is the
-  authority; a drain file in `drain/pending/` is its attachment. INDEX `## Parked` is a generated view of the
-  `parked:` rows. Retired: hand-kept Parked rows and `P<n>` destinations, carried boxes, `drain/declined/`,
-  `drain/accepted/`, `drain/routed.txt`. One routing grammar: `WO-NNN | WO-NNN/SN | brain:<page> | closed:<reason>`.
-  The canary gates a fact kept in two stores (`loose-ends-two-stores`). Front matter `landed:` is `released:` (both
-  read). **Migration:** `ledger_migrate.py <home>` (dry run), then `--write`.
-- **One "waiting on you" view (WO-115).** Plain `loose_ends.py status` lists asks, `waiting:` rows, pending intake and
-  parked rows whose trigger may have fired (`scripts/waiting.py`); RESUME points at it. The orchestrator detects a
-  landing (Stop hook, `worktree.py status`) instead of being told.
-- **One consent round (WO-115).** `scripts/offer.py` asks every unanswered opt-in (model optimisation, lenses, System
-  One, federation, legacy registers, harness removals) in one batch at inception and upgrade (step 4q); an answered
-  question is never re-asked.
-- **SKILL.md is a router again (WO-115).** 454 -> 306 lines; Canary detail in `references/canary.md`, Lenses in
-  `references/lenses.md`, Federation in `references/federation.md`; one first-action summary; the orchestrator is the
-  "persistent coordinator".
+- One "not now" list (WO-115)
+- One "waiting on you" view (WO-115)
+- One consent round (WO-115)
+- SKILL.md is a router again (WO-115)
 
 ---
 
 ## v56 — 2026-11-16
 breaking: yes
 
-- **The discipline layer is first-class again (WO-114).** `references/disciplines.md` has fourteen disciplines with a
-  one-screen index: (a)-(g) kept, and (h) a-check-must-be-able-to-fail, (i) no-answer-is-not-a-pass, (j)
-  a-null-needs-a-positive-control, (k) attack-your-own-win, (l) name-the-clock, (m) evidence-or-name-the-gap, (n)
-  a-rule-needs-a-mechanism, each with a software and a quant instance. Acceptance criteria have six properties (a
-  negative control per gate) and treat the hold-out as a budget with a ledger. The production-handoff contract covers
-  writes with an unknown outcome and test doubles no kinder than the real system. The roles cite the disciplines at the
-  step they apply; the work-order template asks for a negative control; inception and `HANDOFF.md.tmpl` ask for a null
-  baseline, gate-math tests, negative controls, a hold-out ledger and a precommitment stamp. Finance wording in engine
-  directives is labelled as a quant example.
-- **One lexicon (WO-114).** `references/glossary.md` is the source of truth (about 80 entries); the operator is the
-  thesis's director, defined once. The diagnostic no longer dispatches fixes (find != fix); adjudication is ACCEPT /
-  DEFER / REJECT; "Discipline notes" is "Risk notes"; the deployment-sense "canary" is "staged rollout"; four roles,
-  five INDEX sections, `HANDOFF.md`, `## Proposed fix scope` (the old `## Proposed scope` is still read).
-- **Canary output (breaking for anything that matches kinds or the report text).** Kinds follow `<concept>-<state>`;
-  categories are unchanged, so a descoped category still descopes. The human report prints `kind: what is wrong ->
-  what to do` per finding and ends `canary: CLEAN` or `canary: N finding(s)`. Finding items name the order as
-  `wo: "WO-NNN"` (was `nnn`). Renames: `nonconforming-wo-filename` -> `order-filename-nonconforming`;
-  `single-file-multi-slice` -> `order-needs-folder`; `cannot-parse` -> `index-unparseable`, `brainmeta-unparseable`,
-  `brainmeta-counts-unparseable`, `stamp-unparseable`, `skill-version-unparseable`, `lens-registry-unparseable`,
-  `federation-config-unparseable`, `own-record-unparseable`; `duplicate-nnn` -> `index-duplicate-row`;
-  `duplicate-file` -> `order-duplicate-file`; `wo-in-both` -> `order-in-both-dirs`; `open-row-file-in-resolved` ->
-  `index-open-row-file-in-resolved`; `open-row-missing-file` -> `index-open-row-file-missing`;
-  `resolved-row-file-in-root` -> `index-resolved-row-file-in-root`; `orphan-file` -> `order-file-orphan`;
-  `unknown-page-type` -> `brainmeta-page-type-unknown`; `counts-missing` -> `brainmeta-counts-missing`;
-  `count-missing-key` -> `brainmeta-counts-key-missing`; `count-mismatch` -> `brainmeta-counts-mismatch`;
-  `registry-missing` -> `lens-registry-missing`; `duplicate-row` -> `lens-registry-duplicate-row`;
-  `registry-row-no-file` -> `lens-registry-row-file-missing`; `lens-file-no-row` -> `lens-file-row-missing`;
-  `no-frontmatter` -> `lens-frontmatter-missing`; `missing-keys` -> `lens-frontmatter-keys-missing`; `name-mismatch` ->
-  `lens-name-mismatch`; `applies-to-scalar` -> `lens-applies-to-scalar`; `config-malformed` -> `lens-config-unparseable`;
-  `repo-off-missing` -> `lens-repo-off-missing`; `selected-missing` -> `lens-selected-missing`; `dead-link` ->
-  `link-dead`; `not-a-brain` -> `brain-wiki-missing`; `brain-broken_wikilinks` -> `brain-broken-wikilinks`;
-  `brain-cross_layer_redundancy` -> `brain-cross-layer-redundancy`; `cannot-read` -> `tool-unreadable`,
-  `settings-unparseable`; `intake-malformed` -> `intake-file-unparseable`; `own-record-path-invalid` ->
-  `own-record-path-missing`; `landed-not-resolved` -> `order-landed-not-resolved`; `resume-too-long` ->
-  `resume-oversized`; `gate-missing` -> `dispatch-gate-missing`; `restore-missing` -> `restore-hook-missing`;
-  `loose-ends-malformed` -> `loose-ends-unparseable`; `ready-to-close` -> `order-ready-to-close`; `file-oversized` ->
-  `order-oversized`, `slice-oversized`; `notes-unadjudicated` -> `order-notes-unadjudicated`; `registry-invalid` ->
-  `question-registry-unparseable`. Harness: `undeclared-<x>` -> `<x>-undeclared`; `declared-<x>-missing` ->
-  `<x>-missing`; `pin-moved` -> `plugin-pin-moved`; `pinned-but-auto-updates` -> `plugin-pinned-auto-updates`;
-  `agent-changed` -> `agent-pin-moved`; `sync-not-off` -> `harness-sync-not-off`; `connectors-not-off` ->
-  `harness-connectors-not-off`; `declaration-unreadable` -> `harness-declaration-unparseable`.
-- **Printed text follows the glossary (WO-114).** "implementer" (not "worker") in slice tools and hooks; "work-order";
-  the drain's output is a "proposal"; every hook message starts `gitos <script>:`. `slice add` names S1 from
-  `--s1-name`, the `### S1` heading or the scope's first heading words, not the order title.
-- **Drain safeguards (WO-112).** A new loose end that a later order or commit already fixed becomes a `close` proposal
-  naming the fix; bundling groups only items that all agree pairwise; `drop` withdraws routed items from pending
-  proposals and a decline never re-adds them; `legacy pending` skips work-order files.
-- **brain_lint does not count linked orders (WO-113).** A markdown link to an order is a pointer, not a restatement;
-  the cross-layer check counts distinct ids in the remaining prose.
-- v55's date in this file is corrected to 2026-11-16 (it was written in UTC).
+- The discipline layer is first-class again (WO-114)
+- One lexicon (WO-114): `references/glossary.md` is the source of truth (about 80 entries); the operator is the thesis's...
+- Canary output (breaking for anything that matches kinds or the report text) (WO-114)
+- Printed text follows the glossary (WO-114)
+- Drain safeguards (WO-112): A new loose end that a later order or commit already fixed becomes a `close` proposal naming the...
+- brain_lint does not count linked orders (WO-113)
+- v55's date in this file is corrected to 2026-11-16 (it was written in UTC) (WO-113)
 
 ---
 
 ## v55 — 2026-11-16
 breaking: no
 
-- **Small engine fixes (WO-111).** `selftest.py --gate NAME` runs one gate (exact name, or a `woNNN` prefix for every
-  gate of that order; an unknown name exits 2). `worktree.py reap --merged ROOT` parses as `reap ROOT --merged` does. A
-  directory under a worktree that cannot be listed refuses the reap and names it, before anything is unlinked, instead
-  of being skipped. `loose_ends.py legacy pending` no longer scans `work-orders/resolved/` (a resolved order is never a
-  register). `slice.py`'s convert refusal names `ledger_migrate.py`.
+- Small engine fixes (WO-111)
 
 ---
 
 ## v54 — 2026-11-16
 breaking: yes
 
-- **Work orders with two or more slices are folders.** `WO-NNN/order.md` is frozen at accept (amendments are
-  appended), each slice is `slices/SN-<name>.md` with front matter (`status`, `depends_on`, `commit`, `origin`), and
-  `log.md` is append-only. `slice add` converts on the second slice (`git mv`); `slice next` names the next ready
-  slice; `slice brief WO-NNN/SN` prints the order, the slice, and the durable facts of landed dependencies, so a
-  worker reads only its own slice. Single-slice orders stay single files.
-- **INDEX regions are generated.** Between `<!-- gitos:index open -->` / `<!-- gitos:index resolved -->` and
-  `<!-- /gitos:index -->`, `ledger_index.py` writes the rows from front matter; `--check` reports drift. Repos opt in
-  by laying the markers; legacy resolved rows stay hand-kept.
-- **Slice workers are bound by a hook.** `worktree.py new NNN ROOT --slice SN` writes a slice marker;
-  `slice_guard.py` (PreToolUse on Edit/Write/MultiEdit/NotebookEdit; `slice_guard.py install`) refuses edits to the
-  order, the log, other slices, INDEX, and a status change to landed or dropped. Bash edits are not covered; the merge
-  review is the backstop.
-- **Drain accepts into a folder order need `--new-slice NAME`**, which writes a proposed slice with `origin:`.
-- **Canary:** gating `slice-landed-no-commit`, `slice-depends-dangling`, `slice-depends-cycle`,
-  `single-file-multi-slice`, `index-drift`; advisory `ready-to-close`, `slice-stale`, `file-oversized`,
-  `order-split-advice`.
-- **Retired:** `history/`, the `## History` pointer, the canary's history check, the whole-order 400-line / 60 KB
-  limit and `work-order-oversized`.
-- **Migration:** `ledger_migrate.py HOME [--write]` (dry run by default) converts multi-slice single-file orders and
-  lists carried boxes for triage; `upgrade` runs it (steps 4m–4p).
+- Work orders with two or more slices are folders (WO-110)
+- INDEX regions are generated (WO-110)
+- Slice workers are bound by a hook (WO-110)
+- Drain accepts into a folder order need `--new-slice NAME` (WO-110)
+- Canary: gating `slice-landed-no-commit`, `slice-depends-dangling`, `slice-depends-cycle`... (WO-110)
+- Retired: `history/`, the `## History` pointer, the canary's history check, the whole-order 400-line / 60 KB... (WO-110)
+- Migration: `ledger_migrate.py HOME [--write]` (dry run by default) converts multi-slice single-file orders and... (WO-110)
 
 ---
 
 ## v53 — 2026-11-16
 breaking: no
 
-- **Fix: a fresh declared worktree is in flight.** A declared worktree made at an integration branch's tip, before
-  its worker committed, read "reapable: merged and clean", so the canary, the Stop hook and `reap --merged` offered
-  to remove a checkout in use. A declared worktree with no commit since it was made (its own HEAD reflog; detached
-  checkouts included) is now `in flight` ("no commits of its own yet"); `reap NAME` still removes it.
+- Fix: a fresh declared worktree is in flight
 
 ---
 
 ## v52 — 2026-11-15
 breaking: no
 
-- **Fix: an integration checkout is never reapable.** With `"integration"` declared in `worktrees.json`, the
-  worktree checked out on an integration branch read "reapable: merged into" itself, so the canary gated on it and
-  `reap --merged` would have removed the live integration checkout and its branch. A worktree whose branch is the
-  default branch or an integration branch is now `in flight` ("a merge target"), `reap` refuses it by name, and
-  merged means merged into a different branch.
+- Fix: an integration checkout is never reapable
 
 ---
 
 ## v51 — 2026-11-15
 breaking: yes
 
-**Migration.** `/gitos upgrade` runs `system_one.py migrate --write`: each `waiting: user — Q` loose end becomes an
-`ask` suggestion in the drain pile and leaves the list, and a hand-made carried section whose lines already parse
-as boxes is renamed `## Carried loose ends` (other lines are printed as `path:line` to rewrite by hand). Upgrade also
-lays `work-orders/history/`. Worktrees made by `worktree.py new` now go outside the repo tree; existing ones under
-`.claude/worktrees/` are still found and reaped.
-
-- **A suggested loose end lives in the drain pile only.** A drain suggestion takes its items off the list, so the
-  list holds only unsuggested items; a drain never deletes a pending suggestion. `drain withdraw` puts items back;
-  `decline` either routes by hand (`--route`) or returns them as `declined: <reason>`, never suggested again. Asks
-  for the operator are a pile state; `waiting: user` and `loose_ends.py wait` are removed. The canary reports a
-  stale or overfull pile (`drain-stale`). A `read` accepted with `--work-order` now records the order (it was
-  recorded as "asked the operator" and left its items on the list).
-- **An item accepted into an order is a box there.** `drain accept --work-order NNN --slice NAME` writes
-  `- [ ] L<n> (slice: NAME) <text>` under `## Carried loose ends`; `--slice` is required on every accept into an
-  order. The adjudication ticks (`-> <sha>`) or moves each box. An order with an open box cannot resolve
-  (`carried-open`); an old open box is reported (`carried-stale`).
-- **Joins only into small orders.** An item joins an open order only when it is in files the named slice already
-  changes, the slice is planned or in flight, it changes neither the slice's scope nor what counts as done, and the
-  order is under 400 lines or 60 KB. Code checks the slice and the size; over-limit orders are not join candidates
-  and the item becomes a new-order suggestion; `work-order-oversized` is reported.
-- **Trim orders as slices land.** Landed slices move to `work-orders/history/WO-NNN.md`; the live order keeps
-  `## History` pointers, which the canary checks. Implementers read the history only where pointed.
-- **Background work has an owner and an end.** Implementers time-limit and log background commands and stop them
-  before hand-back; the orchestrator sweeps at each checkpoint and before `/clear`; RESUME's *Serving / running* is a
-  table (what, order, pid or marker, log, ends when, how to stop), and the compact hook prints a Background line for
-  its rows.
-- **Worktrees in a declared layout.** An optional `<home>/worktrees.json` (roots, branches, integration branches,
-  archive folders) makes a repo's own worktrees, detached checkouts included, visible to `worktree.py status`,
-  `reap` and the canary. Merged means reachable from HEAD, the default branch or an integration branch. Before any
-  removal, links inside the worktree that point outside it are unlinked (Git for Windows deletes through a
-  junction); declared notes folders are archived first.
-- Status line: `loose ends: inbox N · pile M (K for you) · carried C open`.
+- A suggested loose end lives in the drain pile only
 
 ---
 
 ## v50 — 2026-11-15
 breaking: yes
 
-**Migration.** None for the config. Anything that called `system_one.py triage`, `screen`, `cards`, `scan` or
-`brain-dupes` now does that reading itself; a standing rule that lists them as System One jobs should say
-"System One drains the loose-ends list only".
-
-- **System One drains the loose-ends list and does nothing else.** Removed the commands `triage`, `screen`,
-  `cards`, `scan` and `brain-dupes` and their nine uses; the registry (`REGISTRY_VERSION` 15) holds `probe` and
-  the four `loose-end-*` uses.
-- **Down never gates.** An unreachable System One endpoint is an advisory line in the canary (printed, in
-  `--json` with `"advisory": true`, not counted, exit code unchanged): down is the normal state while the GPU is
-  in use. A registry that does not load still gates.
-- **The drain without a local model.** When System One is not configured, off or down, `system_one.py drain <home>
-  --export FILE` writes the drain's questions (no model call), the orchestrator dispatches one helper on the cheapest
-  tier (Claude Code: `haiku`) with the brief in *The drain without a local model*, and `drain <home> --answers FILE`
-  checks every answer against its allowed set, applies the same tables and writes the same proposals. A stale export
-  refuses. `eval-drain --export/--answers` scores the route. Measured: 27% handed back and 15 of 16 states right on
-  a 22-item labelled set (Qwen3.5-9B: 45%, 8 of 12).
-- **The helper's model on any harness.** `system_one.py helper [ROOT] [--harness H]` prints the model to dispatch:
-  the repo's model-optimization light choice, else the pick recorded with `helper --set HARNESS MODEL` (key `helper`
-  in `system-one.json`), else the shipped default (Claude Code `haiku`, Codex `gpt-5.1-codex-mini`, untested). With
-  none, or an unavailable model, the orchestrator asks the operator once to pick from their models and records it.
+- System One drains the loose-ends list and does nothing else
 
 ---
 
 ## v49 — 2026-11-15
 breaking: yes
 
-**Migration.** `/gitos upgrade` runs `system_one.py migrate --write`, which removes the retired System One config
-keys (`group`, `questions_per_request`, `assists`) from the machine config and the repo's `system-one.json`. Until
-then System One reports `down (config has retired keys: ...; run /gitos upgrade)`. A machine that served Decider
-Flash switches to `assets/system-one/serve_general.py` with Qwen3.5-9B (*Machine setup*).
-
-- **System One works the loose-ends drain, and only out-of-pass work.** A decision the orchestrator makes while
-  reading (note routing, what enters the brain, complexity, lens choice, per-hunk scope) is no longer given to a
-  local model: a second reader only adds work. Removed: the note-routing uses and notes `eval`, `complexity`, the
-  model half of `scope` (the code rule on named paths stays), `brain-target`, `brain-fits`, `row-state` and
-  `triage --register`, `final` and `replay`, and the canary's `notes-unlabelled` and `high-override`. Lens matching
-  stays with the orchestrator; `system_one.py lenses` lists the active set without a model call.
-- **Drain proposals, federation-style.** `system_one.py drain` turns every loose end into exactly one proposal under
-  `<home>/drain/pending/`: join a related open order (in progress or not), a new order for a group of related
-  items, park, ask the operator, close, or read (the model was unsure). Each carries the items' full text and
-  code-gathered context; no model-written prose. `drain accept ID --work-order NNN` only after the orchestrator has
-  written the order; `drain decline ID --reason` (a declined group is not proposed again); `drain defer`;
-  `drain status` is reported at first action.
-- **The drain's questions:** `loose-end-state` (done; needs the operator; waits on an event), `loose-end-join`
-  (same part of the product as an open order), `loose-end-bundle`, duplicates; candidates are ranked by shared
-  references and paths, then BM25, plus a model pick among the open orders' titles. `system_one.py eval-drain`
-  scores a labelled set.
-- **A general model serves System One:** `assets/system-one/serve_general.py` (Qwen3.5-9B, BF16, alone on the card)
-  answers yes/no from the yes and no token probabilities and choices from option-letter probabilities, thinking
-  off. The servers never hide a dead GPU: a sticky CUDA error answers 500 and exits for systemd to restart, an
-  out-of-memory error keeps serving, `/health` runs a real decision and `status` reads it.
-- Settled answers are cached; the call log is written under a lock; `system_one.py uses-check` checks every use
-  against a server after a model change.
+- System One works the loose-ends drain, and only out-of-pass work
 
 ---
 
 ## v48 — 2026-11-14
 breaking: no
 
-- **A loose-ends list, drained at the seams** (WO-093). `<home>/loose-ends.md` holds small items that came up
-  and were not acted on, so the current work order stays on track. No file means an empty list; the first
-  `scripts/loose_ends.py add` creates it. An item is at most 300 characters: anything with evidence, a cause
-  or a fix is a work order, a session plan is RESUME, and nothing is dispatched from the list.
-- The deferral rule is now "written down in the same turn": a Parked row when there is a trigger, otherwise
-  the list. Adjudication gains a fifth ending, `→ L<n>`.
-- The orchestrator drains the list after a resolve, at each checkpoint, at first action when the canary
-  reports `loose-ends-stale` (over 14 days or 20 items), and on "triage the loose ends". It applies joins
-  into undispatched orders, bundles, parks and brain moves; the operator approves closes, folds, risky and
-  uncertain items in one batch. An item that needs the operator waits with its question.
-- System One: `loose-end-join` and `loose-end-bundle`, a `loose-ends` triage group, registry v9; a follow-up
-  with no trigger now routes to `loose-end` instead of `work-order`. With System One off, `loose_ends.py
-  candidates` gives the same join and bundle candidates from code.
-- Canary: `loose-ends-malformed`, `loose-ends-oversized`, `loose-ends-stale`; items waiting on the operator
-  are an info line, never a finding.
-- Upgrade: a legacy loose-ends register is offered for import at most once per file, and the answer is
-  recorded (`loose_ends.py legacy pending|decline`, `import`). A repo with none sees nothing.
+- A loose-ends list, drained at the seams (WO-093)
+- The deferral rule is now "written down in the same turn": a Parked row when there is a trigger, otherwise the list (WO-093)
+- The orchestrator drains the list after a resolve, at each checkpoint, at first action when the canary reports `loose-ends-stale`... (WO-093)
+- System One: `loose-end-join` and `loose-end-bundle`, a `loose-ends` triage group, registry v9; a follow-up with no trigger now routes to `loose-end`... (WO-093)
+- Canary: `loose-ends-malformed`, `loose-ends-oversized`, `loose-ends-stale`; items waiting on the operator are an info line, never a finding (WO-093)
+- Upgrade: a legacy loose-ends register is offered for import at most once per file, and the answer is recorded... (WO-093)
 
 ---
 
 ## v47 — 2026-11-14
 breaking: yes
 
-**Migration.** System One now runs in a repo only after that repo chooses it. On a machine with a System
-One config, run `/gitos upgrade` once in each repo: it asks. Until then System One is off there. A machine
-with no config sees no question and no change.
-
-- **System One is opt-in per repo** (WO-092). `<home>/system-one.json` with `enabled: true` turns it on;
-  a missing file means off. `system_one.py repo on|off|status` changes it, and `status --brief` prints
-  one line that the orchestrator reports at first action. Inception and upgrade ask once, and only on a
-  machine that has System One configured or a server answering on the default address.
-- **`system_one.py setup`** checks a server before the machine config is written: `/health`, the model
-  list, and one probe decision. It prints what it would write, writes only with `--write`, and never
-  overwrites an existing config without `--force`. `setup --detect` is the silent check upgrade uses.
+- System One is opt-in per repo (WO-092)
 
 ---
 
 ## v46 — 2026-11-14
 breaking: yes
 
-**Migration.** Lenses are now off unless a repo has `<home>/lenses.json` with `enabled: true`. A repo that
-used lenses before must run `/gitos upgrade` once: it asks, and suggests keeping what the repo uses today.
-Until then that repo's lenses are inactive. Nothing else needs action; System One is off unless configured.
-
-- **System One: an optional local decision model the engine's scripts can ask** (WO-084 to WO-090). The
-  order is code rules, then the local model, then the reasoning model, then the operator. The model only
-  answers typed questions the engine wrote; a table in code turns the answers into an outcome. Outcomes
-  that only annotate or order work run on their own; anything that closes, rejects, merges or folds is
-  reported and waits. A failed call is an error, never a "no". With no configuration the engine behaves
-  as before.
-  - `scripts/system_one.py` and the one question registry, `scripts/system_one_questions.py`.
-  - Ledger: `triage` routes implementer notes, Parked rows and duplicate orders; `final` records what was
-    done with each suggestion.
-  - Intake and pages: `screen` annotates pending proposals (local model only, the engine's words only);
-    `cards` suggests a group per card.
-  - Brain and lenses: `lenses`, `brain-dupes`, `brain-target`.
-  - Diagnostic: `scan` gives a reading order for logs.
-  - Verification and dispatch: `scope` and `complexity`, both advisory.
-  - A reference server, `assets/system-one/serve_decider.py`, and a *Machine setup* section in
-    `references/system-one.md`. A local-network server needs `trusted_hosts` and a token.
-  - An optional `system-one` canary category.
-- **Lenses are opt-in per repo** (WO-091). `<home>/lenses.json` turns lenses on and names the global
-  lenses the repo uses, one by one. Global lenses are selected, not copied. `scripts/lenses.py` shows and
-  changes the setting. Inception asks; upgrade asks once. The canary reports a malformed setting and a
-  selected lens that no longer exists.
+- Migration: Lenses are now off unless a repo has `<home>/lenses.json` with `enabled: true`
+- System One: an optional local decision model the engine's scripts can ask (WO-084, WO-090)
+- Lenses are opt-in per repo (WO-091)
 
 ---
 
 ## v45 — 2026-11-12
 breaking: no
 
-- **The owner board copies only what is new** (WO-083). "Copy my answers" now leaves out every answer
-  that has already reached the orchestrator: the page marks each answer it copies (`copied_at`), and the
-  orchestrator marks a card when it records its answer (`recorded_at`). Closed cards stay out too. An
-  answer changed afterwards counts as new and is copied once more. When nothing is new, the copy says so
-  in one line and still lists the cards waiting on the operator. So when new cards arrive, the next copy
-  carries only the new answers, never the whole board.
+- The owner board copies only what is new (WO-083)
 
 ---
 
 ## v44 — 2026-11-11
 breaking: no
 
-**Nothing saved for later gets lost.** Four work-orders, all from a sibling gitos through federation.
-
-- **Deferrals and implementer open points get a ledger home the canary can see** (WO-079). The INDEX
-  gains a `## Parked` section: each deferred item with the trigger that restarts it. Scaffold lays it on
-  a new repo and `upgrade` adds it to an existing one without touching other rows. The orchestrator now
-  writes an `### Adjudication` block under each work-order's Implementer notes, one line per point,
-  each ending in one destination: a work-order, a Parked row, a brain page, or rejected with a reason.
-  A new report-only canary category, `loose-ends`, flags a Parked row with no trigger, a resolved order
-  with notes but no adjudication, and a destination that does not exist. Orders resolved before v44 are
-  exempt, so an existing ledger is not flooded.
-- **A large decision round can go on one page** (WO-080). When a round has more than the 4 items one
-  question popup holds and the harness can publish a private page, the orchestrator may fill
-  `assets/decisions-page.html.tmpl`: each item with its why, where, options and the recommendation,
-  and a "Copy my decisions" button the operator pastes back. The pasted reply is the answer; the page's
-  own state is never consent, and an undecided item is not approved. The popup stays the default.
-- **An owner board when many items wait on the operator** (WO-081). At a checkpoint, or on request,
-  the orchestrator can offer one page listing everything that needs the operator, where the harness
-  gives a private page with a store it reads back. A click on an owner-only board answers only the
-  options offered on that card; note text is data; a shared board falls back to the pasted reply; an
-  irreversible or outward-facing action is still confirmed in chat. Nothing on the board starts work,
-  and every answer is recorded in the ledger before it is acted on.
-- **The owner board comes with a page and a guide** (WO-082). `assets/owner-board.html.tmpl` is a
-  tested, brand-neutral page (cards and answers in two store collections, state derived, copy-as-text
-  for open cards only), and `references/owner-board.md` is the guide: when to offer it, the ten-step
-  loop and the pitfalls seen in live use. On an owner-only board, a click on a card that names one
-  outward-facing action exactly is the confirmation for that one action only; a shared board's answers
-  are not consent.
+- Nothing saved for later gets lost
+- Deferrals and implementer open points get a ledger home the canary can see (WO-079)
+- A large decision round can go on one page (WO-080)
+- An owner board when many items wait on the operator (WO-081)
+- The owner board comes with a page and a guide (WO-082)
 
 ---
 
 ## v43 — 2026-11-02
 breaking: no
 
-**After a compaction or a clear, the agent re-reads its directives in full** (WO-078). Claude Code
-re-attaches only the first 5,000 tokens of an invoked skill after compaction, which cuts `SKILL.md` partway
-through *Federation*, and a role brief loaded with an ordinary file read survives only as the summary's
-account of it. The restore hook's first line now asks for a full re-read of the installed `SKILL.md` and the
-brief for the agent's role, by absolute path, before anything else. In a live test with a sentinel deep in
-the brief, the v43 hook's session re-read both and quoted it; the v42 hook's session did not.
-*Not claimed:* that the re-read is enforced. The hook asks; the model acts.
+- After a compaction or a clear, the agent re-reads its directives in full (WO-078)
 
 ---
 
 ## v42 — 2026-11-02
 breaking: no
 
-**One worktree per work order, and nothing lingers after it lands** (WO-077).
-
-- **`scripts/worktree.py`.** `new NNN` makes `.claude/worktrees/wo-NNN` on branch `wo-NNN` from the
-  current `HEAD`, so the implementer sees the unpushed commit its work order sits on, and makes sure
-  `.claude/worktrees/` is git-ignored. `reap NNN` / `reap --merged` removes a worktree and its branch
-  only when the branch is merged and the tree is clean; git's own refusals are the safety, and it never
-  uses `--force`, `-D` or `unlock`. `status` classes every worktree and `wo-NNN` / `worktree-*` branch
-  as in flight, reapable, abandoned or dirty.
-- **The orchestrator uses worktrees by default.** Every implementer that edits files is dispatched into
-  its own worktree. Two worktrees may touch the same file, with the merge order planned up front; a
-  single checkout keeps the disjoint-files rule. A worktree is reaped before its order resolves.
-  Claude Code's built-in `isolation: "worktree"` is named only for repos that set
-  `worktree.baseRef: "head"`, because its default base is the remote's default branch.
-- **Leftovers are findings.** The canary has a `worktree` category: `worktree-reapable` names the
-  `reap` command, `worktree-abandoned` goes to the operator. The `Stop` backstop names a reapable
-  worktree once. The restore text classes each worktree. `upgrade` reaps merged leftovers, and
-  `scaffold` adds the ignore line to an existing repo.
-- *Not claimed:* a live run of the built-in subagent isolation; it is fixture-tested only.
+- One worktree per work order, and nothing lingers after it lands (WO-077)
 
 ---
 
 ## v41 — 2026-11-02
 breaking: no
 
-**The engine keeps its own state through compaction, and the orchestrator outranks every worker.** Four
-work-orders. One was filed by a sibling gitos through federation, and every claim about Claude Code or Codex
-behaviour was checked against first-party docs.
-
-- **Working state comes back after `/compact` and `/clear`** (WO-074, WO-076). A `SessionStart` hook prints
-  `RESUME.md` with its freshness, live facts (branch, worktrees, open work orders), the standing-rules pointer and,
-  after a compaction, the session's compaction count. A second compaction in one window is now a measured rotation
-  trigger. Tested on a real `/compact` and a real `/clear`. *Not claimed:* that anything triggers compaction; the
-  docs offer no way to.
-- **RESUME stays current without bloating** (WO-076). Refreshing it is part of resolving a work order, and the canary
-  runs again before the commit. A work order that landed but was never resolved is a canary finding, and a `Stop`
-  hook raises it once in an orchestrator window, honouring the documented loop guard. RESUME over 150 lines, or
-  holding rules instead of pointers, is a finding.
-- **The orchestrator outranks every worker** (WO-075, an operator rule). No worker's model ranks above the lead's; a
-  worker on the lead's own model runs at strictly lower effort; a worker on a lower model may use any effort up to
-  `high`; no worker runs above `high`. Claude and Codex share the documented order, and a word outside it (`ultra`,
-  `minimal`) is never routable. A new SOP in `references/model-optimization.md` separates the model question (how hard
-  is the judgement) from the effort question (how much verification), with the docs' guidance per level. *Not
-  claimed:* that a cheaper pair is cheaper overall; no token multiplier per level is documented. **A repo whose
-  mapping routes a worker at the lead's own pair now fails validation until it is re-mapped.**
-- **Dispatch tier is visible** (WO-073, filed by a sibling through federation). The anchor carries the tier rule, the
-  marker names the tier and reason on a dispatch turn, and the canary reports the recent tier distribution as
-  information only.
-- **A repo can carry its own root `CLAUDE.md` without shipping it**: `sync_to_live` excludes it.
+- The engine keeps its own state through compaction, and the orchestrator outranks every worker
+- Working state comes back after `/compact` and `/clear` (WO-074, WO-076)
+- RESUME stays current without bloating (WO-076)
+- The orchestrator outranks every worker (WO-075)
+- Dispatch tier is visible (WO-073)
+- A repo can carry its own root `CLAUDE.md` without shipping it (WO-073)
 
 ---
 
 ## v40 — 2026-10-30
 breaking: no
 
-**What the federated engines found, fixed.** Seven work-orders, two of them filed by a sibling gitos
-through federation. The rest came from downstream reports, each checked against the code and, where
-it touched Claude Code behaviour, against the Claude Code docs.
-
-- **The orchestrator knows its own effort** (WO-071). Claude Code documents `$CLAUDE_EFFORT`, and the
-  engine now reads it as harness evidence: `model_optimization.py observe`, `session-init`,
-  `reaffirm` and the stale-effort path all use it. The operator is asked only when it cannot be read,
-  and then through the interactive question UI, never in prose. *Not claimed:* that the model is
-  observed (there is no `$CLAUDE_MODEL`), or that an `/effort` change is seen before the next check.
-- **Unrelated settings edits no longer reset effort** (WO-066). The baseline now records each
-  settings file's routing digest, so a first edit that only touches permissions, hooks or
-  `skillOverrides` is judged by what actually moved.
-- **The light tier can dispatch** (WO-066). A model whose catalog lists no effort levels routes with
-  no effort, and the floor accepts that for that model only. `dispatch_guard.py record` takes the
-  repo before or after `--select`.
-- **Confirmed removals apply in a repo whose `harness.json` is `adopted: false`** (WO-067, also
-  filed by a sibling through federation). That is the starter scaffold lays, so an upgrade could
-  create the file in one step and be refused by it in the next.
-- **Cloud sync is a popup in both directions** (WO-072). Every upgrade asks about claude.ai skill
-  sync and plugin sync, showing the current state, with keep / turn off / turn back on. Nothing is
-  pre-selected, and no answer writes nothing. One synced plugin can be hidden per repo with
-  `<name>@synced: false` while sync stays on.
-- **Plugin update channels act on documented levers only** (WO-072). `auto` proposes a marketplace's
-  `autoUpdate` and never writes it. `pinned` on a marketplace that auto-updates is a drift conflict
-  that names its consequence: turning that marketplace off freezes every plugin from it. The audit
-  reports when an environment variable turns plugin auto-update off machine-wide. *Not claimed:*
-  per-plugin version pinning. The docs type `enabledPlugins` as Boolean only.
-- **brain_lint stops misreading upgrade records** (WO-068, WO-070). An `engine-upgrade-vN` decision
-  may cite engine work orders, and a series of them is not a set of near-duplicates. A scaffold
-  re-run on an existing repo reports what it refreshed instead of printing inception steps.
-- **`federation intake` accepts the 8-character id its own listing shows** (WO-069).
+- What the federated engines found, fixed
+- The orchestrator knows its own effort (WO-071)
+- Unrelated settings edits no longer reset effort (WO-066)
+- The light tier can dispatch (WO-066)
+- Confirmed removals apply in a repo whose `harness.json` is `adopted: false` (WO-067)
+- Cloud sync is a popup in both directions (WO-072)
+- Plugin update channels act on documented levers only (WO-072)
+- brain_lint stops misreading upgrade records (WO-068, WO-070)
+- `federation intake` accepts the 8-character id its own listing shows (WO-069)
 
 ---
 
 ## v39 — 2026-10-29
 breaking: no
 
-**The removal popup works on a real repo** (WO-065). Its first real run, this engine's own upgrade,
-broke in four places. All four are fixed.
-
-- **Skill use is counted from sessions started in a parent or child folder** when their recorded
-  working directory entered the repo. The audit names the log dirs it scanned. Before this, a repo
-  worked on from its parent folder read as zero use, and the audit called that zero vouched.
-- **Popup questions are unique and options carry only schema keys,** so `AskUserQuestion` accepts the
-  payload as built.
-- **`sync --confirm` works without `harness.json`,** writing only the confirmed `skillOverrides` and
-  `enabledPlugins`. Before this, the default repo had no path to apply a confirmation.
-- **The listing budget is Claude Code's, and gitos only estimates it.** Every budget line says
-  *estimated* and names its assumptions: 1% of an assumed 200,000-token window, possibly mixing tokens
-  and chars. `--listing-chars N` takes the client's own figure from `/context` or `/doctor`. gitos sets
-  no limit. Being over budget never makes a skill a candidate; only vouched disuse does. Used and
-  protected skills are never listed as dropped first.
-
-*Not claimed:* usage is not machine-wide. A session that only added the repo as a directory withholds
-the vouch rather than being counted, and a session started in an unrelated folder is not scanned.
+- The removal popup works on a real repo (WO-065)
 
 ---
 
 ## v38 — 2026-10-29
 breaking: no
 
-**The first real v37 upgrade found the gaps, and this release closes them.** v37 was tested on one
-real downstream repo and two of its mechanisms failed in ways the suite could not see. Every fixture
-installed the gate *with* a receipt or *without* optimization, and every usage log held tool calls
-rather than typed commands. Six work-orders land together.
-
-**A correctly routed dispatch is no longer refused** (WO-061). In v37, `enabled: true` also switched
-on the receipt binding, and nothing created receipts. Any repo with optimization on would therefore
-refuse every dispatch once its hook loaded. `enabled` now means only *route by tier*. The receipt
-binding is a separate opt-in, `"dispatch_binding": true` in `model-optimization.json`. Nothing sets it,
-and absent means off. The installed hook loads the live engine, so **existing v37 installs are fixed by
-the engine update alone, with no edit to any repo.** The floor is unchanged: a dispatch that names
-neither or only one of model and effort is still refused. *Not claimed:* nothing creates receipts yet,
-so turning the opt-in on today brings back refusals.
-
-**The binding accepts the Agent tool's model aliases** (WO-064). A receipt can record
-`claude-opus-5-5`, but the Agent tool can only send `opus`. An exact comparison refused every
-Claude dispatch. An alias now matches a full id of its own family. Two full ids must still match
-exactly, and a different family still refuses.
-
-**The audit counts what the operator types** (WO-062). A skill invoked as `/name` is logged without a
-tool call, so v37 counted it zero and proposed switching off the skill the repo used most. The audit now
-counts slash commands, counts each action once when a typed command is followed by the model loading
-the same skill, and reports the evidence by kind and span. **`gitos` is never proposed.** No skill with
-observed use is proposed. A zero is acted on only when the audit can vouch for it: logs present,
-parseable and dated. Otherwise it says *usage not established* and proposes nothing. Candidates rank by
-listing cost, and `audit --json` carries them as data.
-
-**Every upgrade measures the harness budget** (WO-060), adopted repo or not, read-only. A failure
-prints *not measured* and never fails the upgrade.
-
-**The operator confirms every skill removal** (WO-063). Audit candidates are shown in a popup in
-Claude Code: at most 16 per popup, ranked by budget reclaimed, the remainder stated, a plugin as one
-choice, nothing pre-ticked, nothing applied on silence. Only what was ticked is applied, through
-`harness.py sync --confirm NAME`. `gitos` is refused by any route. **Cloud skills synced from
-claude.ai are hidden per repo with `skillOverrides: off`, with sync left on**, so the skills a repo does use keep
-updating, and the ones it does not stop reaching it. Turning sync off entirely is its own question
-and **opt-in** (`--accept-sync-skills`). A switch nobody asked about is never written. *Not claimed:* the popup is
-Claude-only (other harnesses get a numbered list). Hiding a synced skill is not yet verified against a
-real one: whether it matches by short name or as `anthropic-skills:<name>` is open. Whether a repo-local
-sync-off trashes synced skills for every repo is also open.
+- The first real v37 upgrade found the gaps, and this release closes them
+- A correctly routed dispatch is no longer refused (WO-061)
+- The binding accepts the Agent tool's model aliases (WO-064)
+- The audit counts what the operator types (WO-062)
+- Every upgrade measures the harness budget (WO-060)
+- The operator confirms every skill removal (WO-063)
 
 ---
 
 ## v37 — 2026-10-29
 breaking: no
 
-**The routing invariants gained mechanisms, and one store gained a boundary.** Five work-orders
-land together as one push. The thread running through them: this engine had several rules that
-existed only as prose, and prose is not a mechanism. Each of these now has something that can say
-no — or, where nothing can, says so out loud instead of implying coverage.
-
-**The optimization baseline can no longer silently serve an expired pair** (WO-057). Changing the
-lead model or effort used to leave the recorded baseline untouched, and `select` would return
-`dispatch-ready` from values the orchestrator typed from memory. An announced operator change now
-invalidates the affected component and the same call returns `blocked`, with the record still on
-disk — **stale, not missing**. Effort re-verifies automatically from a value the client supplies;
-**model is invalidate-only** and recovers from an operator report, because no source for it was
-found. Precision is per-component and per-file, so an unrelated settings edit does not nag.
-An unannounced model change is recorded as **undetected, not covered**.
-
-**The dispatch boundary has a gate** (WO-055), in two separable strengths. The *floor* is always
-on: a dispatch must name both components. The *tier binding* applies only when optimization is
-enabled, matching the pair against a single-use, expiring receipt from `select`'s own output.
-Shipped alongside is the declarative half — subagent definitions that carry their own tier, so a
-read-only sweep routes to `light` **by construction** rather than by anyone remembering. The gate
-**never blocks by accident**: it decides only through stdout and always exits 0, so a crash, a
-missing engine or an unreadable config produces no decision rather than a refusal. **It is not
-installed by this release.**
-
-**A repo can declare the harness it actually uses** (WO-052). `harness.json` declares skills,
-plugins, connectors, MCP servers, hooks and agent definitions; `audit` and `drift` read, `sync`
-materialises. The argument is **selection accuracy, not token cost**: `audit` reports
-listing-budget headroom, names which skills lose their descriptions first, and counts loaded tool
-definitions against the documented degradation band. Nine limits are printed by the tool itself
-rather than left to be discovered.
-
-**One orchestrator can span many windows** (WO-053). `RESUME.md` joins the stores as the volatile
-one: replaced wholesale at each checkpoint, **deletable without loss**, pointers rather than
-copies. Standing rules go to the brain, because RESUME is replaced by the very rotation meant to
-preserve continuity. Three rotation triggers ship; **two were measured and found unmeasurable in
-this client and are named as unavailable** rather than shipped as wishes.
-
-**Two gate assertions that could not fail, can now** (WO-058, WO-059). `git check-ignore` skips
-indexed paths by default and `git status --ignored` never reports a tracked file — so assertions
-about tracked paths passed for any pattern at all. One was corrected; the other's comment was
-corrected and the assertion deliberately left alone, because the only independent source available
-was the sibling check's own mechanism and spelling one measurement twice buys nothing.
-
-**Upgrade notes.** Nothing here changes existing behaviour by default: a repo with no
-`harness.json`, no `RESUME.md` and no installed dispatch gate behaves exactly as before, apart
-from bootstrap offer lines. Scaffolded repos gain the new files; existing repos pick them up
-through `upgrade`. The canary gains `resume`, `harness` and `dispatch` categories, each
-not-applicable rather than silently skipped where it does not apply.
+- The routing invariants gained mechanisms, and one store gained a boundary
+- The optimization baseline can no longer silently serve an expired pair (WO-057)
+- The dispatch boundary has a gate (WO-055)
+- A repo can declare the harness it actually uses (WO-052)
+- One orchestrator can span many windows (WO-053)
+- Two gate assertions that could not fail, can now (WO-058, WO-059)
 
 ---
 
 ## v36 — 2026-10-29
 breaking: no
 
-**The session baseline is untracked by mechanism.** `references/model-optimization.md` states it
-as a property of the file — one transient, untracked `<home>/model-optimization-session.json`,
-kept out of commits — because the record holds *this* session's observed model/effort pair and
-its provenance. Nothing in payload made it so, so a clone or a worktree could arrive carrying a
-previous session's baseline and dispatch against it, and only agent discipline stood between the
-record and a commit. Federation solved the identical shape for its per-checkout opt-in file; this
-version applies that precedent to the baseline rather than inventing anything.
-
-**Two write points, because a repo can reach optimization from either side.** `scaffold.py`
-`starter_gitignore()` now lays the session line beside the federation line, home-aware and
-unconditional — a repo that enables optimization later should not need the line back-filled.
-`model_optimization.py enable` ensures the same line for a repo scaffolded before this version:
-append-only and idempotent, never rewriting an existing line, exactly one path ignored, and when
-the pipeline home is not inside the repo root it reports the skip and names the pattern to lay by
-hand rather than passing in silence. The outcome is reported on stderr; stdout stays the
-machine-readable configuration record.
-
-**One gate holds both writers in step.** The new selftest gate *optimization session baseline
-untracked* measures a real scaffolded repo under real git — the ignored set inside the home is
-exactly the one record, while the ledger, the brain and the operator's optimization configuration
-stay tracked — then back-fills a tree that predates the line, and finally drives the enable-time
-writer and federation's over the same four fixtures, refusing any divergence in status
-vocabulary, append-only behaviour, idempotence or precision. Two implementations of one
-idempotence rule will drift, and the one that drifts is the one nothing gates. The gate carries
-five negative controls, each asserted to go red: a stripped line, an over-broad `.gitos/*`, a
-doubled pattern, and an append-always writer standing in for a drifted sibling.
-
-Additive. No configuration format, schema, session shape or helper contract changes, and absent
-configuration stays inert — declining optimization writes nothing. A repo adopting v36 gains the
-line at scaffold time, and gains it at enable time if it was scaffolded earlier. A repo that
-already added the line by hand sees `present` and no change.
+- The session baseline is untracked by mechanism
 
 ---
 
 ## v35 — 2026-10-25
 breaking: no
 
-**Work-order documentation matches practice, and effort stops being spent on ambiguity it
-cannot resolve.** Three corrections that ship together because each one leaves the others
-half-true.
-
-**The template documents both work-order forms.** The glossary has always named two — *bug
-work-order* (evidence-first) and *forward work-order* (objective-first) — while
-`references/work-order-template.md` carried only the bug form and opened by asserting every
-file lives at `outputs/debug/bug_<NNN>_<slug>.md`, a legacy home. Measured across one engine
-home's 37 resolved orders, the forward sections led: `## Objective` 24, `## Proposed scope` 23,
-`## Acceptance` 21, `## Part-0 probe` 18, against `## Proposed fix scope` 4 and `## Evidence` 3.
-The dominant shape was the one the single source of truth never defined, so an author who read
-the documentation first wrote the wrong form. Both forms are now documented with a selector,
-the four shared sections are stated once, and the file convention is
-`<home>/work-orders/WO-<NNN>-<slug>.md` with legacy homes noted and needing no retrofit. The
-forms are not mutually exclusive: **the lead section is the choice, not the whole section list.**
-
-**The diagnostic brief points at that convention.** `references/roles/diagnostic.md` instructed
-the role that authors bug work-orders to write `<home>/bug_<NNN>_<slug>.md` — a flat path with
-the legacy prefix — which the corrected template contradicts. Fixed there and in two reference
-descriptors (`references/agent-system.md`, `SKILL.md`). The legacy **home** is untouched:
-`outputs/debug/` and `.pipeline/` remain supported detection paths, and only the legacy
-work-order **filename** was stale. Nothing is retrofitted; existing files in legacy homes still
-read correctly.
-
-**Effort routes on the ambiguity it can actually resolve.** `references/model-optimization.md`
-sent "unresolved ambiguity" to the **deep** tier. Published Terminal-Bench 3.0 measurement shows
-effort reduces edge-case failures while leaving a wrong approach intact — across 370 attempts per
-setting, *a bug its tests missed* fell 40 → 14 and *wrong or incomplete fix* 31 → 10, while
-*picked the wrong reading* rose 25 → 47, from 11% to 30% of remaining failures. The clause now
-separates two cases: **spec ambiguity caps the tier** (an unpinned Option or an unrun Part-0
-probe is orchestrator-side work — pin it, run it, then route), while **execution ambiguity with
-no operator in the loop still routes deep**, which is a dispatched implementer's normal
-condition. The tier is read off countable order properties, highest matching rule wins, and the
-mapping is marked a prior pending local data with its source and limits cited inline.
-
-Additive. No configuration format, schema, tier set, ceiling rule or helper behaviour changes;
-no existing work-order or repo layout is affected. A repo adopting v35 gains corrected
-documentation and a narrower effort rule.
+- Work-order documentation matches practice, and effort stops being spent on ambiguity it cannot resolve
 
 ---
 
 ## v34 — 2026-10-11
 breaking: yes
 
-**Session model and effort comparison.** Enabled optimization captures one session
-baseline and compares fresh pre-dispatch observations with both that baseline and
-the configured ceiling. Unknown components remain unknown, and later observations
-do not rewrite the initial values. A changed lead requires a matching revalidated
-mapping; no model or effort setting is changed automatically.
+- Session model and effort comparison
 
-**Adoption:** direct callers of `model_optimization.py select` must initialize a
-session with `session-init`, supply its identity on selection, and label the source
-of each observed model/effort value. See `references/model-optimization.md` for the
-commands. The configuration format is unchanged. Disabled optimization remains
-inert; the single replaceable session record is not another ledger.
+---
 
 ## v33 — 2026-10-11
 breaking: no
 
-**Optional repo-local model optimization.** Initialization and upgrade offer a
-disabled-by-default preference; `/gitos optimization` inspects or changes it.
-Enabled dispatch maps light, standard, and deep tasks to model/effort pairs within
-the operator-selected orchestrator's configured ceiling, using native Codex or
-Claude controls. Requested settings remain distinct from observed execution.
+- Optional repo-local model optimization
 
-`references/model-optimization.md` owns the policy and native harness procedures;
-`scripts/model_optimization.py` handles local configuration, catalog normalization,
-and proposed-route validation. Missing configuration preserves existing behavior.
-Existing WO notes hold outcomes; normal closeout may retain an evidenced,
-repo-specific model-selection lesson in the existing brain for later dispatches.
-No advisor, additional ledger, or mandatory learning stage is introduced.
+---
 
 ## v32 — 2026-09-01
 breaking: no
 
-**`brain_lint`'s stale check stops flagging record-dated pages.** The staleness test applied to
-every page type with no exemption — but **a decision record's `updated:` is the date the decision
-was made**. It is not a freshness claim and cannot be renewed: the only way to clear the flag is to
-write a date asserting a past decision was re-made today, which is exactly the lie the engine
-forbids telling a checker. So every decision page in every repo turned red at day 61 with **no
-correct action available**, and because the canary gates work-order resolution on a red brain, the
-observed remedy was to descope the whole stale category — losing the check's real value over
-`sources`/`entities`/`concepts` in order to escape its false half. A gate that cannot go green
-stops being a gate.
-
-- **`scripts/brain_lint.py` exempts record-dated pages from the STALE check only.** Two narrow
-  predicates, both at one named constant so the reason is legible at the definition site:
-  `RECORD_DATED_PTYPES = ("decisions",)` by page type, plus **`historical: true` in frontmatter**
-  as a per-page opt-out on any type — for the same class of page that is not a decision, such as a
-  source transcribing a fixed text, whose date records a transcription. Only the literal truthy
-  values count, so `historical: false` does not exempt.
-- **Staleness only.** Duplicates, orphans, broken wikilinks and cross-layer redundancy still apply
-  to exempt pages in full — a decision record can absolutely carry a rotted link, and it is still
-  reported.
-- **The exemption is COUNTED, never silent** — the doctrine here is no-false-CLEAN. The report
-  carries `stale_exempt` (so `--json` carries it too) and the text line reads
-  `Stale pages: 0 (3 exempt: record-dated)`. It counts only pages the exemption actually held
-  back, so the number is the size of what was withheld from *this* run rather than a census of
-  exempt pages. Exempting a page from a check it cannot meaningfully pass is correct; hiding that
-  it happened would report a health the run never verified.
-- **No new switch.** `--stale-days` and its default are unchanged — the threshold was never the
-  bug, the page class was — and nothing re-enables staleness on decisions, since a flag whose only
-  function is to restore a known-false positive is not a feature.
-
-Additive: the check gets strictly narrower and one report key appears. `canary.py` folds
-`brain_lint`'s findings by an explicit key list and inherits the fix with no change. Downstream
-repos that locally descoped the stale category can re-scope it on adopting this.
+- `brain_lint`'s stale check stops flagging record-dated pages
 
 ---
 
 ## v31 — 2026-07-31
 breaking: no
 
-**The adoption offer is asked with a PROMPT, not a paragraph.** v30 moved the offer from prose
-into code — the tool computes what needs asking — and then left the *asking* unspecified: the
-directive said only "put its output to the operator as a question". That was satisfied, on the
-first real upgrade, by a tidy paragraph of bulleted options ending in "want to enable it, or leave
-it off for now?". **A question the operator has to answer in prose is not a checkpoint, it is
-homework** — and computing the offer in code to end the era of prose, then asking in prose, puts
-it straight back.
-
-- **`references/federation.md` gains *Asking is a PROMPT, not a paragraph*** — the mechanism,
-  stated: use the harness's interactive question UI (in Claude Code, `AskUserQuestion`), never a
-  prose list awaiting a typed reply. It specifies both rounds exactly: **round 1** is one question
-  built from `offer`'s pick-list (one option per joinable group, labelled with its member count,
-  most members first, at most three, plus "Leave federation off"); **round 2** — only after a
-  group is chosen — is the two exposure flags as two-option questions with the safe default listed
-  first and marked recommended. A group flagged NOT JOINABLE BY NAME is never an option.
-- **Declining ends it.** Nothing is written, nothing is stored, and the flag questions are not
-  asked — a decline is a complete answer, not a step toward a different one.
-- **Options are described by what they DO**, not by the flag's name: an operator can consent to
-  "siblings may read this repo's brain", not to `consultable = true`.
-- **`references/upgrade.md` step 4 now points at that procedure** and states the write rule
-  accurately: `offer` is read-only, and the *only* way `upgrade` writes a `federation.json` is an
-  operator selecting a group in the prompt — consent given at the moment of the write. The old
-  wording ("runs no command that writes") would have become false the moment the flow worked.
-- **A harness with no interactive prompt** falls back to printing the offer and naming the one
-  command that applies each choice. That is a fallback, not the path.
-
-No code changed: `federation offer` and gate 26 are v30's and are unchanged. What changed is the
-directive that consumes them.
+- The adoption offer is asked with a PROMPT, not a paragraph
 
 ---
 
 ## v30 — 2026-07-31
 breaking: no
 
-**Federation — adoption becomes a mechanism instead of a directive.** v29 added the offer as
-*prose in `references/upgrade.md` telling the orchestrator to ask*. A directive with no mechanism
-is one an agent can skip with nothing noticing — the exact decay this subsystem spent nine
-revisions of WO-043 learning to distrust. And `federation set --groups` required knowing a group's
-name in advance, so there was no way to discover what existed on the machine and join it.
+- Federation — adoption becomes a mechanism instead of a directive (WO-043)
 
-- **New read-only command `federation offer`.** It answers one question — *what, if anything,
-  should be offered to this repo right now?* — and **prints nothing when the answer is nothing**.
-  Unfederated with siblings on the machine: offer to enable, and list the groups that exist.
-  Federated: offer only groups this repo is not in. Otherwise: silence. *An empty offer is a
-  result, not an absence — a line that says "nothing to offer" is one every operator learns to
-  scroll past.*
-- **It never writes.** Applying an answer is `enable` / `set`, which already existed. No new write
-  path means no new boundary to prove.
-- **The pick-list is indexed, and labels stay on the human surface.** A group label is a sibling
-  operator's word: capped and delimited where a person reads it, withheld from `--json` entirely,
-  where an index, a member count and a `joinable` flag say which row without saying anybody's
-  words. **R28 keeps no exception.**
-- **`joinable` is asked OF the renderer, not restated.** A label that cannot survive display
-  intact is flagged rather than offered, because retyping it would make a new group of one that
-  looks exactly like joining — membership is a set intersection, so that failure is silent.
-- **`upgrade` step 4 runs the command instead of reciting the join path.** Declining still stores
-  nothing (no second inert state beside `federation.json`), and exposure flags are never
-  re-litigated on upgrade.
-- **`/gitos federation`** is the on-demand mode: the same offer, plus the exposure flags and
-  leaving a group. It is what makes *keeping federation disabled* a deliberate act rather than
-  only the result of declining a prompt.
-- **Gate 26** pins it: empty ⇒ silent, no writer reachable transitively, labels absent from every
-  `--json`, a 5,000-character and a whitespace-bearing label both capped and flagged, 7 faulty
-  registry records degrading per record, an injected engine defect that must *escape* the
-  per-record guard, and an over-restriction control so an always-empty offer cannot pass.
-  `offer` also joins gate 21's R43 sweep, so it is exercised against every malformed record
-  shape in that corpus from the day it exists.
+---
 
 ## v29 — 2026-07-31
 breaking: no
 
-**Federation — adoption: the four built stages become reachable** (stage F5). v25–v28 built
-federation; nothing told anybody it was there. `references/upgrade.md` mentioned it **zero
-times**, so a repo upgrading past those versions got the code refreshed inside its install and
-was told nothing — and the capability is *invisible when off* by design, so there was no sign of
-it to stumble over either. **A feature nobody is told about is a feature nobody has.** No new
-capability ships here; what ships is the way in.
-
-- **`upgrade` now OFFERS federation — and does not enable it.** On a repo with no
-  `<home>/federation.json` the upgrade says once that federation exists, names it as off by
-  default and invisible when off, and points at the one page that carries the join path. On a
-  repo that already has the file it says nothing: that repo has decided. **The step runs no
-  federation command and writes no config** — the only thing it reads is whether that one file
-  exists. *Opting in is per checkout and it is the operator's word, and it is the first of two
-  consents (the exposure flags are the second); a repo that came back federated because somebody
-  asked for a directive refresh would have spent a consent nobody gave — the precise surprise
-  this subsystem was built to avoid.* It is the same **report-then-ask** shape the engine already
-  uses for the engine `git pull` offer and the lens refresh.
-- **How a repo JOINS is written down, once** — in `references/federation.md` → *Joining*, which is
-  the only place the sequence lives. Everything else, this entry included, points at it rather than
-  repeating it: a second copy is what the previous stage spent eight rounds proving drifts.
-- **THE MIXED FLEET: a sibling's engine stamp is REPORTED, and nothing consults it.** A stamp is
-  the version that repo **last ran**, not one it is pinned to — one skill install per machine
-  means "behind" almost always means *"has not run gitos since you upgraded"*, which `last_seen`
-  says better and which running it fixes. So no version gate was added, and one cannot be added
-  quietly: `consult` allowing and `file` landing a real file into a sibling stamped older,
-  stamped newer, or carrying **no stamp at all** — in both orientations — is now pinned end to
-  end through the CLI, in both directions, with the fixture's own stamps asserted so the pin
-  cannot pass while measuring two repos on one version. **A sibling being behind is not a reason
-  to refuse**: that is the *degrade to the status quo, never below* invariant inverted into
-  version form, and one participant's state must not disable a tool for another. The pin holds
-  the reporting half too — report-only fails if the number disappears as surely as if it starts
-  refusing. And whatever is refused, the finding or the question is still open: every refusal
-  already names the by-hand fallback at the point of refusal, which is what keeps an
-  under-versioned or unfederated sibling reachable.
-- **One source of truth, applied to this change and to the page it edits.** The join path is
-  written in `references/federation.md` and *pointed at* from the upgrade step rather than
-  restated. And the fleet-view sample transcript in that page was **deleted, not corrected**: it
-  had drifted from the code it copied — a deliberate change to how the engine stamp is spelled
-  and to how a sibling's own words are delimited went into the renderer and not into the sample.
-  The page now says which functions render it and tells you to run the command. *Correcting a
-  copy re-arms it; the drift was the argument.*
+- Federation — adoption: the four built stages become reachable
 
 ---
 
 ## v28 — 2026-07-29
 breaking: no
 
-**Federation — cross-file and intake** (stage F4): the first federation capability that **writes
-into another repo**, and the one the subsystem exists for — *the copy-paste that never happens*. An
-orchestrator that finds something belonging to a sibling repo can file it there as a **proposal**,
-which becomes real work only when that repo's own operator accepts it. Everything before this could
-only read.
-
-- **It writes ONE file into ONE directory — `<target-home>/intake/` — and nowhere else.** That is a
-  property of the code's *shape*, not of its current control flow: a single function composes the
-  destination from one hard-coded directory name plus a validated hex id, so a second destination
-  is not expressible. Proved structurally, then measured against a target seeded with decoys (a
-  brain, a ledger, work-orders, a footprint log — all byte-identical afterwards). *You are writing
-  into somebody else's repo: one directory, provably, or nothing.*
-- **What lands is a PROPOSAL, never a work-order (the sovereignty keystone).** Accepting one
-  **requires naming a work-order that already exists in the receiving repo's own ledger** — so
-  *acceptance is only expressible as a reference to something that repo authored*, and **the
-  foreign file cannot become the board item**. The proposal is archived as **evidence** for that
-  work-order with its body preserved byte-for-byte. A directive saying "author a native work-order"
-  would be one more rule to remember; a required argument that must resolve to a real file is the
-  same rule with a mechanism under it.
-- **A PROPOSAL BODY IS DATA, NEVER A DIRECTIVE — AND THAT IS MECHANICAL.** A receiving
-  orchestrator is an LLM that reads whatever is in front of it, so a proposal body is an
-  instruction-injection surface. **The listing emits metadata only because it *cannot* emit
-  anything else**: the reader that feeds it stops at the header terminator, refuses to read past a
-  bounded window, and returns a fixed key set — on `--json` as much as in print. A non-conforming
-  file is refused and reported **by name**, its content neither read nor quoted, because an error
-  message is a surface too. The title — the one foreign string the listing *does* show — is
-  collapsed to a single bounded line on write **and** on read. *A directive telling an orchestrator
-  not to obey a file is exactly the kind of rule this engine has watched decay; a tool that does
-  not print the body makes the DEFAULT path safe.* **Honest limit, stated rather than dressed up:
-  this is not a sandbox** — an LLM with file tools can open the file, and `--show` exists so the
-  **operator** can read it deliberately. What is mechanical is that the default path cannot hand it
-  over. Two further limits are stated rather than implied: `intake/` is a **path**, so a symlink
-  planted by the receiving repo's own operator redirects the write (cooperative, not a sandbox —
-  a resolve-and-refuse check would imply a guarantee the machine boundary does not make); and the
-  fingerprint splits as well as merges, so **a declined finding re-titled by one character comes
-  back as a fresh pending proposal** — the correction is a rule for the sender (do not re-title a
-  settled finding), not a change to the hash.
-- **AND A HEADER *VALUE* IS A SURFACE TOO — closed as a class, at one choke point.** A refusal
-  message reaches four places: the listing, `--json`, the bootstrap checker's **unbidden**
-  findings, and — in the other direction — the **sender**, when a settled finding is re-filed.
-  So the readers of a foreign proposal **build no messages at all**: they
-  name a fault code, and every refusal they can emit is chosen from **one table of literal
-  templates** whose only substitutions are the *bounded, quoted* file name, this engine's own
-  constants, and the **type** of the offending value — with an integer's digits kept, because
-  *"this engine reads 1, that file says 2"* is the entire content of the forward-compatibility
-  refusal. The values that survive parsing are bounded the same way, in **both directions**: the
-  receiver's decline note reaches the sender collapsed to one quoted line and its state word
-  forced into a fixed vocabulary, because an archive is a foreign-authored file whichever end
-  reads it. The two columns that *are* the sender's words — display name and title — are shown
-  **in quotes their content cannot forge**, so the foreign span is structural rather than
-  positional. *The lesson banked with it: any foreign value in any message is a surface, and
-  reasoning about that field by field is exactly how the field nobody reasoned about ships.*
-- **AND THE COMPLETENESS QUESTION IS ASKED WITH THE QUANTIFIER THE OTHER WAY ROUND.** Two rounds
-  answered *"a message is a surface"* by widening the list of what counts as foreign — nine header
-  fields, then an enumerated category of foreign-controlled inputs — and each time the next channel
-  shipped anyway: first the **file name** (foreign, but not a header field), then **archive names**,
-  the **target repo's display name** and the whole **registry tier**. A list of what IS foreign is
-  an *open-world* claim: anything unlisted is implicitly safe, which cannot be proved finished. So
-  the guarantee is now the opposite one, and it is the shape this engine already had twice — *the
-  listing cannot reach the body reader*, *the header readers contain no formatting at all*. The
-  enumeration of foreign inputs is kept, and is now described as what it is: *the map, not the
-  authority.*
-- **AND CLASSIFICATION IS A RUNTIME PROPERTY, ENFORCED AT ONE SERIALIZER.** The inversion above was
-  first built as a static walk over the emitters, and that lost: ten shapes put unbounded foreign
-  prose on a default surface with every gate green — two of them *inside* an emitter's own body, one
-  through a helper that mutated the returned payload **in place** (so the value appears in no
-  expression at any depth), and the acceptance test that certified the whole mechanism went green on
-  a **rename**, because classifiers were matched by call *name*. Static analysis of a dynamic
-  language loses that game, so the leak is now **impossible to express** rather than detectable.
-  Every string placed into a surface payload says which it is — `Engine` (ours) or `Foreign`
-  (somebody else's) — and **one serializer** produces every default surface from it. A **bare,
-  unmarked string reaching it is a hard refusal**, values and keys alike, so a channel nobody has
-  thought of fails at the boundary instead of sailing through it. `Foreign` is not a string and
-  refuses every rendering operation there is, so a leak cannot even be *composed*; the cap and the
-  delimiter are applied **at serialization**, which makes a forgotten render impossible rather than
-  merely unlikely. And because the check runs on the value **actually being emitted, at the moment
-  it is emitted**, in-place mutation, out-parameters and renaming are irrelevant to it *by
-  construction*.
-- **AND THE MARKING HAPPENS WHERE THE BYTES ARRIVE, NOT WHERE THEY ARE PRINTED.** The serializer
-  makes an unmarked string unemittable; what it cannot see is a caller *lying* about provenance.
-  While that mark was applied where a value was placed into a payload, it was a **one-word edit at
-  an emission site with nothing behind it** — and three of them (`home_path`, `last_seen`, a fleet
-  member's `groups`) each put a ~4,900-character `<system-reminder>` back on `status --json` with
-  every gate green. So the four readers that ingest another repo's file now **return records whose
-  foreign fields are already marked**. No payload builder downstream sees a bare string for those
-  fields, and a mis-mark stops being a one-word edit: `Engine` is a `str` subclass, so wrapping a
-  value that arrived foreign **raises at the line where somebody writes it**, on every run that
-  touches a record. A tenant record gets a *walk* — every string at every depth — rather than a
-  field list, because `home_path` was the field nobody listed four rounds running and a record is
-  arbitrary JSON that somebody else will add a field to. *A per-site obligation is a directive; a
-  value that arrives already typed is a mechanism.* **And that walk is TOTAL** — values, dict
-  **keys** and **numbers**, at every depth. Numbers are not safe merely for not being strings:
-  `engine_version` is an integer in every record this engine writes, `json.loads` accepts `NaN` and
-  `Infinity` by default, and an unmarked number went verbatim onto `--json`, so one sibling could
-  hand every consumer of that surface a document **no strict JSON parser accepts**. Keys were left
-  bare on the stated ground that *"nothing hands a raw record to a surface (every consumer
-  projects)"* — but the fleet view projects **by copy**, so an object-valued field handed the whole
-  subtree, keys included, to the serializer. Booleans and `null` stay bare, and that exception is
-  closed rather than convenient: three tokens this engine spells itself, of fixed length, with no
-  prose available through them.
-- **One participant's malformed record no longer breaks the tool for every repo on the machine.**
-  A registry is a directory every tenant writes into **by design**, so a half-written record from a
-  crashed process is an ordinary event — and two shapes of one were measured taking
-  `federation status` to **exit 1 in repos that did not write the record**: a `name` that was an
-  object ("*an internal emission fault … a defect in the tool, not something to repair in this
-  repo*" — false, the fault was a sibling's file) and a `groups` that was not a list ("*fix `groups`
-  in federation.json*" — pointing at the reader's **own** file for a fault in a file they do not own
-  and the message never named). That is `INV-10` inverted, and it is the failure a *cooperative*
-  design is most exposed to. The fleet reader already reported an **unreadable** record as a row;
-  that contract now covers **malformed-but-readable** ones too, naming which record and which
-  field, with a correction that points at the repo that owns it. **A fleet reader degrades per
-  record or it is not a fleet reader.**
-- **A carve-out is a claim about a category, so it is restricted to that category.** Paths were
-  rendered uncapped on the human surface because *a truncated path stops resolving* — true for a
-  path this engine derived from a directory it resolved, and false for a `home_path` sitting in a
-  file somebody else wrote, which is never opened at all. 200 KB of directive text reached the
-  canary's **unbidden bootstrap report** through that gap, twice. The carve-out now takes a path
-  *object* and refuses a raw string and refuses an already-marked value, so a `home_path` read out
-  of a registry record cannot be passed to it; and it is bounded at the OS's own path limit for the
-  case where the type is unavoidably lost. The documented justification's closing sentence —
-  *"what bounds them is the filesystem that has to hold them, not this engine"* — was false for
-  exactly that case, and is corrected rather than softened. The justification's *other* clause —
-  "a path this engine *composed*" — over-claimed at two refusals that pass the resolved directory
-  itself with nothing of ours joined on; the words are narrowed to what the code does (**a
-  directory this process confirmed exists**), because that is the case where "the filesystem that
-  has to hold it" is most literally a real bound.
-- **A sentence describing behaviour is a second source of truth, and it drifts.** The claim about
-  what the canary's surfaces carry was corrected six times — and the sixth false instance was
-  written **by the round that was correcting the fifth**, on the lines being corrected, in a new
-  spelling the class check meant to prevent it could not see (that check tested whether a sentence
-  contained one of eighteen substrings, several of which occur naturally in a fresh affirmative
-  sentence). Six rounds is a long enough experiment. The prose is **deleted** rather than corrected
-  a seventh time: the property is measured by one named assertion, the documents point at that
-  assertion, the pointers are checked live, and the drifted spelling is banned outright.
-  *Do not describe behaviour beside the thing that measures it — point at the measurement.*
-  **[CORRECTED in WO-043 Revision 9. The ban did not work: EIGHT restatements survived it — seven
-  found in the eighth round, and an eighth in a gate summary string, which a comments-and-docstrings
-  scan does not read. The successor remedy (a generated table plus a claim-shape detector) was
-  defeated by ordinary paraphrase and exempted long paragraphs by length, which is exactly where
-  the eighth was. Revision 9 deleted the prose, the generated table and the detector together;
-  what a canary finding carries is described by the assertion that measures it.]**
-- **Three foreign-controlled inputs no longer produce a traceback where a refusal was promised.**
-  `intake --decline <id> --json` with no `--reason` exited 1 with a stack trace instead of 2 with a
-  sentence — *the mechanism worked and the integration did not*, since the serializer correctly
-  refused an unmarked string from the one command return that skipped the payload builder and
-  nothing caught it. A proposal whose **body is not valid UTF-8** listed fine and could never be
-  shown, accepted or declined: it pended forever and reddened the receiver's canary forever, which
-  is **a denial-of-service on the human checkpoint, available to any sender**. And a `home_path`
-  past the OS path limit crashed the canonicalizer *before* the `target-path-unresolvable` refusal
-  that exists for exactly that case could run — `INV-10` promises degrade-to-fallback, and a
-  traceback is below the status quo it promises never to fall under.
-- **`--json` carries no foreign string at all.** Machine surfaces are read by tooling, so ids,
-  counts, ages and engine-derived paths are sufficient — a display name, an engine stamp, a
-  `last_seen`, a home path, a decline note and a foreign object **key** are all withheld from
-  `status --json`, `file --json`, `consult --json`, `intake --json` and `canary --json`. A surface
-  that carries no foreign data needs no classifier, no bound, and **cannot regress**. A person
-  reads a name on the human surface; a program that needs an identifier gets the **id**, which this
-  engine mints.
-- **The registry is a weaker tier, and it is no longer treated as an absent one.** A tenant record
-  lives on the operator's own machine, but it is still a directory other repos write into, and its
-  strings reach `federation status`. A record's **file name**, a sibling's **display name**, a
-  **group label** (`normalize_group` does not bound length) and the engine stamps are all bounded
-  and delimited there now, and a record that will not parse is reported with **one sentence of
-  ours** — never the parser's, which names the *path*. The **target repo's own display name** is
-  bounded at the reader every cross-repo action goes through, and delimited at every print —
-  including the outbound confirm preview, the line directly above the one asking the operator to
-  authorize a write into somebody else's repo.
-- **The OUTBOUND CONFIRM is a named gate AT THE SEND STEP.** `file` is **dry-run by default** — the
-  same shape every other outward-facing action in this engine ships with — and without `--confirm`
-  nothing is written, not even the intake directory. The gate binds **by reference** to the
-  orchestrator's standing *irreversible / outward-facing actions* boundary rather than restating
-  it, and it is printed only where it applies: *a rule placed away from its step is read at
-  dispatch time and applied many turns later.* **Both ends confirm** — the sender's operator
-  authorizes the send, the receiver's authorizes the receive.
-- **Payload minimization is a rule, not advice.** A summary plus a **required** pointer back to the
-  sender's own work-order, never verbatim evidence: the file lands in the receiver's *git-tracked*
-  home and rides their history forever. An over-cap summary is refused with nothing written — the
-  tool will not trim somebody's finding on their behalf.
-- **The proposal id is a fingerprint of sender + title + source-ref, so re-filing is safe.** The
-  same finding re-filed **overwrites its own proposal** instead of accumulating duplicates, and a
-  byte-identical re-file writes *nothing at all* (no churn in the receiver's git history). A
-  reworded summary is the same finding said again and updates in place, **preserving the original
-  `filed` stamp** so a noisy sender cannot keep resetting the receiver's ageing clock; a different
-  title is a different proposal; and a finding the receiver already accepted or declined is
-  **refused**. *Idempotence is what keeps the human checkpoint from decaying into rubber-stamping —
-  a queue that grows a duplicate on every re-run is a queue that gets skimmed.* False-merge risk
-  stated honestly: same sender + same title + same source-ref collide, and the correction is to
-  name distinct findings distinctly.
-- **One authorization path, not two.** `consult` and `file` go through the *same* function — live
-  re-read of the target's own `federation.json`, group intersection first, then that action's flag.
-  A second decision procedure would be a second place for the act-time re-read to rot. The
-  write-side revocation is immediate and asserted: a live `accept_proposals: off` behind a cached
-  `on` is refused.
-- **Delivery observability, so the motivating case cannot fail silently.** A successful send is
-  recorded in the sender's own home, and `federation status` correlates each outbound against that
-  target's `last_seen` — *"filed 9d ago, target last ran 41d ago"*. Without it a proposal rots in a
-  dormant repo while the sender believes it delivered, which is **worse** than copy-paste, where
-  the operator at least knew. **Delivery is not acknowledgement and the view does not pretend
-  otherwise.**
-- **The canary gained the intake's observer** (the stage that ships a capability ships its watcher):
-  a malformed proposal · a sender with no tenant record · **proposals pending while
-  `accept_proposals: off`** — the flag is *cooperative*, so this check is the only thing that
-  notices it was not honoured — · a proposal pending past 14 days. All **local and gating**, because
-  every one is fixable here by the operator who is already in this repo. **A repo with no `intake/`
-  gets no finding, no skip and no line** — not-applicable is not skipped, one level down from where
-  that rule was pinned. A bootstrap finding arrives in the orchestrator's context unbidden, so the
-  checker is deliberately stricter than the listing; the `CANARY-SURFACE-CONTENTS` assertion in
-  `.gitos/tools/selftest.py` is what measures its surfaces.
-- **Refusals stay outcomes**: every one exits 0, names what would change the answer, and prints the
-  fallback — hand the finding over the way you would have before federation. **A refused cross-file
-  must never become a dropped finding.**
-- **Unfederated repos are unaffected**, which is why this is `breaking: no`: no new step, no new
-  output, no new failure mode. A federated repo gains two subcommands and one bootstrap line that
-  exists only once somebody has actually filed something into it.
+- Federation — cross-file and intake
 
 ---
 
 ## v27 — 2026-07-29
 breaking: no
 
-**Federation — consult** (stage F3): the first federation capability that **acts across repos**, and
-the only one that ever exposes a repo's content. An orchestrator in one repo can ask a sibling repo's
-brain a question and get an answer *in that repo's context* — refusable by the target and recorded on
-the asking side. Everything before this was plumbing that touched nobody else. It is read-only in two
-different ways, stated apart rather than together: **the tool writes nothing into the target**
-(mechanical, asserted), and **the dispatched agent is *directed* read-only** by the role contract it
-inherits — a directive, not a sandbox.
-
-- **The tool AUTHORIZES; the orchestrator CONSULTS — and they are deliberately different things.**
-  `federation consult TARGET` is a **function**: resolve the target through the registry, **re-read
-  that target's own `federation.json` at that path, at act time**, apply the group intersection and
-  then `consultable`, and answer **ALLOW + a path** or **REFUSE + a reason**. Dispatching the agent,
-  framing the question and deciding what is worth recording is **judgement** and stays with the
-  orchestrator. The authorization half is code rather than prose because *"re-read the source of
-  truth, never the cache"* is exactly the kind of rule that decays when it is a directive — a
-  function makes authorizing from the cache **impossible** rather than merely forbidden.
-- **A revocation takes effect immediately.** The cached record is a snapshot of the last time that
-  repo ran; a decision made from it would keep granting access until the revoker's next session,
-  which is a revocation that did not happen. **A target whose live file says `consultable: off` is
-  refused even while its registry row still says `on`** — asserted in both directions, because a
-  program that always refuses would satisfy the one-sided test.
-- **Groups are checked before the flag, and the order is observable.** A target you cannot reach must
-  not have its exposure posture reported to you at all: a group-disjoint target that is *also*
-  `consultable: off` reports the **group** reason. Reporting the flag would answer a question the
-  caller was not entitled to ask, and would send the operator to request a flag flip when the real
-  gap is a group label. **The verdict discloses to match**: a `no-shared-group` refusal names the
-  target and both group sets but does **not** carry `consultable` — on `--json` as much as in print,
-  because a disclosure rule that only one surface obeys is a courtesy rather than a rule.
-- **Every refusal is distinct, actionable, and exits 0.** Nine reasons — this repo not federated ·
-  unknown target · ambiguous name (**both ids named; the tool never guesses which repo gets read**) ·
-  target path unresolvable · target no longer federated · target config unparseable · no shared group
-  · `consultable: off` · target is this repo — each naming what would change the answer. **A refusal
-  is an outcome, not a tool error**; non-zero is reserved for the tool genuinely failing.
-- **The exposure flags are never coerced, in either direction.** A live file saying
-  `"consultable": "off"` carries a *string* — and a truthy one — so it is refused as an unreadable
-  config rather than read as `on`. Guessing at a malformed posture would grant an access the target
-  never granted (or silently close one it did); a malformed posture is a fault to report.
-- **The tool dispatches nothing and reads no brain.** Structurally, not by good manners: it imports no
-  process, thread or network library at all; the deciding function reaches an allowlisted set of
-  helpers that excludes every registry reader; discovery hands back `{id, name, home_path}` and
-  nothing else, so a cached flag has no route into the decision; and the only path it ever opens under
-  a target is that target's `federation.json`.
-- **Said plainly, and not softened: "scoped to the target's brain" is a PROMPT-LEVEL SCOPE, NOT A
-  SANDBOX.** The dispatched agent is an LLM with file tools, and the read-only contract it inherits
-  is a **directive**: it addresses **writes** rather than read breadth, and even that write half is a
-  role contract, not a sandbox. On one operator's machine that is proportionate — any session there
-  can already read the drive — and it is documented rather than dressed up as enforcement. Anything
-  that must not be readable belongs on a different machine. **The ALLOW verdict says this at the
-  terminal too**, separating what is *directed* (the agent's scope) from what is *enforced* (this
-  tool authorized; it dispatched nothing and read no brain).
-- **Exposure ratchets one way, so the asking side records the minimum.** The answer is recorded in the
-  **asking** repo's brain (question → answer → target id) and the target's brain is never mirrored
-  across. Whatever lands thereafter lives under the recording repo's posture and remotes:
-  responsibility for re-exposure sits with the repo that writes it down.
-- **A refused or unreachable target falls back to the manual path**, and the command prints that line
-  on every refusal. Federation must never make a cross-repo question *less* likely to be answered
-  than it already was.
-- **Unfederated repos are unaffected**, which is why this is `breaking: no` — there is no new step, no
-  new output and no new failure mode for a repo that never opted in. For a repo that *is* federated
-  nothing changes either until someone runs the new subcommand: it adds a capability and removes none.
+- Federation — consult: (stage F3): the first federation capability that **acts across repos**, and the only one that ever...
 
 ---
 
 ## v26 — 2026-07-29
 breaking: no
 
-**Federation — the canary category and the fleet view** (WO-041; stage F2, the observer half of the
-pair v25 opened). v25 shipped the bootstrap heartbeat as a directive with **nothing watching it**, which
-is the decay shape this engine keeps naming. This version supplies the watcher — and puts fleet-wide
-freshness where it informs without blocking.
-
-- **The canary gains a `federation` category, and it is STRICTLY LOCAL.** For a federated repo it
-  reports: **no tenant record** (the heartbeat has never run here, or the record was removed), **a record
-  that has not been refreshed recently** (the heartbeat has stopped), **a record that names another
-  checkout's home path** (something that is not this repo is refreshing it, so its freshness proves
-  nothing here), **a record stamped in the future** (a clock that jumped forward or a hand-edit — a
-  stamp ahead of now is not evidence the heartbeat ran, and a one-sided staleness test would read it
-  as fresh forever, hiding a heartbeat that had stopped behind it), **a record with no usable
-  `home_path`** (the heartbeat always writes one, so a missing or non-string value is a corrupt
-  record — and without it, which checkout owns the record cannot be established), and **a corrupt
-  `federation.json` or record** (a parse failure is a finding, never a silent "not federated"). Each
-  names its correction, and each says what it actually saw rather than reaching for the nearest
-  existing label. It **reads no other tenant** — it opens this repo's
-  own opt-in file and the single record its own id names, and never enumerates the registry, so a
-  sibling's state cannot redden this board.
-- **Read this if you are already federated: a repo whose heartbeat is not running now goes RED where it
-  was green.** Nothing about federation changed — the finding was always deserved and nothing was
-  watching for it. The correction is one idempotent command (`federation heartbeat`, which the
-  orchestrator's First action already runs every session). For **unfederated** repos this version is
-  purely additive and byte-for-byte invisible, which is why it is `breaking: no`.
-- **Not-applicable is not skipped** — the rule this version pins, because two of the canary's own
-  disciplines collide here. A repo that never opted in does not *have* this module: there is no check
-  that failed to run, so it gets **no line at all** and appears in **neither `checked` nor `skipped`**. A
-  repo that **is** federated but where the check cannot run takes the ordinary **visible skip**, because
-  there the question was asked and went unanswered. Both halves are asserted.
-- **"Refreshed recently" is an honest proxy, and the payload says so.** The question worth asking is
-  *"was my record refreshed this session"*, and a timestamp cannot answer it — there is no session marker
-  to read, and inventing one is the heartbeat's business, not a checker's. The check asks the strongest
-  observable question instead, *"was it refreshed in the last 12 hours"*, and owns both error directions:
-  a session running longer than the window will see the finding (harmless — the record really is that
-  old, and the named correction is the right action, so the false positive self-clears), and a heartbeat
-  that died under 12 hours ago still looks healthy (a **latency bound**, not a session boundary — a dead
-  heartbeat is caught within one window and stays caught).
-- **Federation gets its own thresholds, rather than overloading one knob across three contracts.** The
-  local check is **hours-scale and not a knob at all**; reusing the canary's `--stale-days` (60 — "is this
-  brain page stale") would let a presence record rot for two months and still pass, which is the exact
-  blindness the observer exists to end. The fleet view gets `--dormant-days` (default 30) for "has this
-  tenant run recently" — **report-only**, so a mis-tuned value is cosmetic rather than board-freezing.
-- **`federation status` becomes the fleet view.** Tenants grouped by group, each member with derived
-  freshness, posture flags, engine version, and markers for dormancy and a home path that no longer
-  resolves; defaults to this repo's groups, `--all` shows every group on the machine. The
-  **singleton-group line is informational, not a finding** — a solo group is normal while a domain is
-  stood up, and it exists so a typo'd group name is at least legible.
-- **The gating split, stated plainly: local gates, fleet reports.** `status` exits `0` whatever it finds.
-  With one operator and many repos, dormancy is the *steady state* and external drives unmount routinely,
-  so gating on a sibling's silence would redden every federated board over repos doing nothing wrong —
-  and the only remedy would be switching the check off. What gates is what is fixable *here*.
-- **Freshness is derived at read time and never persisted** — no `stale` field is written, ever; the mark
-  *is* the report. The canary never writes the registry, never refreshes a heartbeat, never prunes.
-- **The first cross-tenant reader is named for what it is.** v25 deliberately shipped none, so that "read
-  the cache and act" could not become the idiom. The one that now exists is `read_fleet_for_report` —
-  **read-to-report**, documented at its definition as never an authorization path: consult and cross-file
-  will re-read the target's own `federation.json` at act time, because a revocation that waits for the
-  revoker's next session is a revocation that did not happen.
-- **Selftest 19 → 21 gates, and the invisible-when-off gate got wider.** Its "no registry read" half
-  instrumented only the module's parsed-read path, so a bare `stat`/`exists` probe under the registry
-  slipped past it (measured: such a mutation stayed *green*). It now records the whole stdlib filesystem
-  surface underneath the module, so a *look* is caught, not only a read. Twenty-one mutations across
-  both directions — neutered checks, over-broadened ones, a fleet reader wired into the gating path, a
-  persisted staleness mark, and `status` made to gate — were all caught, each with an anchor `count == 1`
-  asserted before it was applied. The new category's own gate also stopped measuring the wrong thing:
-  its invisible-when-off assertion read the *whole rendered report*, whose header embeds the repo's
-  absolute path, so it was coupled to what the fixture directory happened to be **called**. It now
-  asserts over the report's `[OK]`/`[!!]`/`[--]` category lines — the rows the rule actually governs —
-  and the fixture is deliberately named with "federation" in it so the coupling cannot return unnoticed.
+- Federation — the canary category and the fleet view (WO-041)
 
 ---
 
 ## v25 — 2026-07-29
 breaking: no
 
-**Federation — the primitive, the opt-in, and groups** (WO-040; stage F1 of a new subsystem). Independent
-gitos instances **on one machine** can now declare themselves, join groups, and register their presence, so
-a later stage can route work that belongs to a sibling repo instead of leaving it to a copy-paste that never
-happens. This version ships the **plumbing only**: the per-repo opt-in file, the machine-level registry, the
-`federation` command, the bootstrap heartbeat, and the one group-reachability predicate. **Nothing here acts
-on another repo** — no consult, no cross-filing, no intake.
-
-- **Invisible when off — proven by a test, not intended.** A repo with no `<home>/federation.json` produces
-  **no registry entry, no registry read or write, no extra output line, and no error**; the tenants directory
-  is not even created, and the repo's tree is byte-identical before and after a heartbeat. Opting in is one
-  explicit command. Unfederated repos are unaffected by this version, which is why it is `breaking: no`.
-- **`<home>/federation.json` is the source of truth, and it is git-IGNORED.** It carries a stable `id`, a
-  display `name`, `groups`, and the exposure flags `consultable` (**off** by default — the one capability
-  that reveals repo content) and `accept_proposals` (on). Ignoring it makes opt-in **per checkout**: a clone
-  or worktree arrives unfederated instead of inheriting an identity and an exposure posture. **Exactly one
-  path is ignored** — the rest of the pipeline home stays tracked, because the ledger and the brain are the
-  audit trail. `scaffold` seeds the line for new repos; `federation enable` back-fills it for existing ones.
-- **Identity is minted once and derived from nothing** — so it survives a **rename** *and* a **move**. Not
-  derived from the path (a move would change the identity — the identity-by-position lesson in path form)
-  and not from the repo's history (every clone would derive the same id and two checkouts would fight over
-  one record). A changed path is a **move**: the same record's `home_path` is updated, never forked.
-- **The registry is ONE FILE PER TENANT** at `~/.claude/gitos-federation/tenants/<id>.json`, and a session
-  writes **only its own** (write-temp-then-`os.replace`). A single shared registry file has no per-row write,
-  so two sessions refreshing at once would silently lose each other's updates; with one file per tenant there
-  is no lost-update window and no cross-tenant merge to get wrong. `home_path` is **stored and compared
-  canonicalized** (resolved + case-folded) — one repo has many live spellings, and comparing raw strings
-  manufactures phantom conflicts out of OS artifacts.
-- **The cache is never the authority.** A tenant record's `groups` and `flags` are **discovery hints**;
-  whether anyone may act on a repo is decided by re-reading **that repo's** `federation.json` at act time.
-  Without that rule a revocation would be silently ineffective until the revoker's next session — so the
-  shape is pinned now, before the first caller exists.
-- **Groups scope reachability by set intersection** (`reachable()` — **exactly one implementation**, exported,
-  and shipped with its tests before any caller exists, so later stages cannot drift on what *reachable* means).
-  Names are normalized (trimmed, lowercased, deduped, order-insensitive); no `groups` field means `[default]`,
-  so a machine that never partitions behaves exactly as one ungrouped federation. **Multi-membership is the
-  sharing primitive** — a repo several domains depend on joins them all. Groups answer *who can reach me*;
-  the flags answer *what they may do*; neither does the other's job. A typo makes a silent group of one, and
-  the mitigation is **legibility** (`federation status` lists the groups), not validation — flagging a solo
-  group would cry wolf while a domain is being stood up.
-- **The heartbeat is a BOOTSTRAP step, never a canary check.** A federated repo refreshes **its own** record
-  and stamps `last_seen` at first-action — beside ensure-git and the engine-drift check, and **before** the
-  canary. Refreshing your own presence is an *attendance signature*, not a repair; a checker reports and
-  never mutates shared state. Staleness is derived at read time and is **never persisted**.
-- **Cooperative, not a sandbox — stated plainly everywhere.** No daemon, no process, no network: the registry
-  is a lazy cache maintained as a side effect of participants running gitos, and it is eventually consistent.
-  Federation is machine-local **by construction**, so the machine is the only isolation involved. Flags and
-  groups are graduated-sharing policy that participants honor — they reduce blast radius and noise; they are
-  not an enforcement boundary and they keep no secrets. Presence is *machine-visible metadata*, not "none".
-- **Known gap, stated rather than hidden:** the heartbeat is a directive whose observer (the canary category
-  that notices a federated repo whose own record is missing or not refreshed this session) is the **next**
-  stage. Delivery and its observer ship as a pair, and until the second half lands this step is a directive
-  with no observer — the decay shape this engine has named before, accepted only because the pair closes it.
-- **Opting out is clean under a live heartbeat.** `disable` removes the **truth file first**, then the
-  record, then sweeps once more after a brief settle. `federation.json` is the master switch, so once it is
-  gone any heartbeat that *starts* writes nothing — deleting it first is what makes the window *closeable*
-  rather than merely narrow; the settled second sweep collects a writer that was already in flight. The
-  other order leaves a record naming an opted-out repo's path, groups and flags that nothing will ever
-  refresh. *Residual, stated rather than implied away:* a heartbeat descheduled longer than the settle
-  between its read and its write can still leave a row — this is a cooperative mechanism, not a lock, and
-  the next stage's own-record observer is what reports such a row.
-- Selftest gains **five** gates (primitive/groups/reachability; opt-in + registry incl.
-  rename/move/canonical path/legacy homes/`.gitignore` precision; invisible-when-off; concurrency; and the
-  opt-out race), each mutation-tested both directions.
+- Federation — the primitive, the opt-in, and groups (WO-040)
 
 ---
 
 ## v24 — 2026-07-17
 breaking: no
 
-**Record each commit's footprint in the ledger — visibility without judgement** (WO-039). Work-loop
-**step 7** now records each landing's *footprint* — the set of paths its commit touched — in an
-append-only footprint log (`<home>/footprints.md`) that the resolved row's sha joins into. It is the
-same staged set the orchestrator already reads back at step 6, written down instead of left buried in
-git history, so a human reading the board can notice a commit whose paths span work-orders — the one
-genuine signal a cross-work-order sweep leaves — rather than relying on an agent to catch it after the
-fact.
-
-- **Visibility, not judgement — recorded, never checked.** The footprint is *disclosed for a human to
-  read*; nothing compares it against a scope field, an owned-paths list, or any expected set, and the
-  step-7 gate is unchanged. A footprint-vs-scope gate was measured against the whole work-order corpus
-  and rejected: scope shape tracks work-order *type* (fix-a-known-surface → path list; investigate /
-  decide → prose), and ownership is a **relation, not a function** — a file is legitimately co-owned
-  across many work-orders, sequenced by a human — so such a gate is *red on correct work*, and a guard
-  that cries wolf gets disabled. The human supplies the judgement a footprint alone cannot; this only
-  makes the footprint legible, and it *cannot prevent* a sweep, only surface one.
-- **One habit, not a git recipe; no new tool, no hook.** Step 7 names the *what* — record the footprint
-  you already read at step 6 — not a sequence of git incantations. A plain `git show --stat <sha>`
-  re-derives a footprint, so no helper script (one more thing to remember to run) and no git hook (an
-  undeliverable, off the engine's delivery path) were added.
-- **Additive.** New disclosure at resolve time; it changes no existing directive, gate, or contract.
+- Record each commit's footprint in the ledger — visibility without judgement (WO-039)
 
 ---
 
 ## v23 — 2026-07-17
 breaking: no
 
-**A ledger section is a table UNION its prose, not a table XOR its prose** (WO-038). The canary read each
-INDEX section as a table *or* a prose/blockquote ledger, table-first: `_table_rows` returns non-None the
-moment a section carries **any** table — even a header-only or one-row summary/subsection table — so the
-prose branch never ran, and every work-order tracked **only** by a blockquote/list row went unparsed.
-Because the files→rows scan then sees those work-order files with no matching row, each one was reported
-as `orphan-file` — a phantom. The failure was **loud *and* blind**: it manufactured false `orphan-file`
-findings while the section's real prose rows stayed invisible, and the ledger category **gates**
-work-order resolution, so a single prose-only row in an otherwise-healthy mixed section would freeze the
-board. `check_ledger` now folds each section's prose rows into its tracked set as a **union** with the
-table rows.
-
-- **Line-head prose rows only — never the citation-link top-up.** The prose fallback for a *no-table*
-  section has two signals: line-head identity rows (`> 042 = …`, `- **Bug 042** …`) and a top-up that
-  recovers a row carried solely as a markdown link. Only the **line-head rows** (new `prose_row_nnns`)
-  are folded into a section that also has a table. In a table section a markdown link is a **citation**,
-  not a row — folding the link top-up would turn every cross-reference in a cell into a phantom row and
-  manufacture *new* false positives (a cited-but-resolved work-order would surface as a bogus open row).
-  The link top-up stays exclusive to a no-table section, whose behaviour is unchanged.
-- **UNION is the safe direction for orphans, and it stays tolerance-not-blindness.** Adding NNNs to a
-  section's tracked set can only **remove** `orphan-file` findings, never add one; a genuinely stray file
-  (no table row **and** no prose row) is still absent from the union and **still orphans**. What the fix
-  does newly surface is *correct*: a prose row whose file is missing is now caught as
-  `open-row-missing-file`, and one whose file sits in the wrong directory as `open-row-file-in-resolved` /
-  `resolved-row-file-in-root` — real inconsistencies the XOR was hiding, not new false positives.
-- **Every true-positive guard is intact, and prose parsing is now *stricter* inside a table section.** The
-  line-head anchor (a bare mid-line number can't manufacture a row), the `NNN\b` closer, duplicate
-  detection (a prose-internal collision is still caught — the union dedups a prose row against the
-  **table** set only, never against itself), and the fenced-code skip all hold. The row scan now skips
-  fenced code, so an **example** ledger row shown in a ``` block is never read as a real row — this matters
-  more now that prose is parsed inside table sections, which are likelier to carry examples.
-- **`cannot-parse` is unchanged:** a section that is neither a table nor a recognizable prose ledger is
-  still `cannot-parse`, never silently CLEAN. The orphan-scan guard (`open_rows is not None and res_rows
-  is not None`) is deliberately **left as-is**: a *pure-prose* section keeps its conservative best-effort
-  treatment; this defect is specific to the **mixed** section, where that guard already passes. Widening
-  the orphan scan to pure-prose ledgers is a separate question, not folded in here.
-- **New selftest gate** (`.gitos/tools/selftest.py`, 14 gates) pins a mixed table+prose section:
-  blockquote rows whose files exist are tracked (no phantom orphan), a genuinely stray file **still**
-  orphans (anchored on `count == 1`), a citation link / a fenced example / a mid-line number **never**
-  become rows, a prose row with no file **does** fire `open-row-missing-file`, and a prose-internal
-  duplicate is still caught. Mutation-tested five ways, each RED: revert to the XOR, neuter the fold, fold
-  the link top-up, drop the fence skip, and over-broaden the row match to a bare mid-line number.
-
-`breaking: no` — strictly more tolerant on the false-positive it removes (a repo phantom-frozen by a mixed
-section goes green), and measured **finding-neutral on every reachable ledger today**. ⚠️ **One thing to
-know:** a repo with a *mixed* section whose prose rows point at a **missing** or **misplaced** file will
-now see the correct `open-row-missing-file` / `*-file-in-*` finding that the XOR was hiding — a real
-ledger inconsistency surfaced, not a migration burden; the pressure valve (descope the category to
-report-without-gating) is unchanged.
+- A ledger section is a table UNION its prose, not a table XOR its prose (WO-038)
 
 ---
 
 ## v22 — 2026-07-17
 breaking: no
 
-**A commit is scoped to one work-order, the same way an edit is** (WO-035). The work loop pinned
-*"anything concurrent touches disjoint files"* at **dispatch** (step 3) and then said only *"Commit the
-verified work; record the sha"* — no rule about **what gets staged**. That gap is not theoretical: staging
-is **directory-shaped and work-orders are not**, so a bulk stage takes whatever a dispatched agent has in
-flight, and the disjointness the orchestrator guaranteed at dispatch dies at its own commit. The gate is
-honoured; the commit defeats it. Step 6 now carries the staging rule: **stage by explicit path**; read the
-staged set back (`git diff --cached --stat`) and compare it against the work-order's scope before
-committing — **an unexpected path there is the same defect as an implementer editing an unnamed file**
-(out-of-scope footprint, the boundary step 5 already enforces on implementers, now applied to the
-orchestrator's own act). The step-6 gate is extended accordingly.
-
-**Disclose, don't rewrite — but disclosure is not a licence.** Two moments, kept distinct: a stray caught
-*at the read-back* is **unstaged**, because the gate forbids committing it; **disclosure is for the sweep
-you find too late** — once the commit exists, it is named in the next one and corrected forward, never
-rewritten to look clean. **The ledger is an audit trail, not a tidy story**, and a commit that
-misdescribes its own contents corrupts the record the engine exists to keep honest. Rewriting would
-destroy the evidence that the boundary failed, which is the fact worth keeping.
-
-**One rule about staging, not one bullet per git incantation** — WO-031's lesson applied at authorship,
-for the fourth work-order running. A list of forbidden commands is an enumeration, and **an enumeration
-fails once per novel form** (`-a`, `.`, `-u`, a GUI's "stage all", whatever ships next). The invariant is
-*explicit paths*; every bulk form is excluded by it without being named, including forms that don't exist
-yet.
-
-**Placement is the point, and it is reasoned:** the rule lands in **step 6, where the promise is kept or
-broken** — not in *Dispatch + verify*, which steps 3–5 point to and step 6 does not. A commit-time rule
-read at dispatch time is a rule read once and applied many turns later under context pressure; that
-distance *is* the failure mode. Per the work-loop spine's own governing choice (a spine **points** to the
-detailed sections rather than restating them), the rule is stated once, at the boundary, and binds to the
-existing out-of-scope-footprint notion by reference rather than by copy.
-
-**Known limit, stated plainly rather than implied away: this is a directive, and directives decay.** The
-engine's own thesis — *if an invariant depends on someone remembering, it eventually fails* — applies to
-this fix as much as to any other, and this rule exists precisely because a correct rule was forgotten one
-turn after it was written. The directive is necessary and demonstrably followable; it is **not** claimed to
-be sufficient. The mechanism that would close it (a check comparing a commit's footprint against the
-work-order that owns it) is **blocked on a primitive the engine does not have** — no machine-readable
-binding from a work-order to the paths it owns; scope is prose. That primitive, not the check, is the
-next question.
+- A commit is scoped to one work-order, the same way an edit is (WO-035)
+- One rule about staging, not one bullet per git incantation (WO-031)
 
 ---
 
 ## v21 — 2026-07-16
 breaking: no
 
-**The canary reports a home tool copy that differs from the skill's** (WO-034). v19 fixed the *rule* —
-`upgrade` now **delivers** the engine's `<home>/tools/` copies instead of only seeding them. Nothing made
-that observed. The gate that shipped the rule named its own residual gap plainly: *an upgrade step is
-prose an orchestrator performs; there is no function to call, so no gate proves an orchestrator
-complied.* This is the structural counterpart — a new **`tool` category**: for each engine tool a home
-carries a copy of, compare it against the installed skill's. Identical → silent. Different →
-`tool-stale`, naming the tool and the correction (`/gitos upgrade`). The canary already runs at every
-orchestrator bootstrap, so drift now surfaces on the **next session in the repo that has it**, without
-anyone remembering to look. **If an invariant depends on someone remembering, it eventually fails** —
-so it is now a check, not a directive.
-
-**⚠️ Adopters: a repo carrying a stale or hand-edited home tool copy now goes RED where it was green —
-and because the canary gates work-order resolution, that red BLOCKS resolution until the copy is
-refreshed.** Flagged `breaking: no` deliberately, and the reasoning is stated rather than assumed: this
-removes no directive and demands no migration *beyond* a clean adoption — the documented `upgrade` flow
-refreshes the tools in step 4, so a repo adopting v21 through that path is silent on the new category by
-the time the canary runs. An un-migrated repo does not behave *incorrectly*; it gets a finding it always
-deserved. But the red is real, it is new, and a repo that adopts the canary while skipping the refresh
-will feel it — hence the warning, not a silent flag. **The pressure valve already exists and is
-unchanged:** a repo that wants this category to report without gating **descopes** it (SKILL.md →
-*Canary*), the mechanism v16 established for exactly this.
-
-**Says "different", not "why" — and reports, never fixes.** The compare proves the content is not the
-skill's; it cannot distinguish *stale* from *hand-modified*, so it does not guess (v19's honesty, kept).
-Both have the same correction, so naming a cause would add a claim without adding an action. And the
-canary does not refresh what it finds: **refreshing is `upgrade`'s job**. A canary that edited would be
-the same category error v19 had just corrected.
-
-**Line endings are normalized before comparing — a CRLF checkout is not a stale tool.** `<home>/` is
-deliberately git-tracked and `core.autocrlf=true` is the Git-for-Windows installer default, so a raw
-byte-compare calls **every fresh Windows clone of a fully compliant repo** stale — and since this
-category gates, it would hard-block a board that did nothing wrong, printing a correction (`upgrade`)
-that rewrites the bytes and lets the next clone bring the finding right back. *A correction that does
-not correct is worse than no finding.* Both `upgrade`'s step-4 rule and the canary now apply the same
-predicate, so the rule and the check observing it cannot disagree about what a changed tool is.
-Byte-identity remains the right contract for a **mirror** — it was never the right one for *"is this the
-same tool?"*. Caught pre-landing against the real fleet rather than a fixture: normalizing silenced a
-line-endings-only copy while both genuinely-drifted copies stayed red — tolerance, never blindness.
-
-**The tool set is DERIVED, not enumerated** — the fourth work-order to say so, applied at authorship.
-The engine's home tools are the names present in **both** `<home>/tools/` and the skill's `scripts/`.
-Neither side alone is the rule: the skill's side alone would demand `scaffold.py` in every home (it is
-never copied there), and the home's side alone would claim every repo-local tool an operator parked in
-the dir. The intersection is exactly *"an engine script this home carries a copy of"* — the set the
-upgrade rule already governs and scaffold already lays. A future tool the engine ships into a home is
-covered the day it ships, with no edit here and no release for the repo that meets it first.
-
-**Boundaries kept.** `<home>/agents/` is **operator content, not a tool**, and is not reachable from
-this check by construction — the selftest plants a decoy in `agents/` named exactly like an engine
-script and differing from it; if the check ever reaches there, the gate goes red. A tool **absent** from
-`<home>/tools/` is **not** a finding: SKILL.md's fallback runs the skill's own current copy, so a home
-without a copy cannot be stale — those repos were never victims. No `<home>/tools/`, no resolvable skill
-install, or no engine copies to compare → **visible skip**, never a false-CLEAN (*tolerance, never
-blindness*).
-
-**The self-reference limit, named rather than papered over.** A **stale canary cannot report its own
-staleness** — a copy predating this check has no such check to run. A detector cannot detect its own
-absence. This is not solvable from inside, and it does not need to be: the **layer above** terminates it.
-`upgrade` delivers the checking canary (v19), and a home with no copy at all already runs the skill's
-current one. This category is what keeps the copy honest *afterwards*. No bootstrap trick was attempted.
-
-Gate 9 extended to the new category in all three phases, mutation-tested **both** directions (5/5 RED:
-neuter; flag-an-identical-copy; reach into `agents/`; and both one-sided derivations). Its positive case
-asserts the compare **ran** — this category skips itself into silence, so "no findings" alone would pass
-a check that never looked. Its negative case mutates the home copy to be byte-different but
-behaviourally **identical**, which is the honest test of a check that promises *different, not why*.
+- The canary reports a home tool copy that differs from the skill's (WO-034)
 
 ---
 
 ## v20 — 2026-07-16
 breaking: no
 
-**The canary identifies a work-order by a RULE, not by a list of forms** (WO-033). Three work-orders,
-one error, three altitudes: the check hardcoded the engine's own filename regex (*"they were one
-sample"*), the remedy enumerated three samples (*"a four-item list is still a list of samples"*), and
-v18 folded the underscore forms but still enumerated **prefixes**. Enumeration is a strategy that
-**fails once per novel downstream**, and each failure costs that repo its resolution gate until the
-engine ships — so the next ledger writing `task_007_x.md` or `WO007-x.md` was already scheduled to land
-in the same place. This ends the class instead of lowering its rate.
-
-**The rule: the directory is the scope.** Files under `<home>/work-orders/` are work-orders by
-construction, so a filename does not have to prove it is one — it only has to yield an **identity**: an
-optional letter prefix and separator, then **exactly three digits**, then a separator and a slug. The
-prefix carries no meaning and is no longer inspected. `WO-007-x.md`, `wo_007_x.md`, `bug_007_x.md`,
-`task_007_x.md`, `WO007-x.md`, `007-x.md` and whatever the next repo invents all resolve, with no engine
-release. Measured against **every ledger reachable from the engine's environment (312 files)**: the new
-rule and the old list agree on **all 312** — the change buys no existing repo anything, and that is the
-honest claim. Its entire value is that the next novel form costs nothing.
-
-**Tolerance, never blindness — both halves tested.** `IDENT_NNN` is now the engine's single notion of
-"exactly three digits, closed", shared by the filename rule and the prose-row rule so the two cannot
-drift; a name with no readable identity is still reported (`wo_1234_x.md` four digits, `wo1234_x.md` the
-backtrack trap — the rule's prefix is letters-only precisely so a digit cannot be backtracked out of it
-into a phantom WO-234, `WO-1-x.md` one digit, `notes.md` none, `wo_029b_x.md` a suffixed identity this
-ledger model cannot represent and therefore reports rather than flattening onto its sibling). The two
-identity rules share a core but **not** a prefix policy, deliberately: a filename is scoped by its
-directory, a prose line by nothing but its anchor, so an open prose prefix would read `**Fixed 240
-findings**` as row 240. Gate 11 now bites in **both** directions — narrowing to any prefix enumeration,
-widening to `\d{3,4}`, tolerating digits in the prefix, re-importing enumeration from the other end (a
-`notes_` exclusion), or "unifying" the two rules by opening the prose prefix each turn it red.
-
-**The blindness risk, pinned rather than wished away.** A non-work-order carrying an identity
-(`notes_007_draft.md`) **is** adopted as WO-007; no filename signal separates it from `task_007_real.md`,
-and a name-shaped heuristic to tell them apart would re-import the enumeration just removed. What is
-guaranteed is that adoption is never **silent** — with no INDEX row it surfaces as `orphan-file`, against
-a real WO-007 as `duplicate-file` naming both. The cost is a finding with a different **label**, never a
-missed one, bounded by a directory that holds nothing but work-orders. The probe found **zero**
-non-work-order `.md` files across every reachable ledger, and the one near-miss — a memo deliverable
-named after its own work-order — **already** matched v18's enumeration, so the prefix list never
-protected against this class in the first place.
-
-`breaking: no` — the rule is strictly more tolerant (nothing v18 accepted is now rejected, proved on all
-312 real files); no migration action is required. Two caveats named rather than buried: a ledger holding
-an identity-carrying non-work-order will see that finding change **label** (`nonconforming-wo-filename` →
-`orphan-file`/`duplicate-file`), and the module constant `WO_FILE_FORMS` is gone, replaced by
-`WO_FILE_RE` + `IDENT_NNN` (a plural "forms" name would have preserved the framing this WO removes).
+- The canary identifies a work-order by a RULE, not by a list of forms (WO-033)
+- The blindness risk, pinned rather than wished away (WO-007)
 
 ---
 
 ## v19 — 2026-07-16
 breaking: no
 
-**`upgrade` never refreshed a home tool, so no tool fix reached any repo that had the tool**
-(WO-032). Step 4 read *"copy `brain_lint`/`canary.py` into the home if missing — never clobber an
-existing copy"*. So a repo that adopted a tool at v14 kept the **v14 tool forever**. v16, v17 and v18
-were each, in substance, a `canary.py` fix; through the documented path, all three reached **zero**
-adopting repos. The engine had been fixing a checker its own upgrade could not deliver — and two
-downstream adoptions each had to declare a **deliberate deviation** to receive the last fix. A rule
-adopters must knowingly break to get value is not a rule; it is a bug with a paper trail.
+- `upgrade` never refreshed a home tool, so no tool fix reached any repo that had the tool (WO-032)
+- The distinction the old rule missed: engine artifacts are not operator content (WO-032)
+- Step 4 now delivers, and says so (WO-032)
+- One rule over `<home>/tools/`, not one bullet per tool (WO-031)
+- No new engine state (WO-031)
+- Seeding still is not delivering (WO-031)
+- New gate 13: (`.gitos/tools/selftest.py`) pins the rule and both boundaries: the shipped directive must express... (WO-031)
 
-- **The distinction the old rule missed: engine artifacts are not operator content.**
-  `<home>/tools/*.py` are byte-copies of the engine's own scripts — a *cache of the installed skill*,
-  which the briefs invoke by home path. They are not project state. The never-clobber instinct came
-  from the right place (never overwrite state) and was aimed at something that is not state. Contrast
-  `<home>/agents/` — the lens library, genuinely operator content, correctly report-and-**ask** since
-  v12/v13 and **untouched by this change**. The line is the category, not the folder.
-- **Step 4 now delivers, and says so** (`references/upgrade.md`): **missing** → copy; **byte-identical**
-  → silent no-op (no churn, no false "updated"); **different** → **report it, then refresh it**. A
-  byte-compare proves *different*, not *why* — so the report says exactly that (stale or hand-modified,
-  the tool cannot tell which) and notes the prior bytes are recoverable from git.
-  **Never silently skip; never silently overwrite** — the two are the same failure wearing different
-  clothes, and the old rule traded one for the other.
-- **One rule over `<home>/tools/`, not one bullet per tool.** The predecessor enumerated two tools; any
-  future tool laid in the home would have inherited the trap by default. WO-031's lesson applied at the
-  point of authorship rather than one iteration later: a convention is written as a rule, not as a list
-  of its current samples.
-- **No new engine state.** A manifest of previously-shipped tool versions would positively separate
-  "pristine but stale" from "hand-modified" — and costs a permanent, per-release bookkeeping surface
-  that can itself go stale, to resolve a case that has one right answer anyway. Rejected as out of
-  proportion. The refresh is not asked-about either: a prompt per tool per upgrade trains the operator
-  to skip the very fix the upgrade exists to deliver.
-- **Seeding still is not delivering** (`scripts/scaffold.py` — unchanged, deliberately). Laying a tool
-  into a *fresh* home and delivering a fix to an *existing* one are different acts; scaffold keeps its
-  `SKIP exists`, and its idempotency gate ("second run writes 0") still passes.
-- **New gate 13** (`.gitos/tools/selftest.py`) pins the rule and both boundaries: the shipped directive
-  must express all three branches, forbid silence in both directions, stay one rule over the folder, and
-  claim no authority over `<home>/agents/`; behaviourally, scaffold must still *refuse* to refresh a
-  stale tool and must leave operator lenses byte-untouched. The gate states plainly which half it
-  executes and which half it asserts — an upgrade step is prose an orchestrator performs, and prose is
-  what regressed here.
-
-`breaking: no` — it removes no directive and demands no migration action: adopting it *is* the whole
-change, and an un-migrated repo keeps behaving exactly as it did. It only makes an upgrade deliver what
-it always claimed to. **One thing to know before you run it:** if you have hand-edited a
-`<home>/tools/` copy, the next upgrade will refresh it and tell you — that is the intended correction,
-not a migration burden (a forked tool copy was never a supported surface; descope a canary category or
-file a work-order instead), and your bytes remain in git.
+---
 
 ## v18 — 2026-07-16
 breaking: no
 
-**The canary's work-order filename list was short by one form** (WO-031) — and it was the form the
-engine's own template implies. v16 replaced a hardcoded filename regex with a list of three known
-forms; the list covered an underscore `work_` form and a diagnostic `bug_` form, but not the forward
-`wo_` sibling that sits alongside `bug_` in any ledger following that template. A repo naming its
-work-orders `wo_NNN_<slug>.md` therefore had every one of them reported as nonconforming, and any
-ledger row whose file could not be resolved to an NNN reported as missing its file — the v16 fix
-reproduced, one iteration in, the exact failure v16 named: **loud *and* blind** on the repo it was
-meant to serve. A category that must be descoped to be usable does not gate.
+- The canary's work-order filename list was short by one form (WO-031)
 
-- **Underscore forms are now ONE pattern, not an enumeration** (`scripts/canary.py`):
-  `<prefix>_NNN_<slug>.md` is a *convention*, so it is written as one regex covering `wo_`/`work_`/
-  `bug_` rather than a fourth sample beside three others. Adding a fourth line would have re-armed
-  the same trap at a lower rate. The operator-facing "rename to one of them" advice now names every
-  accepted form.
-- **Tolerance, never blindness — unchanged and now pinned harder.** This widens tolerance by one
-  prefix; it removes no report. A name matching no form is still reported, including the near-misses
-  the widened pattern must *not* swallow: a 4-digit `wo_1234_x.md` is not an NNN.
-- **The relaxation keeps its true-positive test** (`.gitos/tools/selftest.py`): the external-validity
-  gate now carries a `wo_` fixture reproducing both original findings, and asserts that a duplicate-NNN
-  collision **across two forms** is still caught — the exact defect the enumeration exists to expose.
-  Reverting the pattern turns the gate red.
-- **Recorded, not decided:** enumerating forms — even one level up, as a list of prefixes — is still a
-  strategy that fails once per novel convention. Deriving NNN by a general identity-position rule, or
-  letting a repo declare its form, is deliberately left to an operator decision; this buys back the
-  gate for the conventions that exist today. Noted in the code so the next author does not mistake the
-  pattern for the destination.
-
-Additive and strictly more tolerant: every ledger clean at v17 stays clean (a repo with no
-nonconforming filenames cannot be newly flagged by a wider pattern).
+---
 
 ## v17 — 2026-07-16
 breaking: no
 
-**Payload hygiene, made structural** (WO-030). The publish gate scanned for private filesystem
-*paths* only — so a private **name** (a repo, product, client, or domain) written into a payload
-file sailed straight through it. That is not hypothetical: a dispatched implementer put private
-repo names into `scripts/` comments, and the only thing that caught them was the operator reading
-the diff. The engine's own thesis applies to the engine: **an invariant that depends on someone
-remembering eventually fails.**
+- Payload hygiene, made structural (WO-030)
 
-- **Publish gate — names, not just paths** (dev tooling): the guard now carries a private-*name*
-  denylist beside its path patterns, word-boundary and case-insensitive, reported the same way
-  (file + line + the rule that fired) and halting the publish identically. The list is dev-only and
-  is structurally unable to ship — it lives under `.gitos/`, which the payload enumeration excludes.
-- **Precision over coverage.** A guard that cries wolf gets switched off, taking the useful patterns
-  with it — so ambiguous names are matched only in their distinctive hyphenated/underscored form
-  (generic spaced prose still passes), and a name that cannot be told apart from ordinary
-  vocabulary is *deliberately not covered*, recorded in the file with its reason rather than shipped
-  as a false-positive generator.
-- **A new acceptance gate proves the detector detects** (positive *and* negative): innocent payload
-  prose passes; real private names are caught; the original leak scenario is reproduced end-to-end
-  and halts.
-- **Directive** — `references/roles/implementer.md` now pins the boundary: private names belong in
-  `.gitos/**` (work-order, notes, INDEX, brain); payload text — **comments included** — describes
-  the **shape**, never the **source**. The trap is that the honest motivation for a change usually
-  *is* "repo X does Y", which makes writing it down feel natural.
+---
 
 ## v16 — 2026-07-16
 breaking: no
 
-Canary **external validity** (WO-029) — the canary encoded the engine's *own* conventions as if they
-were the schema. They were one sample. On an independently-evolved downstream repo the ledger check was
-**loud *and* blind**: hundreds of findings, nearly all false, while a real duplicate-NNN collision sat
-in front of it unseen. Fixed as *tolerance, never blindness* — every relaxation keeps its true-positive
-test:
+- Canary **external validity** (WO-029) — the canary encoded the engine's *own* conventions as if they were the schema
 
-- **Work-order filenames** (`scripts/canary.py`): the hardcoded `WO-NNN-<slug>.md` regex became a list
-  of known forms — the engine's hyphen form plus an underscore `work_NNN_` form and a diagnostic
-  `bug_NNN_` form — each yielding NNN, so duplicate / orphan / row→file detection **actually runs** on a
-  ledger that doesn't use the engine's naming. A name matching no known form is still reported.
-- **Ledger section headings**: matched by prefix, not by a literal — the heading's tail (e.g. a
-  `(by severity)` parenthetical) is legitimate variation. When a section carries no table, a
-  **prose/blockquote ledger** is parsed via each item's identity-position NNN plus a top-up from linked
-  work-order files. A section that is neither remains `cannot-parse`.
-- **Link resolution**: a target now resolves against the containing file's dir **or** the repo root, and
-  is reported only when **neither** resolves. Flagging a path that demonstrably exists was a false
-  positive against the tool's purpose (it detects drift; it does not lint markdown).
-- **Lens registries**: a Lens cell may be a bare stem **or** a markdown link (the target's stem is the
-  name) — a link cell used to double-report one condition as two findings. Lens provenance accepts
-  `imported:` **or** `authored:`: a distilled lens should not have to record false provenance.
-- **Managed-block data loss** (`scripts/scaffold.py`): `ensure_claude_section` replaced the block's
-  contents wholesale, silently destroying anything inside it — on a refresh the engine itself
-  recommends, while the docs pointed a profile pointer *into* that file without saying to keep it
-  outside the markers. It now carries unrecognized in-block lines through the refresh and **reports**
-  them (status `preserved`); ordinary drift is still replaced. Silence was the defect. The docs
-  (`assets/CLAUDE-section.md.tmpl`, `references/bridge.md`, `references/upgrade.md`) now pin `_meta` and
-  anything repo-owned **outside** the markers.
-- **Gate escape** (`SKILL.md`): a convention mismatch must never freeze a healthy ledger. An operator or
-  a repo's BRIDGE may **descope a canary category**, recording the deviation; a descoped category
-  **reports but does not gate**. The gate binds on *actionable* findings.
-- **Root cause — fixture bias** (`.gitos/tools/selftest.py`): the prior gate's fixtures were hand-built
-  to match the canary's assumptions, so a green suite proved internal consistency, not external
-  validity. A new gate runs the canary against shapes observed in real downstream repos and asserts both
-  directions: legitimate shapes are silent, and the seeded real collision **is** caught.
-
-Additive and strictly more tolerant: every shape that passed at v15 still passes (a repo clean at v15
-had no nonconforming filenames by definition, so the widened forms cannot newly flag it), and the block
-refresh now preserves what it used to delete.
+---
 
 ## v15 — 2026-07-14
 breaking: no
 
-Durable context anchor (WO-028) — closes the v14 canary's **self-reference hole**. The per-reply
-marker and its own absence-detector both lived in the skill directive layer, which compaction
-summarizes away, so the detector degraded in lockstep with what it watched. The recovery seed now
-*also* lives in the **durable layer**: inception writes a managed `<!-- gitos:agent-system -->` block
-into the repo-root `CLAUDE.md` — which the harness re-injects into every context window — carrying the
-marker requirement + the trigger to re-read SKILL.md and run `canary.py`. Even after the skill directive
-washes out, that block re-asserts the marker and points the way back. `scripts/scaffold.py` gains
-`ensure_claude_section()` (idempotent managed-block **upsert**, creates the file if absent, never
-clobbers content outside the markers — replacing the old append-once behavior); `upgrade` refreshes it;
-`canary.py` gains an `anchor` category (`anchor/missing`, `anchor/stale`); selftest grows a 10th gate
-(the upsert's create / no-clobber / idempotency) and gate 9 now covers the anchor. Custom repos treat
-the block as a **MERGE** (engine-managed section inside a profile-owned `CLAUDE.md`). Also fixes
-cold-start drift + the misroute class — the repo self-announces through the durable layer. Additive — a
-repo without the anchor simply lacks the durable backstop.
+- Durable context anchor (WO-028) — closes the v14 canary's **self-reference hole**
+
+---
 
 ## v14 — 2026-07-13
 breaking: no
 
-The canary system (WO-027) — cheap, always-on early-warning for the two places AI drift
-accumulates. **State:** new `scripts/canary.py` (payload; stdlib-only, read-only, the
-`brain_lint` invocation/report contract) deterministically checks the *home state layer* none of
-the existing watchers cover — INDEX ↔ work-order files (stale / orphan / duplicate rows),
-`.brainmeta.json` counts vs on-disk pages + ahead-stamps, lens registries on both layers
-(rows ↔ files, `name` = filename, `applies-to` list-form), link rot in `INDEX.md` + open WOs —
-and delegates to `brain_lint` when a brain exists; parse failure = finding, skipped checks report
-as skipped, never false-CLEAN. Exit 0 = CLEAN / 1 = findings (a deliberate divergence from
-`brain_lint`'s reporter semantics: the gate needs red/green). Strictness: **report at bootstrap,
-gate at resolution** — the orchestrator runs it at first-action (one line: `canary: CLEAN`, or
-findings-first, forward-positive) and may not resolve a work-order while it is red (joins
-verify-before-commit). **Context:** `SKILL.md` gains a `## Canary` section (the SSOT) + a
-one-line echo in all four role briefs — every reply opens with the **stateful marker**
-`[gitos · <role> · <focus>]` (recomputed each reply: WO + work-loop/lifecycle step / phase /
-interview stage), so a missing, wrong-role, or stale marker is live evidence of context
-degradation; slippage → directive reinjection, a second slip in the same window → checkpoint +
-fresh window; honesty clause (the slipped agent is the least reliable detector of its own slip —
-the operator's first-line glance is the primary monitor). An operator may opt out per repo
-(reduces coverage to state-only). `/gitos canary` runs both on demand. `scripts/scaffold.py`
-lays `<home>/tools/canary.py` on fresh scaffolds and `upgrade` step 4 copies it into existing
-homes (the `brain_lint` pattern; never clobber); selftest gains gate 9 (seeded clean home
-silent, six seeded defect classes each caught — dev-only). Additive — a repo that ignores the
-marker just has no context canary.
+- The canary system (WO-027) — cheap, always-on early-warning for the two places AI drift accumulates
+
+---
 
 ## v13 — 2026-07-02
 breaking: no
 
-Lens distribution model (WO-026; completes v12). `/gitos agent import` now writes each lens to **both
-layers by default** — the current repo's `<home>/agents/` (git-tracked, travels with the repo) *and*
-the global `<skill>/agents/` (the machine-wide distribution hub) — with repo-only / global-only on
-request. `/gitos upgrade` gains a **lens-refresh step**: for each repo lens that also exists globally,
-byte-compare and report-and-ask to refresh the repo copy from the global (a deliberately-forked local
-variant survives by declining — never a silent clobber), then offer any global lens not yet in the
-repo. Read-time collision rule unchanged (repo wins). Scaffolded lens-registry template mentions the
-global layer. Additive — no global library / no repo lenses → the new steps no-op.
+- Lens distribution model (WO-026; completes v12)
+
+---
 
 ## v12 — 2026-07-02
 breaking: no
 
-Global lens library (WO-025). Lenses now resolve from **two layers**: the repo's own `<home>/agents/`
-(v11) plus an operator-maintained **global library** at `<skill>/agents/` — the installed skill's own
-`agents/` directory, catalogued in `<skill>/agents/index.md` — whose lenses apply in *every* repo the
-skill runs on, no per-repo copying. Roles check both registries; on a name collision the repo's lens
-wins (more specific). Same boundary rules on both layers. `/gitos agent import` gains a global
-destination ("import globally"); `list` prints both registries labeled by layer. The global library is
-**operator content**: engine updates never ship, overwrite, or delete it (the dev→live sync's mirror
-mode now explicitly protects `<live>/agents/`). SKILL.md Lenses section + the four role-brief echoes
-extended. Additive — a skill install with no `agents/` behaves exactly as v11.
+- Global lens library (WO-025)
+
+---
 
 ## v11 — 2026-06-27
 breaking: no
 
-Steering lenses (WO-023). Operators can import their own specialist prompts as domain-tagged **lenses**
-(`/gitos agent import <path>`), stored under `<home>/agents/` and catalogued in `<home>/agents/index.md`.
-Any of the four roles reads a lens whose domain matches its current work and folds the guidance in
-**within its role boundary** — injected context, not a dispatched role: a read-only role stays read-only,
-a scoped implementer stays scoped. On import the **orchestrator normalizes** each prompt into the gitos
-idiom (forward-positive framing, role-boundary-aware phrasing, standard vocabulary), preserving the
-operator's domain substance; the operator confirms the reframe (raw prompts are never stored as-is), and a
-`source` field keeps provenance. A new `references/agent-import.md` brief + an `assets/` index template ship
-with the engine; `scripts/scaffold.py` creates the `<home>/agents/` library + registry. Distinct from the
-brain (a lens = how to approach a domain; the brain = the project's facts). Additive — a repo with no lenses
-behaves exactly as before (empty registry = no-op); Custom repos preserve imported lenses across upgrades via
-their BRIDGE PRESERVE set. Downstream adopts on upgrade.
+- Steering lenses (WO-023): Operators can import their own specialist prompts as domain-tagged **lenses**...
+
+---
 
 ## v10 — 2026-06-27
 breaking: no
 
-`upgrade` offers to pull the latest engine first (WO-022). `/gitos upgrade` reconciles a repo against
-the **installed** engine (`~/.claude/skills/gitos/`), not GitHub — so a public user on a git-clone
-install had to `git pull` the engine by hand before upgrading, and a bare `/gitos upgrade` would
-no-op ("did it upgrade?"). v10 closes that: `references/upgrade.md` step 2 ("live-read the installed
-engine") becomes **"refresh + live-read"** — if `~/.claude/skills/gitos/` is a git clone, the
-procedure **reports intent and asks the operator** to `git -C ~/.claude/skills/gitos pull` before
-reading the VERSION/briefs (never auto-pulls; notes that a session reload is what reloads the agent;
-on "no" or a non-clone copied install it skips and upgrades as-installed). `SKILL.md`'s upgrade blurb
-gains the same one-line note. Additive — the reconcile steps are unchanged; it front-loads an optional
-engine refresh so "upgrade" can fetch-then-apply in one prompt. (Pairs with the README install moving
-to a direct clone + an *Updating* section.)
+- `upgrade` offers to pull the latest engine first (WO-022)
+
+---
 
 ## v9 — 2026-06-25
 breaking: no
 
-Post-landing revision loop (WO-021). A landed work-order had a channel *up* — **Implementer notes**
-(implementer → orchestrator) — but none *back down* for the common case the operator flagged: a WO
-lands, the operator verifies it, and wants a small change. With no in-WO place for that, a tweak meant
-an out-of-band ask or a near-duplicate WO. v9 adds the return path, additively:
-- `references/work-order-template.md` gains a **`## Revisions (post-landing)`** section: after a WO
-  lands and the operator verifies it, the **orchestrator** writes the requested change as a scoped
-  item, the **implementer** handles it on a re-dispatch (a fresh window on the same WO) and records the
-  result — repeat per round until satisfied. A genuinely new direction stays a follow-up work-order,
-  not a revision (the bloat guard).
-- `references/roles/orchestrator.md` work-loop step 4 becomes **"verify → accept or revise"**: on
-  revise, write the change into the WO's Revisions section and re-dispatch; don't resolve a WO the
-  operator hasn't accepted.
-- `references/roles/implementer.md` lifecycle step 1: on entry, **open `## Revisions` are your scope
-  for this round** (else the Proposed fix scope is).
-Additive — turns a landed WO into an iterable artifact (land → verify → revise → re-land) without a new
-work-order for every tweak. Downstream adopts on upgrade (new WO files carry the section).
+- Post-landing revision loop (WO-021)
+
+---
 
 ## v8 — 2026-06-23
 breaking: no
 
-Implementer is operator-enterable (WO-020). The implementer role was modeled as **dispatch-only**
-("never entered, never invoked by user phrasing"), but the canonical workflow opens a *fresh window
-on one work-order* and says "implement this" — which `SKILL.md`'s intent-routing fell through to the
-**orchestrator**, so the agent assumed it drove the ledger. v8 reframes the implementer as entered on
-**one work-order** — by orchestrator dispatch OR by an operator pointing a fresh window at it — and
-adds the routing + signage to land there:
-- `SKILL.md` First-action gains an **implementer-entry branch** ("implement/do THIS work-order" →
-  Implementer: read that WO + plan-first, **not** the full orchestrator bootstrap); the role table and
-  the "four-role" framing shift from "operator-entry / dispatched" to **repo-entry / work-order-entry**.
-- `references/work-order-template.md` gains a **role-pointer banner** at the top of every WO file
-  (opened to do the work → you are the Implementer; plan-first; scope = `## Proposed fix scope`).
-- `references/roles/implementer.md` + `references/agent-system.md` reframe "dispatched, not entered"
-  → "entered on a work-order, not on the repo" (dispatch or operator-pointed; same boundary).
-Additive: the dispatch path and the implementer's scope boundary are unchanged — it only adds the
-operator-direct entry the workflow already used. Downstream repos adopt on upgrade (new WO files carry
-the banner; the routing fix covers WOs already on disk).
+- Implementer is operator-enterable (WO-020)
+
+---
 
 ## v7 — 2026-06-22
 breaking: no
 
-No-fork directive for the diagnostic role (WO-017). `references/roles/diagnostic.md` gains a
-**"Don't fork this role"** discipline rule (echoed in the Role-boundary "You DO NOT" column): the
-diagnostic role is owned by the engine brief + the repo's profile `prompts/diagnostic_agent.md` (Custom
-repos) + an optional in-home `<home>/DIAGNOSTIC_AGENT_BRIEF.md`, and must **not** be re-implemented
-outside those homes — not as a project-local `.claude/skills/*` debug/triage skill, a repo-root
-`*_AGENT_BRIEF.md`, or a stray duplicate `diagnostic_agent.md`/`debug_agent.md` that splits the role's
-source of truth. When a fork exists, **migrate its durable knowledge into the profile/brain FIRST, then
-retire it** (reversible via a branch); never delete load-bearing contracts before they are migrated.
-`references/roles/orchestrator.md` gains a one-line intake watch that opens a migrate-then-retire
-work-order when a fork is spotted. Additive — no existing directive/contract is removed, and a repo that
-already doesn't fork is a no-op (WO-013's repos already comply). Promotes WO-013's spawned consideration.
+- No-fork directive for the diagnostic role (WO-017)
+
+---
 
 ## v6 — 2026-06-22
 breaking: no
 
-Hardened orchestrator work loop (WO-016). `references/roles/orchestrator.md` gains an explicit
-**"The work loop"** section (after *First action*) — an ordered, gated spine that makes the role's
-previously-implicit per-session / per-work-order cadence checkable. The gates are non-skippable
-operator-control + correctness points: **the operator confirms proposed work-orders before any are
-activated/dispatched** (the brake on runaway work-order creation), plan-approved + disjoint-files +
-scope-bound before any edit, verify-the-diff before commit, and never-advance-with-anything-half-done.
-**Window topology** (fresh-per-WO vs. batching similar work vs. sequence/parallel) is explicitly left
-to the orchestrator's judgment — an optimization, not a rule. Additive: it makes existing-good
-behaviour explicit and harder to skip; no role behaviour is removed, so a repo on an older engine
-keeps prior behaviour until it upgrades. Adopted cleanly on upgrade.
+- Hardened orchestrator work loop (WO-016)
+
+---
 
 ## v5 — 2026-06-20
 breaking: no
 
-Two engine-directive changes.
+- Two engine-directive changes
+- Ensure version control (WO-011)
+- Forward-positive brain invariant (WO-012)
 
-**Ensure version control (WO-011).** `scripts/scaffold.py --git ensure` (now the default) and the
-orchestrator's first-action **auto-init git when none is detected** — robust detection (`.git` as a
-dir or file, or a parent work-tree via `rev-parse`), a report printed *before* any git runs, then
-`git init` + a starter `.gitignore`/`.gitattributes` (`* text=auto`); the inception agent makes the
-baseline commit. `--git skip` opts out; `offer` is the legacy recommend-only mode. **Behavior change:
-the engine now RUNS `git init`** (it previously only offered). Additive — a repo already under git is
-a no-op, and a fresh init is a safe guarantee, not a migration.
-
-**Forward-positive brain invariant (WO-012).** `references/brain-schema.md` §6 gains a "no
-self-pollution" rule: brain pages stay factual and forward-useful (capture cause + correction; valid
-issue-records — findings, bug work-orders, lessons — stay), with no dwelling/blame/negative
-editorializing. Semantic, so it is enforced in the orchestrator's reflection pass, not `brain_lint`.
-
-Additive overall; downstream repos adopt both directives on upgrade.
+---
 
 ## v4 — 2026-06-20
 breaking: no
 
-Define the implementer as a fourth, dispatched role (WO-009). Adds
-`references/roles/implementer.md` — the single source of truth for the dispatched implementer's
-definition + boundary (the `specified-vs-self-designed` rule from v3's WO-007, now with one home).
-The three former restatement sites (the SKILL.md dispatch section, the orchestrator brief's
-"Dispatch + verify", and the work-order template's "Proposed fix scope") are consolidated to a
-one-line application + a pointer to the brief. Reframes the role model to **four defined roles in
-two tiers** — three operator-entry (inception/orchestrator/diagnostic) + one dispatched
-(implementer) — across `SKILL.md`, `references/agent-system.md`, `references/profiles.md`, and a
-new `references/glossary.md` entry. Additive: no implementer *behaviour* changes (definition +
-consolidation only); no `.gitos/roles/` pointer and no scaffold change, since you never resume as
-an implementer.
+- Define the implementer as a fourth, dispatched role (WO-009)
+
+---
 
 ## v3 — 2026-06-20
 breaking: no
 
-Role-boundary hardening (WO-006 + WO-007) — extends the find/fix separation to the
-orchestrator and implementer sides so every edit traces back to a specified work-order.
-**WO-006:** the orchestrator now writes **no code, ever** — every executable change
-(application source AND pipeline tooling under `.gitos/tools/`, `scripts/`) is dispatched to
-an implementer; the orchestrator writes only markdown/state (work-orders, INDEX, brain, role
-pointers, handoff). Removes the prior "you write code" / "may edit code" authorization from the
-orchestrator brief and the SKILL.md role-boundary table, and tightens the agent-system
-Four-Artifacts map (`Code` = Implementers only, never the orchestrator). **WO-007:** an
-implementer edits **only what its work-order's Proposed fix scope specifies** — out-of-scope
-edits (INDEX, brain, other work-orders, directives) are the orchestrator's, surfaced by the
-implementer as proposed notes/follow-ups, never self-executed; stated in the SKILL.md dispatch
-section, the orchestrator brief's "Dispatch + verify", and the work-order template. Additive
-tightening of directive guidance — adopted cleanly on upgrade with no migration action, so a
-repo on an older engine keeps prior behaviour until it upgrades.
+- Role-boundary hardening (WO-006 + WO-007) — extends the find/fix separation to the orchestrator and implementer sides so every edit traces back to a...
+
+---
 
 ## v2 — 2026-06-19
 breaking: no
 
-BRIDGE-aware upgrade (WO-005). `references/upgrade.md` gains a **Step 0** that classifies a repo
-as Standard (engine-only) or Custom (profiled product) and routes Custom repos through their
-`BRIDGE.md` (SYNC/PRESERVE/MERGE) instead of the generic engine-only path; a Custom-but-unbridged
-repo HALTs rather than risk overwriting deployed profile/state. Adds the BRIDGE contract
-(`references/bridge.md`), the `_meta.bridge` pointer convention, the Custom-only version-gap
-warning (reads `CHANGELOG.md` `breaking:` flags against the bridge's `min_compatible_engine`), and
-a gated `scripts/scaffold.py` stamp of `bridge` / `last_reconciled_engine` / `min_compatible_engine`
-into `.brainmeta.json` when a profile BRIDGE is present. Additive: Standard repos fall straight
-through steps 1–7 unchanged, and the new HALT is a safe refusal — no already-correct repo must
-migrate.
+- BRIDGE-aware upgrade (WO-005): `references/upgrade.md` gains a **Step 0** that classifies a repo as Standard (engine-only) or...
+
+---
 
 ## v1 — 2026-06-19
 breaking: no
 
-Baseline — the engine state at this repo's inception (the recursive self-bootstrap, when
-gitos was first brought under its own pipeline). Includes the three-role system (inception /
-orchestrator / diagnostic) plus the per-repo brain, the `.gitos/` home,
-`scripts/scaffold.py`, `scripts/brain_lint.py`, and the `references/` directive tree. First
-recorded version; no predecessor to migrate from.
+- Baseline — the engine state at this repo's inception (the recursive self-bootstrap, when gitos was first brought under its own pipeline)
+
+---

@@ -18,15 +18,17 @@ A repo's **stamp** (`engine_version`) is the version it last adopted. The **payl
 names in it, comments included. **Tools** are byte-copies of engine scripts in `<home>/tools/`, refreshed by upgrade.
 
 **Ledger**
-The work: `<home>/INDEX.md` plus `<home>/work-orders/`. The INDEX has five sections: Open, Parked, Resolved,
-Findings DISPROVED and Operator next-steps. Between its `<!-- gitos:index open|parked|resolved -->` markers
-`ledger_index.py` writes the rows (Open, Parked and Resolved from each order's front matter; Parked from the orders
-with `status: parked`); nobody types a row there.
+The work: `<home>/INDEX.md` plus `<home>/work-orders/`. The INDEX is the board: a generated header (engine version,
+counts, pointers) and two tables, Open and Parked (the orders with `status: parked`). `ledger_index.py` writes the whole
+file from the order files; nobody types into it, and its size follows the open work only. History is the order file in
+`work-orders/resolved/` and `git log`; live state and next steps are in RESUME.
 
 **Brain**
 The orchestrator's long-term memory: typed, cross-linked pages (sources, entities, concepts, decisions) under
-`<home>/brain/wiki/`, kept true by the maintenance loop (upsert, checkpoint reconcile, `brain_lint.py`). The brain
-holds knowledge, the ledger holds work, the handoff holds the birth record: nothing is in two places. A federation
+`<home>/brain/wiki/`, kept true by the maintenance loop (write test, upsert, checkpoint reconcile, `brain_lint.py`).
+It holds only what the code, git, CLAUDE.md and the orders cannot say (why, what was rejected, traps). Its index is
+generated from page front matter and it has no log. The brain holds knowledge, the ledger holds work, the handoff
+holds the birth record: nothing is in two places. A federation
 consult reads another repo's brain; nothing is copied into this one.
 
 **Decision page** / **decisions page**
@@ -49,13 +51,13 @@ the handoff, and RESUME only points at it.
 **Standing rule**
 An operator rule, written to the brain (`concepts/standing-rules.md`) in the turn it is given; RESUME points at it.
 
-**Footprint** (`<home>/footprints.md`)
-The append-only record of the paths each landing's commit touched: disclosure, never a gate. An *out-of-scope
-footprint* is a touched path the order did not name; it is a defect and is reverted.
+**Footprint**
+The paths a landing's commit touched: `git show --name-only <sha>`. An *out-of-scope footprint* is a touched path the
+order did not name; it is a defect and is reverted. Nothing records it elsewhere.
 
 **Log vocabulary** (`<home>/log_vocabulary.md`)
-The diagnostic's catalog of the project's own log and output formats. Not the brain's `wiki/log.md` (brain events)
-and not a folder order's `log.md` (that order's events).
+The diagnostic's catalog of the project's own log and output formats. Not a brain event log (the brain has none: `git log -- <home>/brain`)
+and not a per-order event log (folder orders have none: the slice files hold the state, `git log -- work-orders/WO-NNN` the history).
 
 ---
 
@@ -117,7 +119,7 @@ A *domain profile*: the gates, contract values and extra anomaly families a down
 
 **Role marker** (context canary)
 The first line of every reply, `[gitos · <role> · <focus>]`, with `<focus>` recomputed each reply. A missing, wrong
-or stale marker is evidence of context loss.
+or stale marker is evidence of context loss. Canonical text: `SKILL.md` → *Canary*.
 
 **Reinjection** (slippage protocol)
 On a slipped marker: re-read the role brief and `SKILL.md`, restate role and focus; a second slip in one window
@@ -148,7 +150,7 @@ at a checkpoint.
 
 **Work-order** (WO, order)
 The unit of tracked work: `<home>/work-orders/WO-NNN-<slug>.md`, or a folder `WO-NNN/` once it has two slices.
-Front matter `severity`, `title`, `evidence`; at resolution also `summary`, `released`, `result`. Lifecycle: open
+Front matter `severity`, `title`, `evidence`; at resolution also `released` (the engine version). Lifecycle: open
 (confirmed by the operator) → implemented → verified → accepted → resolved, or DISPROVED. Legacy
 `bug_NNN_<slug>.md` and `wo_NNN` names still read.
 
@@ -178,12 +180,12 @@ A unit of an order's work. In a folder order it is a file `slices/SN-<name>.md` 
 as a new `proposed` slice. A data partition is a *split*, never a slice.
 
 **Folder order** / **single-file order**
-An order with one slice is one file; `slice.py add` converts it into `WO-NNN/{order.md, slices/, log.md}` when a
+An order with one slice is one file; `slice.py add` converts it into `WO-NNN/{order.md, slices/}` when a
 second slice arrives.
 
 **Landing** / **landed**
 A *landing* is an implementer's returned change (status `implemented`), a claim until verified. Slice status
-`landed` means the orchestrator merged it. The INDEX column "Fix landed in" records the commit. The engine version
+`landed` means the orchestrator merged it; the commit is in the slice's `commit:` and `git log`. The engine version
 an order resolved in is the front-matter key `released:` (renamed from `landed:` in v57, which still reads).
 
 **Verify** / **accept**
@@ -195,7 +197,7 @@ Verified, accepted, adjudicated and committed; the order moves to `<home>/work-o
 clean first.
 
 **DISPROVED**
-A hypothesis ruled out by evidence, recorded under *Findings DISPROVED* so nobody runs it again ((f)).
+A hypothesis ruled out by evidence, recorded on a brain decision page so nobody runs it again ((f)).
 
 **Revision** (`## Revisions`)
 A change the operator asks for after a landing, written into the same order and re-dispatched; a new direction is a
@@ -269,7 +271,7 @@ A `- [ ] L<n> (slice: <name>)` row in an order's `## Carried loose ends`, retire
 `proposed` slice. A resolved order still holding an open one is `carried-open`.
 
 **Join**
-Adding an item to an open order; allowed only when the order's join test holds (`references/roles/orchestrator.md`).
+Adding an item to an open order; allowed only when the order's join test holds (`references/orchestrator/drain.md`).
 
 **Defer**
 The exception, written down in the same turn (the deferral rule): only a finding clearly out of the order's scope,
@@ -390,7 +392,7 @@ Opt-in model and effort routing per dispatch, by tier (light / standard / deep) 
 **Owner board**
 The local answer page every home carries at `<home>/board/` (`references/owner-board.md`), served on 127.0.0.1 and
 started by `board.py ensure`. Every owner approval is a card there, never in chat or an Artifact; an answer counts
-only against the card as it is now, is recorded in the ledger before anything acts on it, and is used once.
+only against the card as it is now, is recorded in the ledger before anything acts on it, and is used once. <!-- rule:glossary-board-entry -->
 
 **Waiting view** (`loose_ends.py status`, `scripts/waiting.py`)
 The one place that lists everything waiting on the operator: drain `ask` proposals, loose-ends rows in state

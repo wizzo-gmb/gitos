@@ -19,7 +19,7 @@ built and walked to the first free one. Two pointers lead a fresh window to it: 
 block (`**Owner board:** python <home>/board/board.py ensure (http://127.0.0.1:<port>/); ...`) and the
 `## Owner board` section of `RESUME.md`. `scaffold.py` builds the board and both pointers; on an existing repo
 the same run is the upgrade step (`references/upgrade.md`). The canary's `board` category reports a pointer with
-no board (`board-missing`) and a board nothing points at (`board-pointer-missing`).
+no board (`board-missing`) and a board nothing points at (`board-pointer-missing`). <!-- rule:guide-canary-kinds --> <!-- rule:guide-pointers -->
 
 ## The agent's side
 
@@ -44,13 +44,13 @@ where a new answer is one on an open card that no read has locked yet (`list`, `
 it) and a new note is one since the last `notes`; it adds `· K waiting to be acted on` while answered
 cards are not closed, and `· P problem(s) in its files` when some file fails validation. Everything the CLI prints
 from a card or a note is one cleaned line (control, bidi and zero-width characters removed), so a title cannot fake
-output.
+output. <!-- rule:guide-ensure-line -->
 
-**No command records an answer.** Only the board page does, through `POST /api/answer`.
+**No command records an answer.** Only the board page does, through `POST /api/answer`. <!-- rule:guide-no-cli-answer -->
 
 - **Every card** may carry `--ref` (the work-order id, shown beside the title), `--where` (one line pointing into the
   ledger or the code) and `--group`: `close` (close or keep open), `decision` (the default), `action` (only the owner
-  can do it) or `parked` (a parked order whose trigger fired). The page filters by group.
+  can do it) or `parked` (a parked order whose trigger fired). The page filters by group. <!-- rule:guide-groups -->
 - **A decision** has the options you give (`value=Label`, the value 1-32 of `a-z 0-9 _ -`); `value=Label*` marks the
   option you recommend. `--replaces ID`
   closes the card it replaces as "replaced by <id>".
@@ -78,18 +78,18 @@ Load `board.py` by its path (`importlib.util.spec_from_file_location`), never th
   (`approved("plan", "item", "q3-cleanup.json")`), when it is not closed and its latest answer chose the go option
   (`apply` for a plan, `send` for a send) against the card's current content. Otherwise `None`. A newer card for
   the same item, answered or not, blocks an older approval; cards are ordered by a microsecond `created` time that
-  is strictly increasing within a board.
+  is strictly increasing within a board. <!-- rule:guide-api-approved -->
 - `verify_bytes(card, data)`: `True` only when `data` hashes to exactly the card's `sha256`. Read the stored file
-  and verify it immediately before using it.
+  and verify it immediately before using it. <!-- rule:guide-api-verify -->
 - `consume(card_id, outcome)`: close the card **before acting on it**, with the outcome you are about to produce.
   A closed card never approves again, and closing it twice is refused (the check and the close are one step under
-  the board's lock).
+  the board's lock). <!-- rule:guide-api-consume -->
 - `claim(kind, key, value, go, outcome)`: `approved()` and `consume()` as one step under the lock: the approved
   card, now closed, or `None`. **Tools use this**: of two tools claiming the same approval, exactly one gets it, and
-  it acts only after `claim()` returned the card (then `verify_bytes()` on the stored file).
+  it acts only after `claim()` returned the card (then `verify_bytes()` on the stored file). <!-- rule:guide-api-claim -->
 - Every write (an append, a lock, a close, the page's check-then-append of an answer) holds one cross-process lock,
   `data/.lock` (`msvcrt` on Windows, `flock` on POSIX). `approved()` also refuses an answer whose time is later
-  than the lock that names it.
+  than the lock that names it. <!-- rule:guide-lock-file -->
 
 ## The read lock
 
@@ -99,7 +99,7 @@ refuses a new answer to the card (`409 locked: Claude read this at <time>`) and 
 "Locked: Claude read this at <time>. To change it, write in Anything else for Claude". `approved()` locks the answer
 it sees, reads the card again, and returns it only when its latest answer is that locked one: an answer that arrived
 in between is pending, and **a pending answer never authorizes**. Counting (`ensure`, the waiting view) never locks.
-An edit of the card voids its answer, so the owner can answer the new card.
+An edit of the card voids its answer, so the owner can answer the new card. <!-- rule:guide-read-lock -->
 
 ## The owner's side
 
@@ -110,7 +110,7 @@ bottom. Pressing an option saves it at once, with the note in the box. **Save no
 my answers puts one `id -> option | note` line (`(note only)` for a note-only answer) per open card with a valid
 answer on the clipboard:
 never a title, never a closed card, never a voided answer. Problems in the board's files (a card file that fails
-validation, a torn line) are listed at the top, never skipped silently.
+validation, a torn line) are listed at the top, never skipped silently. <!-- rule:guide-note-only -->
 
 A card's hash is the full SHA-256 of its content, recomputed on every read. An answer binds the hash it was given
 against, so a card edited after its answer **voids** that answer: the card goes back under Needs you with "the card
@@ -148,13 +148,13 @@ field is escaped on the page, which runs under a CSP with a per-response script 
 (id equals the file name, no duplicates, ISO times) and so is every line of every `.jsonl` (a card id, a full
 SHA-256 hash); a bad line is reported, never raised. Writes go only under `data/`, as single ASCII appends under the
 lock, each after a newline when the file's last line was torn. The page posts the hash of the card it rendered, so an
-answer always names the content the owner saw.
+answer always names the content the owner saw. <!-- rule:guide-security-checks -->
 
 **The waiting view runs the home's `board.py`** (`summary`) in its own `python -I` process with a timeout and reads
 its JSON, so a crash, a hang or forged output from that file stays out of the view. It is not a sandbox: that
-`board.py` still runs with the user's rights, like any tool in the home.
+`board.py` still runs with the user's rights, like any tool in the home. <!-- rule:guide-waiting-isolated -->
 
 **The honest limit.** On a single-user machine the agent runs as the owner, so it could forge a browser request or
 write the files itself. The board guards against accidents and against other local pages and programs, not against
 a deliberately hostile agent. Signing answers with a key held in the OS keychain would close that gap; it needs a
-non-stdlib keychain binding and is not done.
+non-stdlib keychain binding and is not done. <!-- rule:guide-honest-limit -->

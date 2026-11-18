@@ -3,17 +3,16 @@
      weighed, and WHY this one won. This is the knowledge that most reliably survives
      context compaction and onboards the next session. Code shows WHAT; decisions show WHY.
      File a decision page whenever a real trade-off was made, an approach was rejected,
-     or a constraint was agreed upon. One page per decision. -->
+     or a constraint was agreed upon. One page per decision. Write test first: if the work
+     order already records the why, there is no page. A decision is never rewritten; a reversal
+     is a new page and the old one gets `status: superseded` + `superseded_by`. -->
 
 ---
-status: <FILL: accepted | superseded | revisited>
-decided: {{DATE}}
-supersedes: <FILL: [[Prior Decision]] if this replaces one, else omit>
-superseded_by: <FILL: [[Later Decision]] if this has been replaced, else omit>
-work_order: <FILL: [WO-NNN] if a work-order implements this decision, else omit>
-tags: [<FILL: domain tags>]
-created: {{DATE}}
+type: decision
+description: <FILL: one line, at most 140 chars: when to read this page>
+status: active
 updated: {{DATE}}
+rests_on: [<FILL: optional: paths the decision depends on>]
 ---
 
 # Decision: <FILL: imperative summary — what was decided, in one line. Examples:

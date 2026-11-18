@@ -313,7 +313,7 @@ capability is needed, propose a lead change to the operator; never switch the ma
 model automatically. No advisor, gateway, billing/fast/service-tier changes, or
 deliberately weak-model experiments are part of this feature.
 
-### The worker rule: the orchestrator outranks every worker
+### The worker rule: the orchestrator outranks every worker <!-- rule:worker-rule -->
 
 This is **operator policy**, not a capability claim, and it holds for any repo:
 
@@ -325,7 +325,7 @@ This is **operator policy**, not a capability claim, and it holds for any repo:
    that needs heavy lifting but does not warrant that model, even at `low`, may go
    to the next model down at `high`.
 4. **Workers cap at `high`.** `xhigh` and `max` are never dispatched, even when the
-   orchestrator runs at one of them.
+   orchestrator runs at one of them. <!-- rule:workers-cap-high -->
 
 So the two pairs are never equal, and effort is compared only when the model is the
 same. The docs say the scale is "calibrated per model, so the same level name does
@@ -339,6 +339,10 @@ model's level is not compared with the lead's.
 | `high` | `low`, `medium` | `low`, `medium`, `high` |
 | `xhigh` or `max` | `low`, `medium`, `high` | `low`, `medium`, `high` |
 
+The `CLAUDE.md` anchor carries this rule, generated from the next paragraph by `scaffold.py` (edit it here, not there):
+
+**Dispatch tier.** Open at this repo's standard tier; go deeper only for a reason specific to this task, not the stakes of the repo. The orchestrator outranks every worker: a worker on its own model runs at strictly lower effort, a lower-model worker may use any effort up to `high`, and no worker runs above `high` (`references/model-optimization.md`). <!-- rule:anchor-dispatch-tier -->
+
 **What enforces it.** The order is `low` < `medium` < `high` < `xhigh` < `max`, for
 those five documented levels only; any other word is unknown and refused, never
 guessed. `select` refuses, and so does `configure`, with a reason naming both pairs
@@ -351,7 +355,7 @@ built in. A model with no effort levels has no effort to compare and is judged o
 rank alone. `default` beside named levels is not a level, so a routed dispatch names
 one; omitting effort inherits the lead's own, which can never be lower. For the same
 reason a `fork`, which inherits the lead's pair, can never satisfy the rule: routed
-work may not use one, and `select` refuses a fork context.
+work may not use one, and `select` refuses a fork context. <!-- rule:fork-never-satisfies -->
 
 **The order is shared with Codex.** The first-party Codex config reference
 ([`model_reasoning_effort`](https://learn.chatgpt.com/docs/config-file/config-reference))
@@ -406,7 +410,7 @@ overall.
 
 **The measured comparison.** To test the prior on a repo's own work, take one
 resolved work-order with a settled spec and run it under two permitted pairs, for
-example the middle model at `high` and the lead's model at one level below the lead:
+example the middle model at `high` and the lead's model at one level below the lead: <!-- rule:measured-comparison -->
 
 1. Create two throwaway worktrees at the commit just before the order landed, one per
    pair. Nothing from either is merged or pushed; both are deleted afterwards.

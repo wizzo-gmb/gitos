@@ -17,16 +17,9 @@ This repo uses the **GitOS agent system** (`~/.claude/skills/gitos/`).
 To start a session: invoke the `gitos` skill — it detects the current state and routes
 to the correct role automatically.
 
-**Canary — your way back.** Every reply opens with `[gitos · <role> · <focus>]` (role =
-orchestrator / diagnostic / implementer / inception; focus = current work-order + step).
-**If your last reply had no such marker, your context has drifted** — re-read
-`~/.claude/skills/gitos/SKILL.md`, re-detect your role, run
-`python {{HOME}}/tools/canary.py {{HOME}}`, and resume marking. This block is a durable
-backstop the harness reloads into every window, so it survives even when the skill
-directive washes out under compaction; if you can read it, you can recover. It is a
-signal, not a guarantee — the operator's glance at the first line is the final check.
+**Canary — your way back.** {{RULE:anchor-role-marker}}
 
-**Owner board:** python {{HOME}}/board/board.py ensure (http://127.0.0.1:{{BOARD_PORT}}/); every owner approval is asked there, never in chat or an Artifact.
+**Owner board:** python {{HOME}}/board/board.py ensure (http://127.0.0.1:{{BOARD_PORT}}/). {{RULE:board-card}}
 
-**Dispatch tier.** Open at this repo's standard tier; go deeper only for a reason specific to this task, not the stakes of the repo. The orchestrator outranks every worker: a worker on its own model runs at strictly lower effort, a lower-model worker may use any effort up to `high`, and no worker runs above `high` (`references/model-optimization.md`).
+**Dispatch tier.** {{RULE:anchor-dispatch-tier}}
 <!-- gitos:agent-system END -->

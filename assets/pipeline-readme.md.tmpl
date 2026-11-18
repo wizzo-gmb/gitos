@@ -24,7 +24,7 @@ For the full role documentation see `~/.claude/skills/gitos/references/roles/`.
 ├── README.md              This file
 ├── HANDOFF.md             Birth certificate — project identity, lifecycle, acceptance criteria.
 │                          Written once at inception; immutable after that.
-├── INDEX.md               Work-order ledger — open / resolved / disproved / next-steps.
+├── INDEX.md               Work-order board — the open and parked orders, generated.
 │                          The single task surface for this repo.
 ├── log_vocabulary.md      Catalog of all known log and output families (for diagnostics).
 ├── work-orders/           One file per work-order: WO-NNN-slug.md
@@ -51,8 +51,7 @@ For the full role documentation see `~/.claude/skills/gitos/references/roles/`.
 │   ├── entities/          Repo "nouns": modules, services, deps, people, tools.
 │   ├── concepts/          Architecture patterns, conventions, invariants.
 │   ├── decisions/         ADR-style decision records — WHY things are the way they are.
-│   ├── index.md           Master catalog of all brain pages.
-│   └── log.md             Chronological op record (ingest / page-add / reconcile / lint).
+│   └── index.md           Generated from page front matter (brain_lint.py --write-index). No log: git is the history.
 └── .brainmeta.json        Cached metadata (last_ingest, page counts).
 ```
 

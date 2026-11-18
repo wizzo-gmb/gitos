@@ -32,7 +32,7 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    `slice.py brief WO-NNN/SN <home>`: `order.md`, your slice file and the Durable facts of each landed dependency, each
    under its path. Read it; open any other file only by the path it gives, and only when you need it. Edit only your
    slice file's notes (the five labels), and move its `status` from `in-progress` to `implemented`; never edit
-   `order.md`, `log.md`, another slice file or `INDEX.md`, and never set `landed` or `dropped` (the orchestrator
+   `order.md`, another slice file or `INDEX.md`, and never set `landed` or `dropped` (the orchestrator
    does). A PreToolUse hook refuses those edits when your worktree carries a slice marker; it does not see Bash
    edits, so do not route around it with the shell: the orchestrator reviews the diff at merge. Steps 1-5 below
    apply to your slice as they do to a single-file order's scope.
@@ -58,6 +58,9 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    gets a known-answer pass and a known-answer block; (b) assert that your change bit before reporting it;
    (h) show the check go red on a planted defect, as deployed; (i) a skipped, empty, missing or crashed
    result is reported as itself, never as a pass.
+   **Iterate narrow, run the whole suite once.** While working, run only the part of the test suite your change
+   touches (a runner's `--area` / `--gate` selection, or one test file); run the full suite once at the end, in the
+   foreground with a time limit, and do not poll it. Read the one test area you changed, not the whole suite.
 3. **Fill the work-order's Implementer notes** on completion — deviations, surprises, durable
    facts, process notes, follow-ups. This is your only write-back channel; "nothing notable" is a
    valid answer. Write them **under those five labels** (they help the orchestrator read them), and
@@ -70,7 +73,7 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
 4. **End your background work, then return.** Every background command gets a time limit and
    writes its log to a known place. Before returning, stop every process you started. Anything
    deliberately left running is named in *Process notes* with its pid or marker, its log and how to
-   stop it.
+   stop it. <!-- rule:implementer-stop-background -->
 5. **Return.** Your report is a *claim*; the orchestrator trust-but-verifies the diff and
    adjudicates your notes (ACCEPT / DEFER / REJECT). You do not move the work-order, update the INDEX,
    bump VERSION/CHANGELOG, or touch the brain.
@@ -99,6 +102,22 @@ that is exactly how a real leak happened. Put the evidence, the repo names, and 
 **Implementer notes** or the work-order, where they belong and never ship. A publish gate enforces
 this mechanically, but it can only catch names someone already knew to list.
 
+## Standing rules (a dispatch does not retype these)
+
+A dispatch is a pointer to this brief and to one work-order, plus what is specific to that order (live processes not to touch, a
+budget, the pinned Option). Everything below holds without being restated.
+
+- **Commits.** Commit only when the dispatch says to. Stage by explicit path (never a directory or `-A`), read `git diff --cached
+  --stat` back against the scope, and write `WO-NNN: <what>` ending with the attribution lines the session's commit guidance gives.
+  Never amend or rewrite a commit that exists.
+- **Tool copies.** A script the engine ships whose byte-copy the home keeps (`<home>/tools/`) is changed in both places and the two
+  stay byte-identical.
+- **No release.** No `VERSION` bump, sync or publish unless the order names it; a changelog entry only when the order names it.
+- **Processes and data you did not start are not yours.** Never stop a process you did not start (the owner board's server
+  included) and never touch `<home>/board/data/`: the answers there are the owner's.
+- **Tests and notes.** Iterate on the narrow selection and run the full suite once at the end (step 2); fill the notes under their
+  five labels (step 3); stop what you started (step 4).
+
 ## Relationships
 
 - **Dispatched + verified by the orchestrator.** It pins your scope (and which Option), reviews
@@ -112,7 +131,7 @@ this mechanically, but it can only catch names someone already knew to list.
 
 ## Reference index
 
-- `references/roles/orchestrator.md` — who dispatches + verifies you ("Dispatch + verify") and
+- `references/roles/orchestrator.md` and `references/orchestrator/dispatch.md`, `resolve.md` — who dispatches + verifies you and
   adjudicates your notes.
 - `references/work-order-template.md` — the work-order shape; **Proposed fix scope** is your
   contract, **Implementer notes** your write-back.

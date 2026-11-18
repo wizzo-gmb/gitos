@@ -45,8 +45,8 @@ Before doing anything substantive, ground yourself in the project's existing sta
 This prevents re-investigating what was already settled and ensures your findings build
 on prior work rather than contradict it silently.
 
-1. **Read `<home>/INDEX.md`** — the work ledger. Know what is open, resolved, and
-   already disproved before you scan for more.
+1. **Read `<home>/INDEX.md`** — the board of open and parked work. Resolved work is `work-orders/resolved/` and
+   `git log`, a disproved idea a brain decision page; look there before you scan for more.
 2. **Read `<home>/log_vocabulary.md`** — what output/log formats have already been
    cataloged. Don't rebuild from scratch; extend incrementally.
 3. **Read `<home>/DIAGNOSTIC_AGENT_BRIEF.md` if it exists** — a project-specific
@@ -159,8 +159,8 @@ work-order. The required sections are:
   `disciplines.md` letters that apply
 
 After writing each work-order, add it to `<home>/INDEX.md`: fill its front matter and run
-`ledger_index.py <home>` when the INDEX has generated regions (`<!-- gitos:index open -->`); only an
-INDEX without them takes a hand-typed row:
+`ledger_index.py <home>` (the board is generated; a hand-kept INDEX without the board line takes a hand-typed row until
+`ledger_migrate.py` converts it):
 
 ```
 | <NNN> | <severity> | <slug / title> | <primary evidence file:line> |
@@ -216,7 +216,7 @@ surface the methodological limitations the prior work itself documented, don't d
 reflexively, don't override casually.
 
 **Disproofs are deliverables (f).** When a hypothesis is tested against evidence and ruled
-out, document it in the `Findings DISPROVED` section of `INDEX.md`. Negative results
+out, write it to a brain decision page (the board has no such section). Negative results
 prevent the next agent from re-investigating the same dead end. A clean disproof is
 exactly as valuable as a confirmed finding.
 
@@ -250,8 +250,8 @@ direct implementers yourself, even when the operator invoked you directly.
 
 **Brain-health pass.** The orchestrator may point you at `.gitos/brain/` to run
 a read-only brain health check: `python <home>/tools/brain_lint.py <home>/brain`. Run it,
-read the output, and report findings (duplicate pages, orphans, stale content, broken
-links). You do not edit brain pages — that is the orchestrator's stewardship
+read the output, and report findings (duplicate pages, stale content, broken
+links, schema and index drift). You do not edit brain pages — that is the orchestrator's stewardship
 responsibility. Your job is to surface the lint report clearly so the orchestrator can
 act on it.
 
@@ -261,8 +261,8 @@ Find ≠ fix. On "fix bug NNN" or "launch agents for these fixes", hand the find
 orchestrator: list the work-orders, their severity and the Option the evidence favours, and stop.
 Inside an orchestrator session that list is your return; invoked directly, tell the operator to
 take it to the orchestrator (in this window or another: the role changes, it does not stretch).
-The orchestrator dispatches, verifies and resolves (`references/roles/orchestrator.md` →
-*Dispatch + verify*). You never dispatch an implementer, move a work-order or mark it resolved.
+The orchestrator dispatches, verifies and resolves (`references/roles/orchestrator.md`;
+`references/orchestrator/dispatch.md`). You never dispatch an implementer, move a work-order or mark it resolved.
 A call only the owner can make is an approval: the orchestrator asks it as a card on the owner board
 (`references/owner-board.md`); you never ask the owner for one in chat.
 

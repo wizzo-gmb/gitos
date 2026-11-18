@@ -4,7 +4,7 @@ Two hooks in one file, one entry: `SessionStart` matched on `compact|clear` rest
 asks once when a work-order has landed unresolved, an implementer's notes wait for adjudication, or RESUME
 is behind the ledger (see `stop_output`). The text below describes the restore half.
 
-See references/roles/orchestrator.md, *Rotation triggers*. Compaction summarizes the conversation
+See references/orchestrator/checkpoint.md, *Rotation triggers*. Compaction summarizes the conversation
 and everything a hook added earlier, so the state the engine depends on (the live resume, the
 standing rules, the role marker, this repo's federation presence) is lost exactly when a long
 window needs it. The client documents that a `SessionStart` hook whose matcher is the `compact`
@@ -329,7 +329,7 @@ def build_output(payload):
     if count >= ROTATE_AT:
         tail.append("This is the second compaction or later in this window, which is a "
                     "rotation trigger: checkpoint RESUME.md, tell the operator a fresh window "
-                    "is ready, and stop (references/roles/orchestrator.md, Rotation triggers).")
+                    "is ready, and stop (references/orchestrator/checkpoint.md, Rotation triggers).")
 
     rows = background_rows(resume_text) if resume_text is not None else 0
     if rows:

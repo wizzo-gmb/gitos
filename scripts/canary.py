@@ -4,7 +4,7 @@ Read-only. stdlib-only. No judgment calls. brain_lint watches the brain, selftes
 payload, path_guard the publish; the canary watches the HOME STATE layer none of them
 cover:
 
-  - ledger <-> files        (INDEX open/resolved rows vs work-orders/ + resolved/ files,
+  - ledger <-> files        (INDEX open rows vs work-orders/ files; a hand-kept Resolved table vs resolved/,
                              duplicate NNNs, orphaned WO files, nonconforming *.md filenames)
   - brainmeta counts        (.brainmeta.json counts.* vs on-disk wiki page counts;
                              unknown counts.* keys and rogue wiki/ page dirs)
@@ -149,7 +149,7 @@ FEDERATION_TOOL = "federation.py"             # the parser this check delegates 
 #
 # WHY NOT SHORTER: this category GATES resolution, and a window shorter than a working session
 # would redden boards over unrelated work — the failure that gets a guard descoped. WHY NOT
-# DAYS: `--stale-days` (60) answers "is this brain page stale", a different question at the
+# DAYS: `--stale-days` (90) answers "is this brain page stale", a different question at the
 # wrong scale; reusing it would let a presence record rot for two months and still pass, which
 # is precisely the blindness this observer exists to end.
 OWN_RECORD_FRESH_HOURS = 12
@@ -180,7 +180,7 @@ RECORD_FUTURE_SKEW_SECONDS = 300
 # path INV-8 exists for. `federation intake` is where an operator ASKS to see the metadata; a
 # bootstrap check is not an invitation to render somebody else's words.
 #
-# The `CANARY-SURFACE-CONTENTS` assertion in `.gitos/tools/selftest.py`
+# The `CANARY-SURFACE-CONTENTS` assertion in `.gitos/tools/tests/federation.py`
 # (`gate_federation_intake`, section 0e-vii) runs this checker against a hostile fixture and
 # reads both of its surfaces. **To learn what they carry, read the assertion; to change it,
 # change the assertion and the behaviour together.**
@@ -218,6 +218,8 @@ ANCHOR_TOKENS = ("[gitos ·", "canary.py", "SKILL.md")   # marker + the two reco
 # others a bare heading. The heading names the section; it is not a schema. (WO-029 class 3)
 OPEN_HEADING = "## Open work-orders"
 RESOLVED_HEADING = "## Resolved"
+BOARD_MARK = "<!-- gitos:index board -->"      # the INDEX is the generated board (ledger_index.py)
+INDEX_BOARD_MAX = 16 * 1024                    # a board past this carries hand-written content (advisory)
 # --------------------------------------------------------------- the identity position
 # The engine's ONE notion of where a work-order's identity lives. Both users below build on
 # it — the FILENAME rule and the PROSE-ROW rule — so the two cannot drift apart (WO-033).
@@ -269,7 +271,7 @@ WO_FORM_NAMES = ("<prefix><sep>NNN<sep><slug>.md — an optional letter prefix (
                  "task_, ... or none), then EXACTLY three digits, then a separator and a slug; "
                  "e.g. WO-007-thing.md, wo_007_thing.md, task_007_thing.md")
 # The FOLDER form (WO-110): an order with two or more slices is `<prefix>NNN[-slug]/` holding `order.md`,
-# `slices/SN-<name>.md` and `log.md`. It yields the same identity as a file and is listed under the name
+# and `slices/SN-<name>.md`. It yields the same identity as a file and is listed under the name
 # `<dir>/order.md`, so every reader that joins a listed name onto the ledger dir reads the folder form unchanged.
 WO_DIR_RE = re.compile(rf"^(?:[A-Za-z]+[-_.]?)?{IDENT_NNN}(?:[-_.][A-Za-z0-9][\w.-]*)?$")
 ORDER_FILE = "order.md"
@@ -302,7 +304,7 @@ LENS_REQUIRED = ("name", "domain", "tags", "when-to-apply", "applies-to", "sourc
 # of every lens forced a distilled lens to record FALSE provenance. Either key satisfies it;
 # a lens with NEITHER is still reported. (WO-029 class 5)
 LENS_PROVENANCE = ("imported", "authored")
-BRAIN_LINT_KEYS = ("duplicates", "orphans", "stale", "broken_wikilinks", "cross_layer_redundancy")
+BRAIN_LINT_KEYS = ("duplicates", "stale", "broken_wikilinks", "cross_layer_redundancy", "schema", "index")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -536,12 +538,12 @@ def _wo_files(d: Path) -> tuple[dict[str, list[str]], list[str]]:
 
 
 def folder_order_files(d: Path) -> list[Path]:
-    """Every markdown file of every folder order under `d`: order.md, log.md and slices/*.md."""
+    """Every markdown file of every folder order under `d`: order.md and slices/*.md."""
     out: list[Path] = []
     if d.is_dir():
         for sub in sorted(x for x in d.iterdir() if x.is_dir() and WO_DIR_RE.match(x.name)):
             if (sub / ORDER_FILE).is_file():
-                out += [sub / ORDER_FILE] + sorted(sub.glob("log.md")) + sorted((sub / "slices").glob("*.md"))
+                out += [sub / ORDER_FILE] + sorted((sub / "slices").glob("*.md"))
     return out
 
 
@@ -600,8 +602,11 @@ def check_ledger(home: Path) -> list[dict]:
     # prose row) is still absent from the union and MUST still orphan. It CAN newly surface a
     # rows->files finding (a prose row whose file is missing / sits in the wrong dir) — that is
     # a real finding the XOR was hiding, not a false positive.
+    # The board form (WO-124) lists only the open and parked orders: history is the files in resolved/ and `git log`.
+    # There is no Resolved table to read, so the resolved side of this check is skipped, never reported as missing.
+    board = BOARD_MARK in idx_text
     open_block = section_lines(idx_text, OPEN_HEADING)
-    res_block = section_lines(idx_text, RESOLVED_HEADING)
+    res_block = None if board else section_lines(idx_text, RESOLVED_HEADING)
     open_rows = _table_rows(open_block) if open_block is not None else None
     res_rows = _table_rows(res_block) if res_block is not None else None
     open_prose_rows = prose_row_nnns(open_block) if open_block is not None else []
@@ -631,7 +636,9 @@ def check_ledger(home: Path) -> list[dict]:
                                      "fix INDEX.md"})
 
     res_nnns: list[str] = []
-    if res_rows is not None:
+    if board:
+        pass
+    elif res_rows is not None:
         for row in res_rows:
             nnn = clean_cell(row[0]) if row else ""
             if NNN_RE.fullmatch(nnn):
@@ -698,11 +705,11 @@ def check_ledger(home: Path) -> list[dict]:
                                          "move it to resolved/"})
 
     # files -> rows (needs both row sets; suppressed if either side failed to parse)
-    if open_rows is not None and res_rows is not None:
+    if open_rows is not None and (res_rows is not None or board):
         parked_nnns = {clean_cell(r[0]) for r in (_table_rows(section_lines(idx_text, PARKED_HEADING) or []) or [])
                        if r and NNN_RE.fullmatch(clean_cell(r[0]))}     # a parked order's row is in `## Parked`
         known = set(open_nnns) | set(res_nnns) | parked_nnns
-        for where, files in (("work-orders", on_root), ("work-orders/resolved", on_res)):
+        for where, files in (("work-orders", on_root),) if board else (("work-orders", on_root), ("work-orders/resolved", on_res)):
             for nnn in sorted(set(files) - known):
                 items.append({"kind": "order-file-orphan", "file": f"{where}/{files[nnn][0]}",
                               "finding": f"{where}/{files[nnn][0]} has no INDEX row -> "
@@ -1471,7 +1478,7 @@ RESUME_FILENAME = "RESUME.md"
 # The durable stores a resume POINTS AT. If one of these moved on and the resume did not, the
 # resume is behind. (`brain/` is deliberately absent: brain_lint already owns the brain's own
 # staleness, and folding it in here would make two checks disagree about one page.)
-RESUME_STATE_FILES = ("INDEX.md", "footprints.md")
+RESUME_STATE_FILES = ("INDEX.md",)
 # mtime, not commit time — THE HONEST LIMIT, stated rather than papered over. The canary takes
 # no git dependency (read-only, stdlib-only, runs in repos with no git at all), so "older than
 # the newest state commit" is approximated by "older than the newest ledger file on disk". The
@@ -1494,7 +1501,7 @@ RESUME_RULE_RE = re.compile(
     r"at\s+most|no\s+more\s+than|only\s+ever|only\s+use)\b", re.IGNORECASE)
 RESUME_POINTER_RE = re.compile(
     r"\]\(|\[\[|brain/|wiki/|work-orders/|INDEX\.md|HANDOFF\.md|handoff\.md|"
-    r"footprints\.md|references/|SKILL\.md")
+    r"references/|SKILL\.md")
 RESUME_LINE_CAP = 160          # how much of a flagged line is quoted back
 
 
@@ -1553,7 +1560,7 @@ def resume_rules_section_lines(text: str) -> list[tuple[int, str]]:
 def resume_stale_item(home: Path) -> dict | None:
     """The `resume-stale` finding for a home, or None. ONE definition, shared with the `Stop` hook.
 
-    The newest ledger file on disk (INDEX.md, footprints.md, any work-order) against the RESUME's
+    The newest ledger file on disk (INDEX.md, any work-order) against the RESUME's
     mtime, with RESUME_STALE_SLACK. HONEST LIMIT: a RESUME written less than the slack before a
     ledger edit passes even if that edit skipped the refresh, so the check catches a refresh that
     was forgotten for minutes, not one forgotten for seconds.
@@ -1622,7 +1629,7 @@ def landed_unresolved(home: Path) -> list[dict]:
         out.append({"kind": "order-landed-not-resolved", "wo": f"WO-{nnn}", "file": f"work-orders/{name}",
                     "finding": f"WO-{nnn} has a merge commit for its branch on this branch but "
                                f"work-orders/{name} is still open -> resolve it: move it to "
-                               f"resolved/, update the INDEX row, replace RESUME.md wholesale, "
+                               f"resolved/, run ledger_index.py, replace RESUME.md wholesale, "
                                f"then re-run the canary"})
     return out
 
@@ -2538,13 +2545,23 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
                                   "finding": f"Parked {pid} names WO-{nnn}, which does not exist "
                                              "-> fix the number or author the work-order"})
 
-    # resolved work-orders, from the engine cut-over on, with notes and no adjudication
-    res_block = section_lines(idx_text, RESOLVED_HEADING)
+    # resolved work-orders, from the engine cut-over on, with notes and no adjudication. The version an order resolved
+    # in is its front matter `released` (the older `landed`); a hand-kept INDEX Resolved table's "Fix landed in" cell
+    # still counts for an order whose file carries none.
+    res_ver: dict[str, list[int]] = {}
+    res_block = section_lines(idx_text, RESOLVED_HEADING) if BOARD_MARK not in idx_text else None
     for row in (_table_rows(res_block) or []) if res_block is not None else []:
         nnn = clean_cell(row[0]) if row else ""
-        if not NNN_RE.fullmatch(nnn) or len(row) < 3:
-            continue
-        vers = [int(v) for v in VERSION_IN_CELL_RE.findall(row[2])]
+        if NNN_RE.fullmatch(nnn) and len(row) >= 3:
+            res_ver[nnn] = [int(v) for v in VERSION_IN_CELL_RE.findall(row[2])]
+    res_files, _bad = _wo_files(home / "work-orders" / "resolved")
+    for nnn, names in res_files.items():
+        meta = parse_frontmatter(_read(home / "work-orders" / "resolved" / names[0]) or "") or {}
+        stamp = meta.get("released") or meta.get("landed") or ""
+        if isinstance(stamp, str) and VERSION_IN_CELL_RE.search(stamp):
+            res_ver[nnn] = [int(v) for v in VERSION_IN_CELL_RE.findall(stamp)]
+    for nnn in sorted(res_ver):
+        vers = res_ver[nnn]
         if not vers or max(vers) < LOOSE_ENDS_FROM_VERSION:
             continue                              # older than the habit: exempt
         path = _wo_path(home, nnn)
@@ -2710,7 +2727,7 @@ def check_board(home: Path) -> tuple[list[dict], bool]:
                                      f"window finds the board"})
     return items, True
 
-def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 60,
+def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,
         registry: "str | None" = None, now: "datetime | None" = None) -> dict:
     r: dict = {"home": str(home), "skill_dir": str(skill_dir) if skill_dir else None,
                "installed_version": None, "skipped": []}
@@ -2977,26 +2994,34 @@ def check_index_drift(home: Path, skill_dir: Path | None) -> tuple[list[dict], s
     text = _read(home / "INDEX.md")
     if text is None:
         return [], "no INDEX.md"
+    size = len(text.encode("utf-8"))
+    big = ([{"kind": "index-oversized", "advisory": True, "bytes": size,
+             "finding": f"INDEX.md is {size} bytes (over {INDEX_BOARD_MAX}); the board is generated from the open and "
+                        "parked orders, so the rest is hand-written content -> run `ledger_migrate.py <home> --write` "
+                        "(it moves hand-written sections to RESUME.md and lays the board)"}]
+           if size > INDEX_BOARD_MAX else [])
     if "<!-- gitos:index " not in text:
-        return [], "no generated-index markers in INDEX.md"
+        return big, "no generated-index markers in INDEX.md"
     cands = [Path(__file__).resolve().parent / "ledger_index.py", home / TOOL_HOME_DIR / "ledger_index.py"]
     if skill_dir is not None:
         cands.append(skill_dir / TOOL_SRC_DIR / "ledger_index.py")
     src = next((c for c in cands if c.is_file()), None)
     if src is None:
-        return [], "no ledger_index.py found (engine script)"
+        return big, "no ledger_index.py found (engine script)"
     try:
         regions = _load_module("_gitos_ledger_index", src).drift(home)
     except Exception as e:
         return [{"kind": "index-drift",
                  "finding": f"ledger_index.py could not read the INDEX ({type(e).__name__}: {e}) "
-                            "-> fix the markers or the order front matter"}], None
+                            "-> fix the markers or the order front matter"}] + big, None
     if regions is None:
-        return [], "no generated-index markers in INDEX.md"
+        return big, "no generated-index markers in INDEX.md"
     return [{"kind": "index-drift", "region": name,
-             "finding": f"the {name} table of INDEX.md differs from its source -> run "
-                        "`python <SKILL_DIR>/scripts/ledger_index.py <home>` and commit the result"}
-            for name in regions], None
+             "finding": ("INDEX.md is the hand-kept form (no board line) -> run `python <SKILL_DIR>/scripts/"
+                         "ledger_migrate.py <home> --write` to lay the board" if name == "form" else
+                         f"the {name} part of INDEX.md differs from its source -> run "
+                         "`python <SKILL_DIR>/scripts/ledger_index.py <home>` and commit the result")}
+            for name in regions] + big, None
 
 
 def _finding_line(it: object) -> str:
@@ -3081,7 +3106,7 @@ def main() -> int:
     ap.add_argument("home", help="the home directory, e.g. <repo>/.gitos")
     ap.add_argument("--skill-dir", default=None,
                     help="installed skill root override (default: auto-resolve)")
-    ap.add_argument("--stale-days", type=int, default=60,
+    ap.add_argument("--stale-days", type=int, default=90,
                     help="forwarded to the delegated brain_lint pass")
     ap.add_argument("--registry", default=None,
                     help="federation tenants directory override (default: the machine registry). "

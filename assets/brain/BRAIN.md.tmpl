@@ -67,14 +67,16 @@ Read it when in doubt. The self-contained fallback below covers the essentials.
 | `concept` | `wiki/concepts/` | How this system works — patterns, conventions, invariants, architecture. |
 | `decision` | `wiki/decisions/` | ADR-style record of a non-trivial choice: context, options, decision + why. |
 
-### UPSERT rule (primary anti-duplication defense)
+### The write test, then UPSERT
 
-Before writing ANYTHING to the brain:
-1. **Search first** — read `wiki/index.md` and grep `wiki/` for an existing page on this atom.
-2. **UPDATE** the existing page (bump `updated:`, add `[[wikilinks]]`).
-3. **CREATE** a new page ONLY if the atom is genuinely distinct from every existing page.
+The brain holds only what cannot be found in the code, git, CLAUDE.md or a work order: why, what was rejected,
+non-obvious conventions, traps. Before writing ANYTHING to the brain:
+1. **Write test** — can this be found in a work order, the git log, the code or CLAUDE.md? If so, do not write it.
+2. **Search first** — read `wiki/index.md` and grep `wiki/` for an existing page on this atom.
+3. **UPDATE** the existing page (bump `updated:`); **CREATE** a new page ONLY if the atom is distinct from every page.
 4. **Route by kind** — if it's actionable ("we should do X"), it's a WORK-ORDER, not a brain page.
-5. **Log** — append one line to `wiki/log.md`.
+5. **Regenerate the index** — `brain_lint.py <brain> --write-index`. The index is generated from front matter
+   (`type`, `description`, `status`, `updated`); never edit it by hand. There is no log: git keeps the history.
 
 ### Anti-redundancy invariants
 
@@ -95,9 +97,9 @@ The orchestrator's three-layer maintenance loop:
 - Reflect: what did this session establish that the brain doesn't hold? What did it invalidate?
 - Capture deltas via the upsert protocol.
 - Reconcile: merge near-duplicates, mark superseded content, fix broken `[[links]]`.
-- Refresh `wiki/index.md` + `.brainmeta.json`.
+- Mark a replaced decision `status: superseded` (decisions are never rewritten); regenerate the index; refresh `.brainmeta.json`.
 
 **Layer 3 — Deterministic backstop:** `python {{ROOT}}/{{HOME}}/tools/brain_lint.py {{ROOT}}/{{HOME}}/brain`
-Reports: duplicate pages, orphans, stale pages, broken wikilinks, cross-layer redundancy (brain page restating a work-order). Read-only — it reports, never edits. Small fixes happen inline; large restructures become a work-order in INDEX.
+Reports: duplicate pages, stale pages (age, `rests_on`, `superseded_by`), broken wikilinks, cross-layer redundancy (brain page restating a work-order), front-matter schema, index drift and cap. Without `--write-index` it only reports. Small fixes happen inline; large restructures become a work-order in INDEX.
 
 Full protocol: `~/.claude/skills/gitos/references/brain-schema.md` §5 + §6.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ledger_migrate.py - bring a home's ledger to the current form: folder orders, and one not-now list.
+"""ledger_migrate.py - bring a home's ledger to the current form: folder orders, one not-now list, the generated board.
 
     python ledger_migrate.py HOME [--write]
 
@@ -14,12 +14,26 @@ It is idempotent: run again after a crash, or after `--write`, it finds what is 
     `status: parked`, `trigger: <trigger>` and `origin: L<n>`, and the row leaves the list;
   * an open hand-kept INDEX Parked row (any id: `P<n>`, `214-P1`, `nt8-freeze`, `L63`, `004`; no `->` in it) becomes a
     parked work-order the same way (`origin:` is the id, verbatim); a closed one (`-> WO-NNN`, `-> dropped ...`) is
-    routed and goes; the section becomes the generated region `<!-- gitos:index parked -->` (`ledger_index.py` writes it from the parked orders);
+    routed and goes; the INDEX then becomes the generated board (below);
   * an open carried box (`- [ ] L<n> (slice: ..) ..`) of an open order goes back on the list as `new` (own id) and
     the box is ticked `-> L<n>`;
   * `drain/declined/`, `drain/accepted/` and `drain/routed.txt` are removed: a declined item is already a
     `declined:` row, an accepted or routed one is off the list (git keeps the files);
   * the front-matter key `landed:` (the engine version an order resolved in) is renamed `released:`.
+
+**The board (WO-124).** An INDEX that is not yet the generated board (no `<!-- gitos:index board -->` line) is replaced by it
+(`ledger_index.py` writes the whole file from the order files). Nothing is dropped silently:
+
+  * a Resolved row whose order file is in `work-orders/resolved/` goes (the file is the record; `ls` is the list, `git log`
+    the timeline), and when that file carries no `released:` and the row's "Fix landed in" cell names an engine version, the
+    file is stamped `released: vN` first; a row with no order file is moved to RESUME.md;
+  * an Open or Parked row that its order file regenerates goes; one with no file (or a Parked row the step above reported
+    LEFT) is moved to RESUME.md;
+  * every other section and any text above the first section (release shaping notes, Findings DISPROVED, next steps) is moved to
+    RESUME.md, verbatim in a fenced block under a dated heading, for the operator to sort: live state stays, a durable decision goes to
+    the brain, the rest is deleted (git keeps the old INDEX);
+  * `footprints.md` is removed (a landing's footprint is `git show --name-only <sha>`), and so is every `work-orders/**/WO-NNN/log.md`
+    (the slice files hold the state, `git log -- work-orders/WO-NNN` the history).
 
 What cannot be moved with confidence (an item a pile file holds while its row is in another state, a routed id that
 is still a row, a Parked row with no trigger, a box line that is not a box) is reported and left alone.
@@ -28,7 +42,7 @@ held, or reported LEFT).
 
 An open order `work-orders/WO-NNN-slug.md` whose `## Slices` section holds two or more `### S<n>` sections
 becomes the folder form (see slice.py): the file is `git mv`-ed to `WO-NNN/order.md` (history follows), each slice
-section becomes `slices/S<n>-<name>.md`, and `log.md` records the migration.
+section becomes `slices/S<n>-<name>.md`.
 
   * A slice is landed when its section holds an adjudication naming a commit, or the order's `## History`
     section has a pointer line `- <slice> landed <sha>: history/WO-NNN.md#<anchor>` for it; it gets
@@ -269,12 +283,6 @@ def apply(home: Path, nnn: str, path: Path, hist_path: "Path | None", plan: dict
     _write(dest, plan["order_text"])
     for x in plan["slices"]:
         _write(folder / "slices" / f"S{x['n']}-{x['name']}.md", _slice_file(x, nnn))
-    today = date.today().isoformat()
-    log = [f"# WO-{nnn} log", "", f"- {today} migrated to the folder form by ledger_migrate: "
-           + ", ".join(f"S{x['n']} {x['status']}" + (f" {x['commit']}" if x["commit"] else "") for x in plan["slices"])]
-    for b in plan["boxes"]:
-        log.append(f"- {today} open carried box {b['id']} (slice: {b['slice']}) left in order.md to be settled")
-    _write(folder / "log.md", "\n".join(log) + "\n")
     if hist_path and hist_path.is_file():
         if not (top and _git(top, "rm", "-q", "-f", "--", str(hist_path)) is not None):
             hist_path.unlink()
@@ -307,8 +315,9 @@ def _parked_order(nnn: str, item: str, trigger: str, origin: str, evidence: str)
     return f"WO-{nnn}-{slug}.md", text
 
 
-def migrate_not_now(home: Path, write: bool, out=print) -> int:
-    """The WO-115 moves (see the module docstring). -> how many moves were found."""
+def migrate_not_now(home: Path, write: bool, out=print, report: "dict | None" = None) -> int:
+    """The WO-115 moves (see the module docstring). -> how many moves were found. `report["parked_left"]` receives
+    the ids of the hand-kept Parked rows it left alone (`"?"`: rows nobody accounted for)."""
     le, cn, s1 = _load("loose_ends"), _load("canary"), _load("system_one")
     moves = 0
 
@@ -366,7 +375,6 @@ def migrate_not_now(home: Path, write: bool, out=print) -> int:
             parked_new.append((lid, r["item"], le.parse_state(r["state"])[1],
                                f"loose end {lid} ({r['source']}), added {r['added']}"))
         parked_gone.append(lid)
-    block = cn.section_lines(idx_text, cn.PARKED_HEADING) if idx_text else None
     n_read = n_done = 0
     for row in cn.parked_table_rows(idx_text):      # the hand-kept rows, any id (one definition, canary.py)
         pid = cn.clean_cell(row[0]) if row else ""
@@ -400,10 +408,8 @@ def migrate_not_now(home: Path, write: bool, out=print) -> int:
         made.append((name, text))
         say(f"{'Parked ' if origin in from_index else ''}{origin} -> a parked order work-orders/{name} "
             f"(trigger: {trig[:60]}{'...' if len(trig) > 60 else ''})")
-    region = idx_text and block is not None and not parked_left and (
-        "<!-- gitos:index parked -->" not in idx_text or "| ID | Item | Restart trigger |" in idx_text)
-    if region:
-        say("INDEX Parked section -> the generated region `<!-- gitos:index parked -->` (a view of the parked orders)")
+    if report is not None:
+        report["parked_left"] = list(parked_left)
     # 3. carried boxes of open orders
     boxes = []
     wod = home / "work-orders"
@@ -470,15 +476,6 @@ def migrate_not_now(home: Path, write: bool, out=print) -> int:
             raw = re.sub(rf"(?m)^- \[ \] ({re.escape(b['id'])} \(slice: [^()\n]*\S\) [^\r\n]*?)[ \t]*(\r?)$",
                          lambda mm: f"- [x] {mm.group(1)} -> {b['id']}{mm.group(2)}", raw, count=1)
         f.write_bytes(raw.encode("utf-8"))
-    if region:
-        tmpl = (HERE.parent / "assets" / "INDEX.md.tmpl").read_text(encoding="utf-8").replace("\r\n", "\n")
-        section = tmpl[tmpl.index("## Parked"):tmpl.index("## Resolved")]
-        raw = idx.read_bytes().decode("utf-8")
-        eol = "\r\n" if "\r\n" in raw else "\n"
-        s = re.search(r"(?m)^## Parked.*$", raw).start()
-        e = re.search(r"(?m)^## ", raw[s + 3:])
-        e = s + 3 + e.start() if e else len(raw)
-        idx.write_bytes((raw[:s] + section.replace("\n", eol) + raw[e:]).encode("utf-8"))
     for f in keyed:
         raw = f.read_bytes().decode("utf-8")
         head, sep, rest = raw.partition("\n---")
@@ -490,12 +487,206 @@ def migrate_not_now(home: Path, write: bool, out=print) -> int:
             (home / "drain" / sub).rmdir()
         except OSError:
             pass
-    li = _load("ledger_index")
-    if idx.is_file():
+    return moves
+
+
+BOARD_STANDARD_RE = re.compile(r"^(?:Established|Home|Role briefs)\s*:")
+PLACEHOLDER_LINE_RE = re.compile(r"^\*?\(?(?:no|none)\b[^|]*\)?\*?$|^\*No recommendations recorded yet\.\*$", re.I)
+
+
+def _split_sections(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """(lines above the first `## ` heading, [(heading line, body lines)]); a fenced `## ` is not a heading."""
+    pre: list[str] = []
+    secs: list[tuple[str, list[str]]] = []
+    fence = False
+    for ln in text.splitlines():
+        if re.match(r"^\s*```", ln):
+            fence = not fence
+        if not fence and ln.startswith("## "):
+            secs.append((ln, []))
+        elif secs:
+            secs[-1][1].append(ln)
+        else:
+            pre.append(ln)
+    return pre, secs
+
+
+def _strip_comments(body: list[str]) -> list[str]:
+    """`body` without HTML comments (template guidance, one line or several); the `gitos:index` markers stay."""
+    out: list[str] = []
+    in_comment = False
+    for ln in body:
+        s = ln.strip()
+        if in_comment:
+            in_comment = "-->" not in s
+            continue
+        if s.startswith("<!--") and not s.startswith(("<!-- gitos:index", "<!-- /gitos:index")):
+            in_comment = "-->" not in s
+            continue
+        out.append(ln)
+    return out
+
+
+def _is_filler(ln: str) -> bool:
+    """A line a section carries by template or by the generated regions: blank, rule, marker, table head or separator."""
+    s = ln.strip()
+    if not s or set(s) <= set("-|: ") or s.startswith("<!-- gitos:index") or s == "<!-- /gitos:index -->":
+        return True
+    return bool(re.match(r"^\|\s*(NNN|ID)\s*\|", s))
+
+
+def _row_id(ln: str, cn) -> str:
+    """The identity of a table or prose row (`NNN`, `P1`, ...), else ""."""
+    s = ln.strip()
+    if s.startswith("|"):
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        return cn.clean_cell(cells[0]) if cells else ""
+    m = cn.PROSE_NNN.match(ln)
+    return re.findall(r"\d{3}", m.group(0))[-1] if m else ""
+
+
+def _body_extras(body: list[str], keep_row, cn) -> list[str]:
+    """The lines of a table section that nothing regenerates: text, and rows `keep_row(id, line)` says to keep.
+    HTML comments (template guidance) and the generated regions are not extras."""
+    out: list[str] = []
+    in_region = False
+    for ln in body:
+        s = ln.strip()
+        if s.startswith("<!-- gitos:index"):
+            in_region = True
+            continue
+        if s == "<!-- /gitos:index -->":
+            in_region = False
+            continue
+        if in_region or _is_filler(ln) or PLACEHOLDER_LINE_RE.match(s):
+            continue
+        rid = _row_id(ln, cn)
+        if rid and keep_row(rid, ln):
+            out.append(ln)
+        elif not rid and not s.startswith("|"):
+            out.append(ln)
+    return out
+
+
+def _stamp_released(path: Path, ver: int) -> None:
+    raw = path.read_bytes().decode("utf-8")
+    eol = "\r\n" if "\r\n" in raw else "\n"
+    m = re.match(r"(\ufeff?---\r?\n)(.*?)(^---[ \t]*\r?$)", raw, re.S | re.M)
+    line = f"released: v{ver}{eol}"
+    if m:
+        body = m.group(2) if m.group(2).endswith("\n") else m.group(2) + eol
+        raw = m.group(1) + body + line + raw[m.start(3):]
+    else:
+        raw = f"---{eol}{line}---{eol}" + raw
+    path.write_bytes(raw.encode("utf-8"))
+
+
+def migrate_board(home: Path, write: bool, out=print, report: "dict | None" = None) -> int:
+    """The WO-124 moves (see the module docstring). -> how many moves were found."""
+    cn, li = _load("canary"), _load("ledger_index")
+    moves = 0
+
+    def say(text: str) -> None:
+        nonlocal moves
+        moves += 1
+        out(f"board: {text}")
+    idx = home / "INDEX.md"
+    wod = home / "work-orders"
+    raw = _read(idx) if idx.is_file() else ""
+    left = set((report or {}).get("parked_left", []))
+    on_root = set(cn._wo_files(wod)[0])
+    on_res = set(cn._wo_files(wod / "resolved")[0])
+    moved: list[tuple[str, list[str]]] = []
+    stamps: list[tuple[Path, int]] = []
+    if idx.is_file() and li.BOARD_MARK not in raw:
+        pre, secs = _split_sections(raw)
+        eol = "\r\n" if "\r\n" in raw else "\n"
+        above = [ln for ln in pre[1:] if ln.strip() and ln.strip() != "---" and not BOARD_STANDARD_RE.match(ln.strip())]
+        if above:
+            moved.append(("(text above the first section)", above))
+        n_res = n_drop = 0
+        for head, body in secs:
+            body = _strip_comments(body)
+            h = head[3:].strip().lower()
+            if h.startswith("open"):
+                extra = _body_extras(body, lambda rid, ln: rid not in on_root and rid not in {n for n, _m in cn.parked_orders(home)}, cn)
+            elif h.startswith("parked"):
+                hand = {cn.clean_cell(r[0]) if r else "" for r in cn.parked_table_rows(raw)}
+                extra = _body_extras(body, lambda rid, ln: rid in hand and ("?" in left or rid in left), cn)
+            elif h.startswith("resolved"):
+                extra = []
+                in_region = False
+                for ln in body:
+                    rid = _row_id(ln, cn) if not _is_filler(ln) else ""
+                    if rid and (rid in on_res):
+                        n_res += 1
+                        f = wod / "resolved" / cn._wo_files(wod / "resolved")[0][rid][0]
+                        cells = [c.strip() for c in ln.strip().strip("|").split("|")] if ln.strip().startswith("|") else []
+                        vers = [int(v) for v in cn.VERSION_IN_CELL_RE.findall(cells[2])] if len(cells) > 2 else []
+                        meta = cn.parse_frontmatter(_read(f) or "") or {}
+                        if vers and max(vers) >= cn.LOOSE_ENDS_FROM_VERSION and not (meta.get("released") or meta.get("landed")):
+                            stamps.append((f, max(vers)))
+                    elif rid:
+                        extra.append(ln)
+                    elif not _is_filler(ln) and not ln.strip().startswith("<!--") and ln.strip().strip("*") and not PLACEHOLDER_LINE_RE.match(ln.strip()):
+                        extra.append(ln)
+                extra = _body_extras(extra, lambda rid, ln: True, cn) if extra else []
+            else:
+                extra = list(body) if any(not _is_filler(ln) and not PLACEHOLDER_LINE_RE.match(ln.strip()) for ln in body) else []
+                while extra and not extra[0].strip():
+                    extra.pop(0)
+                while extra and (not extra[-1].strip() or extra[-1].strip() == "---"):
+                    extra.pop()
+            if extra:
+                moved.append((head, extra))
+        n_drop = n_res
+        say(f"INDEX.md ({len(raw.encode('utf-8')):,} bytes) -> the generated board: {n_drop} Resolved row(s) go "
+            f"(their order files are the record), {len(stamps)} order file(s) stamped `released:` from the row "
+            f"(only a version from v{cn.LOOSE_ENDS_FROM_VERSION} on is read, by the adjudication check)")
+        for f, v in stamps:
+            say(f"{f.relative_to(home).as_posix()}: `released: v{v}` stamped from its Resolved row")
+        if moved:
+            say("moved to RESUME.md under one dated heading: " + "; ".join(h.lstrip("# ") for h, _b in moved))
+        title = li.BOARD_NAME_RE.search(raw)
+        name = title.group(1) if title else home.parent.name
+        if write:
+            for f, v in stamps:
+                _stamp_released(f, v)
+            if moved:
+                resume = home / "RESUME.md"
+                block = [f"## Moved from INDEX.md ({date.today().isoformat()}): sort these", "",
+                         "The board (`INDEX.md`) is generated now and holds no hand-written text. What stood in it is below, verbatim:",
+                         "keep live state in this file, put a durable decision in the brain (`brain/wiki/decisions/`), delete the rest",
+                         "(git keeps the old INDEX). Remove this section once sorted.", "", "````text"]
+                for head, body in moved:
+                    block += ([head] if head.startswith("## ") else [head]) + body + [""]
+                block += ["````", ""]
+                old = _read(resume) if resume.is_file() else f"# {name} — RESUME (live session state)\n"
+                reol = "\r\n" if "\r\n" in old else "\n"
+                resume.write_bytes((old.rstrip("\r\n") + reol + reol + "---" + reol + reol + reol.join(block)).encode("utf-8"))
+            idx.write_bytes(f"# {name} — Work-order board{eol}{li.BOARD_MARK}{eol}".encode("utf-8"))
+            new, _differing, _found = li.render(home)
+            idx.write_bytes(new.encode("utf-8"))
+    elif idx.is_file():
         new, differing, found = li.render(home)
         if found and differing:
-            idx.write_bytes(new.encode("utf-8"))
+            say(f"INDEX.md differs from its source ({', '.join(differing)}): regenerated")
+            if write:
+                idx.write_bytes(new.encode("utf-8"))
+    fp = home / "footprints.md"
+    if fp.is_file():
+        say("footprints.md retired (a landing's footprint is `git show --name-only <sha>`)")
+        if write:
+            _rm(fp)
+    logs = sorted(wod.rglob("WO-*/log.md")) if wod.is_dir() else []
+    logs += [f for f in sorted(wod.rglob("*/log.md")) if f not in logs and (f.parent / "order.md").is_file()]
+    if logs:
+        say(f"{len(logs)} per-order log.md file(s) retired (the slice files hold the state, `git log` the history)")
+        if write:
+            for f in logs:
+                _rm(f)
     return moves
+
 
 
 def run(home: Path, write: bool, out=print) -> int:
@@ -506,8 +697,11 @@ def run(home: Path, write: bool, out=print) -> int:
     if not wod.is_dir():
         out("ledger_migrate: no work-orders/ folder; nothing to migrate")
         return 0
-    if not migrate_not_now(home, write, out):
+    state: dict = {}
+    if not migrate_not_now(home, write, out, state):
         out("not-now: nothing to move (one list already)")
+    if not migrate_board(home, write, out, state):
+        out("board: nothing to move (the INDEX is the generated board already)")
     migrated, skipped, boxes, consumed = 0, 0, [], set()
     for f in sorted(x for x in wod.iterdir() if x.is_file()):
         m = sl.FILE_RE.match(f.name)

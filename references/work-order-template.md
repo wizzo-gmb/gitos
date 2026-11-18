@@ -9,13 +9,13 @@ words naming the subject (`state-resets-on-restart`, `tenant-id-frozen-to-placeh
 
 A work-order opens with a flat front matter block between `---` lines (`key: value`, a value is a bare string
 or `[a, b]`; nothing else): `severity`, `title` and `evidence` are what `scripts/ledger_index.py` writes into the
-INDEX's Open row. With none, the row is built from the H1 and the first word of `## Severity`, and evidence
-reads `—`. At resolution the orchestrator adds `summary`, `released` (the engine version; the older key `landed` still reads) and `result` (the selftest
-line), and `ledger_index.py` writes the Resolved row.
+board's Open row (evidence is cut at 100 characters there). With none, the row is built from the H1 and the first word of
+`## Severity`, and evidence reads `—`. At resolution the orchestrator adds `released` (the engine version; the older key
+`landed` still reads); nothing else is written for a resolved order and no row is added anywhere.
 
 **A parked work-order** is deferred work that waits on a named event: an ordinary order file in `work-orders/`
 whose front matter adds `status: parked` and `trigger: <restart trigger>` (and `origin: L<n>` when it took items).
-`ledger_index.py` writes it into the INDEX `## Parked` table instead of Open; the canary gates one with no trigger
+`ledger_index.py` writes it into the board's `## Parked` table instead of Open; the canary gates one with no trigger
 (`parked-no-trigger`), and `loose_ends.py status` lists one whose trigger names a resolved order or a passed date.
 When the trigger fires, remove `status: parked` and write its Proposed fix scope.
 
@@ -33,7 +33,6 @@ more than one `### S<n>` slice section and names this fix.
 
     <home>/work-orders/WO-NNN/order.md              the spec, frozen at accept; amended only by appended, dated amendments
     <home>/work-orders/WO-NNN/slices/SN-<name>.md   one slice: front matter, scope, verification, notes, adjudication
-    <home>/work-orders/WO-NNN/log.md                append-only: one dated line per event
 
 A slice file opens with front matter (same flat `key: value` block as an order):
 
@@ -479,17 +478,12 @@ verbatim. Example:
 
 ## Index entry
 
-Both forms take the same ledger row. On an INDEX with generated regions (`<!-- gitos:index open -->`),
-the row comes from the front matter: run `ledger_index.py <home>` and type nothing. Only an INDEX without
-the markers takes a hand-typed row in the "Open work-orders" section:
-
-```markdown
-| <NNN> | <severity> | <Title> | <primary evidence file:line> |
-```
+Both forms take the same board row, and it comes from the front matter: run `ledger_index.py <home>` and type nothing.
+An INDEX that is not yet the generated board (no `<!-- gitos:index board -->` line) is converted by `ledger_migrate.py`.
 
 The last column is the file the order anchors to: the evidence `file:line` on a bug order, and on a
 forward order the primary file the work targets.
 
-When the work-order is resolved, add `summary`, `released` and `result` to its front matter, MOVE the file to
-`<home>/work-orders/resolved/` and run `ledger_index.py`; without the markers, move its row to "Resolved" by
-hand with a "Fix landed in" reference (commit hash for repo files, `(no git)` for files outside any repo).
+When the work-order is resolved, add `released` to its front matter, MOVE the file to
+`<home>/work-orders/resolved/` and run `ledger_index.py`: the order leaves the board. Its file is the record; the commit
+is in `git log`.
