@@ -10,7 +10,8 @@ stdlib-only, harness-neutral (plain git; no client feature is assumed).
                `.claude/worktrees/` are still found, classified and reaped.
   reap NNN     Remove that worktree and delete its branch, only if the branch is merged (into the
                current branch, the default branch or a declared integration branch) and the
-               worktree has no changed or untracked files.
+               worktree has no changed or untracked files. A removal git refuses over a long path
+               ("Filename too long", or on Windows a path past 260 characters) is retried (see LONG PATHS).
   reap --merged
                The same for every reapable one (see `status`), `wo-NNN`, `worktree-*` and declared
                worktrees alike.
@@ -30,11 +31,18 @@ removes anything; `git branch -d` refuses an unmerged branch and a branch still 
 worktree (a worktree whose directory was deleted by hand stays registered until `git worktree
 prune`, which `reap` runs). Ignored files (for example `__pycache__`) do not block a removal.
 
-WHAT IT NEVER DOES. No `--force`, no `git worktree unlock`, and no deletion from a hook or the canary:
+WHAT IT NEVER DOES. No `--force` except the long-path retry below, no `git worktree unlock`, and no deletion from a hook or the canary:
 the canary and the `Stop` hook only READ the classification below. A refusal is printed with the reason
 and what the operator can do, and the run exits 1. `reap` does use `git branch -D`, and only after its
 own merged check passed: git's `-d` asks whether the branch is merged into the CURRENT branch alone,
 which is too narrow once work lands on an integration branch.
+
+LONG PATHS (WO-125). When `git worktree remove` fails and the failure names a long path (git says "Filename too long") or,
+on Windows, a path inside the worktree is longer than 260 characters, `reap` retries in this order and prints each fallback
+it takes: (1) a status check with `core.longpaths=true`, and a worktree that shows a changed or untracked file there is
+refused, never forced; (2) `git -c core.longpaths=true worktree remove --force` on that one worktree; (3) whatever
+directory is left is removed through the Windows extended-length prefix by a walk that unlinks a link and never follows one;
+(4) `git worktree prune`. A locked worktree is never retried. Only the named worktree's own directory is touched.
 
 THE DECLARED LAYOUT. An optional `<home>/worktrees.json`, every key optional:
   {"root": "<dir>", "roots": ["<glob>"], "branches": ["<glob>"], "integration": ["<glob>"],
@@ -364,8 +372,9 @@ def _fresh_worktree(path, root, branch):
 
 
 def _dirty_count(path):
-    """Changed or untracked files in a worktree. Unreadable counts as dirty (the safe answer)."""
-    out = git_ok(path, "status", "--porcelain")
+    """Changed or untracked files in a worktree. Unreadable counts as dirty (the safe answer). Read with
+    `core.longpaths=true`: without it git cannot open a directory past the path limit and reports it as untracked."""
+    out = git_ok(path, "-c", "core.longpaths=true", "status", "--porcelain")
     if out is None:
         return 1
     return len([ln for ln in out.splitlines() if ln.strip()])
@@ -664,6 +673,30 @@ def _inside(cwd, path):
 
 
 _REPARSE, _DIRECTORY = 0x400, 0x10
+BS = chr(92)
+EXT_PREFIX = BS * 2 + "?" + BS      # the Windows extended-length prefix: two backslashes, a question mark, a backslash
+UNC_PREFIX = EXT_PREFIX + "UNC" + BS
+LONG_PATH = 260
+
+
+def _ext(path, always=False):
+    """On Windows the extended-length form of `path` (no 260-character limit) when it is long (or `always`); a short path,
+    and any path elsewhere, as given."""
+    p = str(path)
+    if os.name != "nt" or p.startswith(EXT_PREFIX):
+        return p
+    p = os.path.abspath(p)
+    if not always and len(p) < LONG_PATH - 20:
+        return str(path)
+    return UNC_PREFIX + p[2:] if p.startswith(BS * 2) else EXT_PREFIX + p
+
+
+def _plain(path):
+    """The inverse of `_ext`."""
+    p = str(path)
+    if p.startswith(UNC_PREFIX):
+        return BS * 2 + p[len(UNC_PREFIX):]
+    return p[len(EXT_PREFIX):] if p.startswith(EXT_PREFIX) else p
 
 
 def _link_kind(path):
@@ -693,26 +726,28 @@ def _walk_links(top):
     """Every link under `top`, found without following any: -> [path]. A link is reported and not
     entered; only real directories are. A directory that cannot be listed raises UnreadableDir naming it:
     skipping it would leave a link under it unchecked."""
-    found, stack = [], [str(top)]
+    top = str(top)
+    found, stack = [], [top]
     while stack:
         cur = stack.pop()
         try:
-            with os.scandir(cur) as it:
-                children = [(e.path, e.name) for e in it]
+            with os.scandir(_ext(cur)) as it:
+                children = [(os.path.join(cur, e.name), e.name) for e in it]
         except OSError as e:
             raise UnreadableDir(cur, e.strerror or e) from e
         for full, name in children:
-            if cur == str(top) and name == ".git":
+            if cur == top and name == ".git":
                 continue
-            if _link_kind(full):
+            if _link_kind(_ext(full)):
                 found.append(full)
-            elif os.path.isdir(full):
+            elif os.path.isdir(_ext(full)):
                 stack.append(full)
     return found
 
 
 def _unlink(path):
     """Remove the link itself (never its target). True when it is gone."""
+    path = _ext(path)
     kind = _link_kind(path)
     for fn in ((os.rmdir, os.unlink) if kind == "dir" else (os.unlink, os.rmdir)):
         try:
@@ -730,7 +765,7 @@ def link_guard(worktree):
     base = os.path.normcase(os.path.realpath(worktree))
     done, failed = [], []
     for link in _walk_links(worktree):
-        target = os.path.normcase(os.path.realpath(link))
+        target = os.path.normcase(_plain(os.path.realpath(_ext(link))))
         try:
             outside = os.path.commonpath([base, target]) != base
         except ValueError:
@@ -769,6 +804,86 @@ def _archive(root, home, it):
     return copied, None
 
 
+def _longest_path(top):
+    """The length of the longest path under `top` (the walk never follows a link), stopping once one is past
+    LONG_PATH; 0 when nothing could be read."""
+    best, stack = len(_plain(top)), [_ext(top, True)]
+    while stack and best <= LONG_PATH:
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for e in entries:
+                    best = max(best, len(_plain(e.path)))
+                    if not _link_kind(e.path) and e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+        except OSError:
+            continue
+    return best
+
+
+def _remove_tree(top):
+    """Delete the directory `top` and everything in it through the extended-length form of every path. A link inside
+    is unlinked and never followed. -> None when it is gone, else a one-line reason."""
+    def walk(d):
+        with os.scandir(d) as entries:
+            for e in list(entries):
+                if _link_kind(e.path):
+                    if not _unlink(e.path):
+                        raise OSError(f"cannot unlink {_plain(e.path)}")
+                elif e.is_dir(follow_symlinks=False):
+                    walk(e.path)
+                else:
+                    try:
+                        os.unlink(e.path)
+                    except PermissionError:
+                        os.chmod(e.path, 0o666)
+                        os.unlink(e.path)
+        try:
+            os.rmdir(d)
+        except PermissionError:
+            os.chmod(d, 0o777)
+            os.rmdir(d)
+    top = _ext(top, True)
+    try:
+        if _link_kind(top):
+            return "it is a link, not a directory" if not _unlink(top) else None
+        if os.path.lexists(top):
+            walk(top)
+    except OSError as e:
+        return str(e)
+    return None if not os.path.lexists(top) else "it is still there"
+
+
+def _remove_worktree(root, it):
+    """`git worktree remove` for one worktree, with the long-path fallbacks (see LONG PATHS in the module docstring).
+    -> (ok, messages when it was removed (each fallback taken named), git's error text when it was not)."""
+    path = it["path"]
+    rc, _, err = git(root, "worktree", "remove", path)
+    if rc == 0:
+        return True, [f"removed worktree {path}"], ""
+    long_named = "filename too long" in err.lower()
+    if it["locked"] or it["dirty"] or not (long_named or (os.name == "nt" and _longest_path(path) > LONG_PATH)):
+        return False, [], err
+    why = "git said the filename is too long" if long_named else f"a path in it is over {LONG_PATH} characters"
+    msgs = [f"{why}: retried with core.longpaths"]
+    out = git_ok(path, "-c", "core.longpaths=true", "status", "--porcelain")
+    if out is None or out.strip():
+        return False, [], ("the worktree could not be read with core.longpaths=true" if out is None else
+                           "with core.longpaths=true it shows changed or untracked files, so it is not forced")
+    rc, _, ferr = git(root, "-c", "core.longpaths=true", "worktree", "remove", "--force", path)
+    if rc == 0:
+        msgs.append(f"removed worktree {path} with --force (clean, checked with core.longpaths=true)")
+    if os.path.lexists(_ext(path)):
+        if os.name != "nt" or _inside(root, path):
+            return False, [], (ferr or err).strip()
+        left = _remove_tree(path)
+        if left:
+            return False, [], f"the leftover directory could not be removed: {left}"
+        msgs.append("removed the leftover directory through the extended-length prefix")
+    git(root, "worktree", "prune")
+    msgs.append("pruned worktree records")
+    return True, msgs, ""
+
+
 def _reap_one(root, it, current, home=None):
     """Reap one inventory item. -> (ok, [message lines]). Refuses on anything git or we object to."""
     name = it["name"]
@@ -804,14 +919,16 @@ def _reap_one(root, it, current, home=None):
                                f"that points outside the worktree -> remove that link by hand, then retry"]
             if gone:
                 msgs.append(f"unlinked {len(gone)} link(s) pointing outside it")
-        rc, _, err = git(root, "worktree", "remove", it["path"])
-        if rc != 0:
+        ok, done, err = _remove_worktree(root, it)
+        if not ok:
             hint = ("it is locked: whoever locked it decides (`git worktree unlock`, then retry)"
                     if it["locked"] else
+                    "remove what is left of it by hand, then run `git worktree prune` and reap again"
+                    if "leftover directory" in err else
                     "commit or discard what is in it, then retry")
             return False, [f"worktree: {name} NOT reaped: git refused: {err.strip()}",
                            f"          -> {hint}"]
-        msgs.append(f"removed worktree {it['path']}")
+        msgs.extend(done)
     git(root, "worktree", "prune")
     if it.get("detached") or not it["branch"] or it["branch"] == "(detached)":
         return True, [f"worktree: reaped {name} ({'; '.join(msgs) or 'nothing to remove'})"]

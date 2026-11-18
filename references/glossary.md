@@ -266,6 +266,11 @@ Deferred, out-of-scope work that waits on a named event: an order file with fron
 whose trigger fired are opened. The loose-end state `parked:` (v57) and the hand-kept `P<n>` row are retired;
 `ledger_migrate.py` turns both into parked orders.
 
+**Pending work-order**
+An open order that waits on a live proof or a run: front matter `pending: <what it waits on>`. The board marks its title
+`[pending: ...]`, the canary lists it once as the advisory `order-pending` and does not advise closing it; the orchestrator
+removes the key when the proof lands. Not parked (parked is deferred work with a trigger).
+
 **Carried box** (retired)
 A `- [ ] L<n> (slice: <name>)` row in an order's `## Carried loose ends`, retired in v57: a follow-up into an order is a
 `proposed` slice. A resolved order still holding an open one is `carried-open`.

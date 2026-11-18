@@ -12,8 +12,10 @@ orchestrator's reflection pass tends to miss:
                                         never silent)
   - broken wikilinks                   ([[target]] with no matching page)
   - cross-layer redundancy             (page restates a work-order, or mirrors code)
-  - schema                             (front matter: type, description, status, updated)
+  - schema                             (front matter: type, description, status, updated; a
+                                        description that is a placeholder, not a reason to read)
   - index                              (wiki/index.md over its cap, or not the generated one)
+  - upgrade_diary                      (advisory: an active page named engine-upgrade-v<N>)
 
 The front matter is the source of truth and `wiki/index.md` is generated from it:
 `--write-index` rebuilds it (one line per active page, grouped by type, superseded pages
@@ -67,6 +69,16 @@ COMMIT = re.compile(r"^[0-9a-f]{7,40}$")
 # a health it did not verify.
 RECORD_DATED_PTYPES = ("decisions",)
 FM_TRUE = {"true", "yes", "1"}
+# A description is "when to read this page", written by reading the page. These are the shapes a script
+# produces instead (the first line of the page, its title, a template lead), found in a generated index
+# that did not say when to read anything. The lead is `Read this when you need <title>: <first sentence>`;
+# a human "Read this when you need to ..." is not it, so an infinitive after `need` is let through.
+GENERATED_LEAD = re.compile(r"^read this when you need\s+(?!to\b)[^:]{1,90}:", re.IGNORECASE)
+LEAD_PREFIX = re.compile(r"^read this when you need\s+", re.IGNORECASE)
+BRACKETS = (("(", ")"), ("[", "]"), ("{", "}"), ("“", "”"))
+QUOTES = ('"', "`")
+# A page named for one engine upgrade is a diary of what git and the CHANGELOG already hold.
+UPGRADE_DIARY = re.compile(r"^engine-upgrade-v\d+$")
 WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 WORKORDER = re.compile(r"\b(?:WO-\d+|bug_\d{2,})\b", re.IGNORECASE)
 # A markdown link to an order (`[WO-164](work-orders/WO-164/order.md)`) is a pointer, not a
@@ -176,6 +188,62 @@ def commit_exists(root: Path, sha: str) -> bool | None:
     return False if probe.returncode == 0 else None
 
 
+def _norm(text: str) -> str:
+    """Lower-cased, whitespace-collapsed, markup and trailing punctuation stripped: for comparing a description
+    with the page's own words."""
+    t = " ".join(text.replace("`", "").replace("*", "").split()).lower()
+    return t.strip().strip("\"'").rstrip(".:;,!? ").strip()
+
+
+def _unwrap(value: str) -> str:
+    """One layer of matching outer quotes (a YAML scalar's own), nothing else."""
+    v = value.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        return v[1:-1].strip()
+    return v
+
+
+def first_prose_line(body: str) -> str:
+    """The first non-empty line that is not a heading or a fence, list and quote markers removed."""
+    for ln in body.splitlines():
+        t = ln.strip()
+        if not t or t.startswith("#") or FENCE.match(t):
+            continue
+        return re.sub(r"^(?:[-*+>]\s+)+", "", t)
+    return ""
+
+
+def placeholder_reasons(p) -> list[str]:
+    """Why a page's description is a placeholder rather than a reason to read the page (empty list = it is not).
+    Only a present description is judged here; a missing one is reported by `check_schema` as `no description`."""
+    raw = p.fm.get("description")
+    if raw is None:
+        return []
+    d = " ".join(_unwrap(raw).split())
+    if not d:
+        return ["empty"]
+    out: list[str] = []
+    if d.endswith(":"):
+        out.append("ends with ':' (the text after the label is missing)")
+    for o, c in BRACKETS:
+        if d.count(o) != d.count(c):
+            out.append(f"unbalanced {o}{c} (cut mid-phrase)")
+    for q in QUOTES:
+        if d.count(q) % 2:
+            out.append(f"unbalanced {q} (cut mid-phrase)")
+    if GENERATED_LEAD.match(d):
+        out.append("starts with the generated lead 'Read this when you need <title>:'")
+    nd = _norm(d)
+    bare = _norm(LEAD_PREFIX.sub("", d))
+    line = first_prose_line(p.body)
+    own = {_norm(p.title), _norm(line), _norm(re.split(r"(?<=[.!?])\s", line, maxsplit=1)[0])} - {""}
+    if nd in own or bare in own:
+        out.append("equals the page's title or its first line")
+    elif _norm(p.title) and (nd.startswith(_norm(p.title) + ":") or bare.startswith(_norm(p.title) + ":")):
+        out.append("starts with the page's title and a colon (a title plus its first sentence)")
+    return out
+
+
 def check_schema(pages: list) -> list[dict]:
     """Front-matter schema: `type` (matching the directory), `description` (one line, capped),
     `status` (active / superseded), `superseded_by` (when superseded) and a dated `updated`."""
@@ -186,10 +254,12 @@ def check_schema(pages: list) -> list[dict]:
         if t != TYPE_OF[p.ptype]:
             bad.append(f"type is {t!r}, expected {TYPE_OF[p.ptype]!r}")
         d = p.fm.get("description", "").strip().strip("\"'")
-        if not d:
+        if "description" not in p.fm:
             bad.append("no description (one line: when to read this page)")
         elif len(d) > DESCRIPTION_MAX:
             bad.append(f"description is {len(d)} chars, over {DESCRIPTION_MAX}")
+        bad += [f"placeholder-description: {why} (write one line naming the situation in which to read the page)"
+                for why in placeholder_reasons(p)]
         st = p.fm.get("status", "").strip()
         if st not in STATUSES:
             bad.append(f"status is {st!r}, expected one of {', '.join(STATUSES)}")
@@ -200,6 +270,15 @@ def check_schema(pages: list) -> list[dict]:
         if bad:
             out.append({"page": str(p.path), "problems": bad})
     return out
+
+
+def check_upgrade_diary(pages: list) -> list[dict]:
+    """Advisory: an active page named `engine-upgrade-v<N>` narrates one upgrade, which git and the CHANGELOG hold.
+    A page with a real why, rejected option or trap is renamed for that content; the rest is deleted."""
+    return [{"page": str(p.path), "reason": "named for one engine upgrade: a diary of what git and the CHANGELOG "
+             "hold; delete it, or rename it for the why, rejected option or trap it keeps"}
+            for p in pages
+            if UPGRADE_DIARY.match(p.slug) and p.fm.get("status", "active").strip() != "superseded"]
 
 
 def build_index(pages: list) -> str:
@@ -373,6 +452,7 @@ def lint(brain_dir: Path, stale_days: int, today: date, root: Path | None = None
         "cross_layer_redundancy": cross_layer,
         "schema": check_schema(pages),
         "index": index,
+        "upgrade_diary": check_upgrade_diary(pages),
     }
 
 
@@ -385,6 +465,7 @@ def print_report(r: dict) -> None:
         ("Cross-layer redundancy", "cross_layer_redundancy"),
         ("Front-matter schema", "schema"),
         ("Generated index (cap, drift)", "index"),
+        ("Upgrade-diary pages (advisory: not part of --check)", "upgrade_diary"),
     ]
     total = 0
     for title, key in sections:

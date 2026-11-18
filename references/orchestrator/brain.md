@@ -24,6 +24,10 @@ job — a brain that sprawls with duplicates is worse than no brain. Follow the 
 - **Generated index.** `wiki/index.md` is built from page front matter: run
   `python <home>/tools/brain_lint.py <home>/brain --write-index` after a page is added, retitled or retired; never edit
   it by hand. Each page carries `type`, `description`, `status`, `updated` (`references/brain-schema.md` §3).
+- **The brain audit is an upgrade step.** `/gitos upgrade` step 4u (run by the active adoption step 4v) applies the write test to every page of an
+  old brain (grep the cited order before deleting a page; a decision made in conversation passes by definition; a
+  page named `engine-upgrade-v<N>` is deleted or renamed for its why) and step 4p has the descriptions written by
+  reading each page. Run it for a repo whose canary reports `brain-upgrade-diary` or placeholder `brain-schema` items.
 - **Lint backstop.** Run `python <home>/tools/brain_lint.py <home>/brain` at checkpoints to
   catch dup/near-dup, stale pages (age, `rests_on`, `superseded_by`), broken links, cross-layer redundancy, schema
   and index drift. Small fixes inline; large restructures → a consolidation work-order.

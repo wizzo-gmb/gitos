@@ -1,7 +1,7 @@
 # GitOS engine — CHANGELOG
 
 One entry per `VERSION` bump (the integer in `VERSION` at the repo root is the engine
-version; each bump adds exactly one entry here, newest first). An entry is its header, its `breaking:` line and one
+version; each bump adds exactly one entry here, newest first). An entry is its header, its `breaking:` line, an `audit:` line for each audit the version adds and one
 line per change naming its order (`- Owner board in every home (WO-122)`); the detail is in the order file and the release commit.
 
 **Bump rule.** `VERSION` increments by +1 on any change to engine *directives* (the
@@ -15,6 +15,20 @@ profile-facing interface, so an un-migrated repo would behave incorrectly. `brea
 additive (new directives/capabilities that don't invalidate existing ones). The `upgrade`
 flow reads these flags: an upgrade crosses a breaking boundary iff some `breaking: yes`
 version exists in the range `(min_compatible_engine, target_version]`.
+
+---
+
+## v62 — 2026-11-18
+breaking: no
+audit: brain (references/upgrade.md step 4u)
+audit: tests (scripts/audit_tests.py)
+
+- Upgrade step 4v audits the repo against what the crossed versions introduced and puts the findings on one owner-board card of proposed orders; a version that adds an audit carries an `audit:` line (WO-130)
+- `scripts/audit_tests.py` reports test files per area, those over the line limit and fixtures over 1 MB; discipline (p) sets how tests are written (WO-130)
+- Upgrade step 4p has descriptions written by reading each page and 4u audits the brain against the write test; `brain_lint` flags `placeholder-description` and advises on `engine-upgrade-v<N>` pages (WO-129)
+- An order with `pending: <what it waits on>` is marked on the board and listed once by the canary as `order-pending`; `order-ready-to-close` is withheld from it (WO-125)
+- `worktree.py reap` retries a removal git refuses over a long path with `core.longpaths` and `--force` when the worktree reads clean, removes the leftover through the extended-length prefix and prints each fallback (WO-125)
+- The canary reports a home tool copy or `board/board.py` that differs in a home at the install's version as the advisory `tool-locally-edited`, apart from the gating `tool-stale` (WO-125)
 
 ---
 

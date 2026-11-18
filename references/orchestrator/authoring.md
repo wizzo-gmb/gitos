@@ -88,6 +88,14 @@ Converse, with its own precedent: **nothing volatile goes in the brain.** `brain
 model reads a page's `updated:` as a claim about knowledge, so a page holding in-flight state goes
 stale constantly and correctly, with no remedy.
 
+## Proposed orders from an upgrade audit
+
+The active adoption step of an upgrade (`references/upgrade.md` 4v) runs each audit the crossed versions name and hands
+you findings. You turn them into proposed orders (a title, the evidence with its counts, what it would do) and put them
+on ONE owner-board card (`board.py add-decision`, group `decision`: open all, park all, open some with the choice in
+the note, decline all). No order is created before the answer; a finding is never left as a silent note. On the answer,
+write the opened orders and the parked ones (with their trigger), then close the card with the outcome.
+
 ## Out of scope
 
 - Don't push work to a production stage before its acceptance criteria pass.

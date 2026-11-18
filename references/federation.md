@@ -466,7 +466,7 @@ copy, and correcting a copy only re-arms it.
   since you upgraded* — which its `last_seen` already says better, and which running it fixes.
 - **No action compares it, and none may start.** `consult` ALLOWs and `file` sends into a sibling
   stamped older, stamped newer, or carrying no stamp at all — in both orientations, caller or
-  target. Pinned by `gate_federation_no_version_gate` in `.gitos/tools/tests/federation.py`, end to end
+  target. Pinned by `gate_federation_no_version_gate` in `.gitos/tools/tests/federation_offer.py`, end to end
   through the CLI, along with the other half: `status` still **shows** the number. *Report-only
   fails if the stamp disappears as surely as if it starts refusing.*
 - **A sibling being behind is NOT a reason to refuse.** That is INV-10 inverted — one
@@ -516,7 +516,7 @@ strictly local**: this repo's own record and own config, and nothing else on the
   arrival path the untrusted-data posture exists for. Asking to see the metadata is what
   `federation intake` is for.
 - **What each of its surfaces carries** is decided by the `CANARY-SURFACE-CONTENTS` assertion in
-  `.gitos/tools/tests/federation.py`, inside `gate_federation_intake`, which runs this checker against a
+  `.gitos/tools/tests/federation_intake/part2.py` (run by `gate_federation_intake`, `tests/federation.py`), which runs this checker against a
   hostile proposal and reads both surfaces. Read it there.
 - **Report, never fix.** The canary never writes the registry, never refreshes a heartbeat, and
   never prunes a tenant — refreshing is bootstrap's job and pruning is the operator's.
@@ -1041,7 +1041,7 @@ decision re-reads the target's own `federation.json` at act time (INV-9).
 
 None of that is a claim that no unenumerated channel exists. It is a claim about what has been
 measured, with the measurements named: the serializer (`render_payload`), the trust boundary
-(`mark_foreign_document` and the four ingest readers), and the gates in `.gitos/tools/tests/federation.py`
+(`mark_foreign_document` and the four ingest readers), and the gates in the `federation*` areas of `.gitos/tools/tests/`
 that pin them — `gate_federation_fleet_view` for per-record degradation and the generated registry
 sweep, `gate_federation_intake` for the marking pins and the surface sweep,
 `gate_federation_cross_file` for the write boundary, and

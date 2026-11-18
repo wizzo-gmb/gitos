@@ -304,7 +304,8 @@ LENS_REQUIRED = ("name", "domain", "tags", "when-to-apply", "applies-to", "sourc
 # of every lens forced a distilled lens to record FALSE provenance. Either key satisfies it;
 # a lens with NEITHER is still reported. (WO-029 class 5)
 LENS_PROVENANCE = ("imported", "authored")
-BRAIN_LINT_KEYS = ("duplicates", "stale", "broken_wikilinks", "cross_layer_redundancy", "schema", "index")
+BRAIN_LINT_KEYS = ("duplicates", "stale", "broken_wikilinks", "cross_layer_redundancy", "schema", "index", "upgrade_diary")
+BRAIN_LINT_ADVISORY = ("upgrade_diary",)
 
 
 # --------------------------------------------------------------------------- helpers
@@ -955,9 +956,12 @@ def check_brain_delegate(home: Path, stale_days: int, today: date) -> list[dict]
     for key in BRAIN_LINT_KEYS:
         found = rep.get(key, [])
         if found:
-            items.append({"kind": "brain-" + key.replace("_", "-"), "count": len(found), "items": found,
-                          "finding": f"brain_lint {key}: {len(found)} item(s) -> "
-                                     "fix inline or open a consolidation work-order"})
+            item = {"kind": "brain-" + key.replace("_", "-"), "count": len(found), "items": found,
+                    "finding": f"brain_lint {key}: {len(found)} item(s) -> "
+                               "fix inline or open a consolidation work-order"}
+            if key in BRAIN_LINT_ADVISORY:
+                item["advisory"] = True
+            items.append(item)
     return items
 
 
@@ -982,6 +986,21 @@ def check_anchor(claude_path: Path) -> list[dict]:
                       "finding": f"CLAUDE.md gitos block is missing recovery-seed token(s) "
                                  f"{missing} -> refresh the block (scaffold.py / `/gitos upgrade`)"})
     return items
+
+
+def _int_file(path: Path) -> "int | None":
+    """The integer in a one-line file (`VERSION`), or None."""
+    raw = (_read(path) or "").strip()
+    return int(raw) if raw.isdigit() else None
+
+
+def _home_stamp(home: Path) -> "int | None":
+    """The engine version the home is stamped at (`brain/.brainmeta.json` `engine_version`), or None when it has none."""
+    try:
+        v = json.loads(_read(home / "brain" / ".brainmeta.json") or "")["engine_version"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
 
 
 def check_tools(home: Path, skill_dir: Path | None) -> tuple[list[dict], str | None]:
@@ -1022,6 +1041,12 @@ def check_tools(home: Path, skill_dir: Path | None) -> tuple[list[dict], str | N
     if not home_tools.is_dir():
         return items, f"no <home>/{TOOL_HOME_DIR}/"
 
+    # A home stamped at the engine's version that still differs carries an edit, not an older copy: `upgrade` would have
+    # refreshed an older one. The stamp is the only version marker a tool copy has (WO-125). A stamp AHEAD of the install
+    # is the `stamp-ahead` state, where no marker can be trusted: that stays `tool-stale`, as it was.
+    installed, stamp = _int_file(skill_dir / "VERSION"), _home_stamp(home)
+    forked = stamp is not None and installed is not None and stamp == installed
+
     # DERIVED (see TOOL_SRC_DIR above): the engine tools this home carries copies of = the
     # names present on BOTH sides. Non-recursive *.py on purpose — __pycache__/ is not a tool.
     names = sorted({p.name for p in home_tools.glob("*.py")} &
@@ -1043,7 +1068,14 @@ def check_tools(home: Path, skill_dir: Path | None) -> tuple[list[dict], str | N
                                      f"not be read ({type(e).__name__}) -> fix permissions, then "
                                      "re-run; an unreadable tool copy cannot be verified"})
             continue
-        if not same_tool(home_bytes, skill_bytes):
+        if not same_tool(home_bytes, skill_bytes) and forked:
+            items.append({"kind": "tool-locally-edited", "advisory": True, "tool": name,
+                          "finding": f"<home>/{TOOL_HOME_DIR}/{name} differs from the installed skill's copy "
+                                     f"({TOOL_SRC_DIR}/{name}) and the home is stamped at engine v{stamp}, so it is a "
+                                     f"local edit, not an older copy -> `/gitos upgrade` replaces it with the engine's "
+                                     f"(the prior bytes stay in git): re-apply the edit after an upgrade, or move it "
+                                     f"out of the engine's tool"})
+        elif not same_tool(home_bytes, skill_bytes):
             items.append({"kind": "tool-stale", "tool": name,
                           "finding": f"<home>/{TOOL_HOME_DIR}/{name} differs in content from the "
                                      f"installed skill's copy ({TOOL_SRC_DIR}/{name}) -> run "
@@ -2406,10 +2438,19 @@ def _slice_age_days(home: Path, path: Path, today: date) -> "int | None":
     return (today - datetime.fromtimestamp(int(out), timezone.utc).date()).days
 
 
+def _pending_text(meta: dict) -> str:
+    """The order's `pending:` front-matter value as one line ("" when absent); read here so an older ledger_index copy works."""
+    v = meta.get("pending")
+    if isinstance(v, list):
+        v = ", ".join(v)
+    return " ".join(str(v or "").split())
+
+
 def check_slices(home: Path, skill_dir: "Path | None", today: "date | None" = None) -> list[dict]:
     """The folder orders' slices (WO-110). Gating: `slice-landed-no-commit` (a landed slice with an empty `commit:`),
     `slice-depends-dangling` (a `depends_on` naming no slice), `slice-depends-cycle`. Advisory: `order-ready-to-close` (an
-    open order whose slices are all landed or dropped), `slice-stale` (in-progress, no commit touching the file for
+    open order whose slices are all landed or dropped and that does not wait on `pending:`), `order-pending` (an open order whose front
+    matter says `pending: <what it waits on>`, listed once with the text; WO-125), `slice-stale` (in-progress, no commit touching the file for
     SLICE_STALE_DAYS), `order-oversized` and `slice-oversized` (order.md or a slice over its per-file limit), `order-split-advice` (an open
     order with SPLIT_ADVICE_SLICES or more slices). Read-only; nothing to check without ledger_index.py."""
     today = today or date.today()
@@ -2472,12 +2513,22 @@ def check_slices(home: Path, skill_dir: "Path | None", today: "date | None" = No
     for sid in sorted(slices):
         if sid not in state:
             walk(sid, [])
+    pending: dict[str, str] = {}
+    for nnn, f in li._orders(home / "work-orders"):
+        meta = li.parse_front_matter(_read(f) or "")[0]
+        text = _pending_text(meta)
+        if text and not li.is_parked(meta):
+            pending[nnn] = text
+            items.append({"kind": "order-pending", "advisory": True, "wo": f"WO-{nnn}",
+                          "file": f.relative_to(home).as_posix(), "pending": text,
+                          "finding": f"WO-{nnn} is waiting on: {text} -> remove `pending:` from its front matter when "
+                                     "that lands (until then it is not advised as closable)"})
     for nnn, folder, resolved in orders:
         if resolved:
             continue
         mine = {k: v for k, v in slices.items() if v["nnn"] == nnn}
         rel = (folder / ORDER_FILE).relative_to(home).as_posix()
-        if mine and all(v["status"] in ("landed", "dropped") for v in mine.values()):
+        if mine and not pending.get(nnn) and all(v["status"] in ("landed", "dropped") for v in mine.values()):
             items.append({"kind": "order-ready-to-close", "advisory": True, "wo": f"WO-{nnn}", "file": rel,
                           "finding": f"WO-{nnn}: every slice is landed or dropped and the order is still open -> "
                                      "close it (adjudicate, move it to resolved/)"})
@@ -2691,6 +2742,30 @@ BOARD_DIRNAME = "board"
 BOARD_FILES = ("board.py", "board.json")
 BOARD_CLAUDE_TOKEN = "board/board.py ensure"
 BOARD_RESUME_RE = re.compile(r"(?m)^##\s+Owner board\b")
+
+
+def check_board_copy(home: Path, skill_dir: "Path | None") -> list[dict]:
+    """`board/board.py` against the engine's (`<skill>/assets/board/board.py`). Advisory `tool-locally-edited` when it
+    differs and its `BOARD_VERSION` is not older than the engine's (an older one is `upgrade`'s refresh, and says nothing
+    here). Nothing is reported when either file cannot be read (WO-125)."""
+    if skill_dir is None:
+        return []
+    have_p, src_p = home / BOARD_DIRNAME / "board.py", skill_dir / "assets" / "board" / "board.py"
+    try:
+        have, src = have_p.read_bytes(), src_p.read_bytes()
+    except OSError:
+        return []
+    if same_tool(have, src):
+        return []
+    pat = re.compile(rb"(?m)^BOARD_VERSION = (\d+)\s*$")
+    mh, ms = pat.search(have), pat.search(src)
+    if not mh or not ms or int(mh.group(1)) < int(ms.group(1)):
+        return []
+    return [{"kind": "tool-locally-edited", "advisory": True, "tool": f"{BOARD_DIRNAME}/board.py",
+             "finding": f"<home>/{BOARD_DIRNAME}/board.py differs from the engine's copy at the same or a later "
+                        f"BOARD_VERSION ({int(mh.group(1))}), so it is a local edit that forked from BOARD_VERSION "
+                        f"{int(mh.group(1))} -> `scaffold.py` leaves it as it is, and a later engine BOARD_VERSION "
+                        f"replaces it: re-apply the edit after that upgrade"}]
 
 
 def check_board(home: Path) -> tuple[list[dict], bool]:
@@ -2919,7 +2994,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,
     # owner board: optional, absent for a home that has neither the board nor a pointer to one.
     b_items, b_applicable = check_board(home)
     if b_applicable:
-        r["board"] = b_items
+        r["board"] = b_items + check_board_copy(home, skill_dir)
         checked.add("board")
 
     active = CATEGORIES + tuple(k for k in OPTIONAL_CATEGORIES if k in r)

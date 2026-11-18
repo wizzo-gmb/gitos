@@ -23,6 +23,7 @@ For each: what the rule is, the failure it prevents, where it tends to bite hard
 | (m) | Evidence-or-name-the-gap | Ship one field short with the gap named; never fill it with something plausible. |
 | (n) | A-rule-needs-a-mechanism | A rule with no enforcement where it must hold is a wish. |
 | (o) | Finish-what-you-find | Fix what you find within the order's scope; defer only what is out of it; drop nothing. |
+| (p) | Tests-are-written-to-be-run | Tests live by area, stay small and isolated, check behaviour not wording; iterate narrow, run the whole suite once. |
 
 ---
 
@@ -247,3 +248,19 @@ A disproof records the conditions it was tested under (data, versions, environme
 **Software instance:** Several one-line fixes found during an engine change were each written down as follow-ups, and each cost a full dispatch, review and release cycle of its own, longer than the fix.
 
 **Quant instance:** A backtest run exposes a mislabelled column in the data loader it already reads. Fixing the label in the same change and adding it to the run's checks costs minutes; filing it means the next study runs on the same mislabel.
+
+---
+
+## (p) Tests-are-written-to-be-run
+
+**The rule:** A test is written to be run, by an agent, often, in a narrow selection. Tests live by area; a test file past the line limit (1,500 lines by default) is split by area or concern; tests are isolated (their own temp directories, no fixed ports, no shared process state) so areas can run in parallel; a test checks behaviour, not wording (a must-keep prose rule gets a presence tag, never a phrase match); every check can go red (h); while working, run the one area or file the change touches, and run the whole suite once at the end. <!-- rule:discipline-tests -->
+
+**The failure it prevents:** A suite that cannot be run narrowly is run whole after every edit, so each change costs the full wall time, an agent reads thousands of lines to change ten, and the suite is run less often than it should be. Tests that share a port or a directory fail in parallel for no reason, and tests that match a phrase fail on a harmless rewording while the behaviour they guard breaks unnoticed.
+
+**Where it bites:** One test file per subsystem that keeps growing, a fixture that is a copy of production data, a shared output directory, a hand-picked port, an assertion on a log line or a sentence of prose.
+
+**How to apply it:** New tests go in the area they belong to. A file over the limit is split when it is next touched, by area or concern, with the shared helpers moved to one module. A fixture is as small as the case allows and is built by the test where it can be. A test creates what it needs under its own temporary directory and removes it. A rule a document must keep is pinned by a tag on its paragraph that the check requires to be present, so rewording stays free and removal turns the check red. `scripts/audit_tests.py <repo-root>` reports the files over the limit and the fixtures over 1 MB per area; the upgrade runs it (`references/upgrade.md`, the active adoption step).
+
+**Software instance:** An engine's one self-test file grew to tens of thousands of lines of gates, and every edit meant running all of them. Split per area, with an area selection and one whole run at the end, an edit is checked in seconds and the whole suite runs once per order.
+
+**Quant instance:** A backtest harness's tests wrote to one shared results directory and one fixed local port, so they could only run one after another, and a test that matched the sentence a report printed passed after the number in that sentence had gone wrong. Giving each test its own temporary directory and an ephemeral port, and asserting the number, let them run in parallel and made the failure real.

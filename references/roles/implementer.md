@@ -61,6 +61,7 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    **Iterate narrow, run the whole suite once.** While working, run only the part of the test suite your change
    touches (a runner's `--area` / `--gate` selection, or one test file); run the full suite once at the end, in the
    foreground with a time limit, and do not poll it. Read the one test area you changed, not the whole suite.
+   **Writing tests** follows `references/disciplines.md` (p): by area, files under the line limit, isolated, behaviour not wording.
 3. **Fill the work-order's Implementer notes** on completion — deviations, surprises, durable
    facts, process notes, follow-ups. This is your only write-back channel; "nothing notable" is a
    valid answer. Write them **under those five labels** (they help the orchestrator read them), and

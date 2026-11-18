@@ -69,7 +69,8 @@ rests_on: [path/or/commit, ...]                # optional: what the page depends
 ---
 ```
 
-- `description` is what the generated index shows. Write it as "read this when ...", concrete, not a title.
+- `description` is what the generated index shows. Write it as "read this when ...", concrete, not a title, by
+  reading the page; never derive it from the page's first line (the lint reports `placeholder-description`).
 - `updated` is when the page was last changed or checked. For a decision it is the date the decision was made.
 - `rests_on` lists repo-root-relative paths (a path may carry `#anchor`) or commit hashes the page depends on. The lint
   reports one that no longer exists, which is the signal that the page may be wrong.
@@ -143,5 +144,11 @@ Without a mode flag it only reports. Classes:
 - **broken wikilinks** — `[[targets]]` with no matching page.
 - **cross-layer redundancy** — a page naming two or more different work-order ids in prose (a markdown link to an
   order is a pointer and is not counted), or whose body is mostly a fenced code block.
-- **schema** — missing or invalid `type`, `description`, `status`, `superseded_by`, `updated`.
+- **schema** — missing or invalid `type`, `description`, `status`, `superseded_by`, `updated`; and a
+  `placeholder-description`: a description that is empty, ends in `:`, has an unbalanced bracket or quote (a cut
+  line), opens `Read this when you need <title>:`, or equals the page's title or first line. The lint can only see
+  the shapes a script leaves; whether a description says when to read the page is judged by reading the page.
 - **index** — `wiki/index.md` over its cap, or not equal to the generated index.
+- **upgrade_diary** — advisory, not part of `--check`: an active page named `engine-upgrade-v<N>`. Such a page narrates
+  one upgrade, which git and the CHANGELOG hold; it is deleted, or renamed for the why, rejected option or trap it
+  keeps (upgrade step 4u).

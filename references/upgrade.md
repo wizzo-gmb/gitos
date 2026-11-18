@@ -168,6 +168,11 @@ Direct the running orchestrator to:
   observes it cannot disagree about what a changed tool is. Byte-identity is `sync_to_live`'s
   contract, because a mirror's job is exact bytes; it was never this one's.
 
+  *Stale or edited.* In a home stamped at the install's version a copy that still differs is a local edit, not an older copy:
+  the canary reports it as the advisory `tool-locally-edited` (naming the file and the version it forked from), and the
+  gating `tool-stale` stays for an older, unstamped or ahead-stamped home. `board/board.py` is judged the same way by its
+  `BOARD_VERSION`. The replacement above still applies; the notice is so an edit is re-applied after an upgrade, not lost.
+
   **Never silently skip; never silently overwrite** — the two are the same failure wearing
   different clothes. The rule this replaced copied a tool only when it was *absent*, which made
   an upgrade whose entire value was a `canary.py` fix a **no-op for exactly the repos that had
@@ -339,13 +344,14 @@ orchestrator's merge review is the backstop. Then run the canary: a single-file 
 section is a `order-needs-folder` finding; `slice.py add WO-NNN NAME <home>` converts it with `git mv`.
 Claude Code only, and `disableAllHooks` switches it off.
 
-**4p. Follow-ups on orders.**
+**4t. Follow-ups on orders.**
 An order takes no `## Carried loose ends` boxes any more (v57). `drain accept ID --work-order NNN --slice NAME` writes
 a `proposed` slice with `origin:` set to the items (a single-file order becomes a folder); without `--slice` the
 order must already name the items (`origin: L3, L5`). No order has a whole-order size limit. A folder order has
 per-file limits (200 lines for `order.md`, 150 for a slice; `order.md` over its limit refuses new slices). The canary
 gates `slice-landed-no-commit` and a dangling or cyclic `depends_on`, and reports `order-ready-to-close`,
-`slice-stale`, `order-oversized` and `slice-oversized` and split advice at eight slices; it reads `ledger_index.py`
+`slice-stale`, `order-oversized` and `slice-oversized` and split advice at eight slices (`order-ready-to-close` is withheld from an
+order whose front matter says `pending: <what it waits on>`, which the canary lists once as `order-pending`); it reads `ledger_index.py`
 from beside itself, the home `tools/` or `<SKILL_DIR>/scripts/`.
 
 **4m, the not-now lines (v57; parked orders v58).**
@@ -378,9 +384,38 @@ The canary's `board` category reports a pointer with no board (`board-missing`) 
 (`board-pointer-missing`). The Artifact owner board is retired: if RESUME still names one under `## Waiting on whom`,
 remove that line.
 
+**4v. Active adoption: audit the repo against what the new versions introduced (v62; before 4q).**
+An upgrade does not end at new files. A version that adds a rule names how the repo is held to it, and the repo is
+audited in this upgrade, never left for "the operator's separate audit". Run it before step 5 stamps the version,
+after the data migrations and the home tools, and skip it when step 3 found the repo current.
+1. **Find the audits.** Read the `CHANGELOG.md` entries of every version above the repo's stamped version up to the
+   target (a `## Unreleased` block counts as the next version). A version that adds an audit carries one line in its
+   entry under the `breaking:` line, `audit: <name> (<where its procedure is>)`. Collect them all and run each; a repo upgrading across several
+   versions runs every audit of every version it crosses, once.
+2. **v62's audits are two.** `audit: brain (references/upgrade.md step 4u)` and `audit: tests (scripts/audit_tests.py)`.
+   - *Brain.* Run 4p and then 4u on the repo's brain, for **every** repo whose range holds the line, a repo already
+     stamped v61 included (one whose v61 upgrade ran 4p, or ran nothing of the audit, gets 4u now, not by hand
+     later). 4u acts inside the upgrade; what it leaves over (the pages it listed as unsure, a brain too large to
+     finish in one session) is a finding.
+   - *Tests.* Run `python <SKILL_DIR>/scripts/audit_tests.py <repo-root>` (read-only; it runs and times no test) and
+     put its output in the report. A repo with other test conventions lists them in `<home>/test-audit.json`
+     (the script's header says how). Output saying that no test file was found is not a clean result: ask which
+     conventions the repo uses. The suite's wall time is not measured: ask the operator for it if it is not known.
+     Each area with files over the limit is one finding (split them by area or concern); fixtures over 1 MB are
+     one finding (slim them, or keep a named one that needs its size).
+3. **One card, never silence.** Turn the findings into proposed work-orders (a title, the evidence with its counts,
+   what the order would do) and put them on ONE owner-board card, group `decision`:
+   `python <home>/board/board.py add-decision "<N> orders proposed by the v<target> audits" "<one numbered line per
+   proposed order>" open_all="Open all as orders" park_all="Park them all" pick="Open some (say which in the note)"
+   decline_all="Decline all" --group decision`. A decision card has one set of options, so the choice per order goes
+   in the note. Nothing is created before the answer. Record the answer in the ledger before acting (the opened ones
+   are written as orders by `orchestrator/authoring.md`; the parked ones as parked orders with their trigger), then
+   close the card with the outcome. No finding: no card, and the report says what each audit looked at and found.
+   An audit that could not run is reported as that (discipline (i)), never as "nothing found".
+
 **4q. The one offer round.**
-Run `python <SKILL_DIR>/scripts/offer.py <repo-root>` **last in step 4**, after the data migrations and the home
-tools, so every question is computed against the repo as upgraded. It asks each subsystem's own check which
+Run `python <SKILL_DIR>/scripts/offer.py <repo-root>` **last in step 4**, after the data migrations, the home
+tools and the audits of 4v, so every question is computed against the repo as upgraded. It asks each subsystem's own check which
 opt-in is still unanswered (model optimization has no recorded preference; lenses have no `lenses.json` and a lens
 exists; System One has no repo choice in `<home>/system-one.json` and a machine config exists or
 `system_one.py setup --detect` prints a line; federation has something to offer;
@@ -408,18 +443,51 @@ files), and propose to the operator a smaller set: follow-up and "part 2" orders
 that owns that scope (or one order per scope); items already fixed closed with the commit named; everything left
 given an explicit finish order. Report `N open before -> M after`. Nothing changes without the operator's word.
 
-**4p. The brain: front matter, the generated index, no log (v61).**
+**4p. The brain: front matter, written descriptions, the generated index, no log (v61).**
 Skip when the repo has no `<home>/brain/`. The brain's front matter is the source of truth and `wiki/index.md` is
 generated from it (`references/brain-schema.md` §3-4). Run the home copy of `brain_lint.py` on `<home>/brain`: a page
 without `type`, `description`, `status` and a dated `updated` is reported under `schema`. For each such page add the
-front matter with `type` from its directory, `status: active`, `updated` kept from the page's own date, and a
-`description` taken from the page's first line and shortened to one "read this when ..." line of at most 140
-characters (a decision page is a record: keep its `decided` date as `updated`; a hand-written `maps_to` becomes
-`rests_on`). Then run `brain_lint.py <home>/brain --write-index` to generate the index (it replaces the hand-kept one;
-over 200 lines / 8 KB is an error that names the longest descriptions), and delete `wiki/log.md` (git keeps it:
-`git log -- <home>/brain`). This step adds front matter and nothing else; judging which pages to cut or delete is
-the operator's separate audit against the write test (`brain-schema.md` §1). Commit it in the repo's own commit, then
-run `brain_lint.py <home>/brain --check`.
+front matter with `type` from its directory, `status: active`, `updated` kept from the page's own date (a decision page
+is a record: keep its `decided` date as `updated`; a hand-written `maps_to` becomes `rests_on`), and a `description`
+that **you write by reading the page**: one line of at most 140 characters naming the situation in which to read it
+("Read this when changing X: it keeps why Y was rejected"). A description is never derived by a script, and never the
+page's title, its first line or a shortened first sentence: an index of those lines does not say when to read anything.
+The lint reports `placeholder-description` for an empty description, one that ends in `:`, one with an unbalanced
+bracket or quote (a cut line), one that opens `Read this when you need <title>:`, and one equal to the page's title or
+first line; rewrite each one it names from the page. A repo that already took this step with placeholder lines gets
+the same rewrite from 4v, which runs 4p and 4u for a repo stamped v61 whose canary reports `brain-schema` items or
+`brain-upgrade-diary`. Then run `brain_lint.py <home>/brain --write-index` to generate the index (it replaces the
+hand-kept one; over 200 lines / 8 KB is an error that names the longest descriptions) and delete `wiki/log.md` (git
+keeps it: `git log -- <home>/brain`). Do not commit yet: step 4u audits the pages, then commits once.
+
+**4u. The brain audit against the write test (v62's `audit: brain`, run by 4v; part of the upgrade, not the operator's chore).**
+Skip when there is no brain. An old brain is mostly pages that restate an order, the code or the git log; the write
+test (`brain-schema.md` §1) is applied to every page now, while the upgrade is open. List the pages and `wiki/` size
+first. A brain of about fifteen pages is read by you; a larger one is split by directory (about ten to fifteen pages a
+helper, the judgement a mid-tier model, never the cheapest) under one written brief that carries the rules below, and
+each helper returns one line per page: its verdict and the reason. Per page the verdict is **keep** (passes as
+written), **cut** (rewrite to only the content that passes; keep a decision's `updated` as its decision date),
+**delete** (nothing passes) or **unsure** (kept as is and listed for the operator, never deleted on a guess). What
+passes: the reason a design won over what was rejected and why each option lost, a trap a later change would walk into,
+a convention no single file shows, a standing rule of the operator. What fails: what was built (the code says), the
+history of events (git says), an order's own adjudication, a catalog of files or tools, a restatement of a reference doc.
+A page named `engine-upgrade-v<N>` narrates one upgrade, which git and the CHANGELOG hold: delete it unless it holds a
+why, a rejected option or a trap that git and an order do not, and then cut it to that and rename it for that content.
+
+Two rules before a deletion:
+1. **Grep the order or orders a page cites for its why, its rejected options and its traps before deleting it.** Take
+   the page's key terms (each rejected option, each trap) and `grep` them in the cited order file. Where the order
+   lacks them the page is **cut** to that content, not deleted: an earlier audit that trusted "the order covers it"
+   deleted rejected options no order held and had to restore them.
+2. **A decision the operator made in conversation and recorded nowhere else** (a standing rule, a product direction,
+   a strategy model) passes the test by definition, because git and the orders do not hold it. Cut its narration and
+   keep the decision and its reasons.
+
+Then run `brain_lint.py <home>/brain --write-index` again (the index is generated from what is left) and
+`brain_lint.py <home>/brain --check`; the lint must report no `placeholder-description` and no `upgrade-diary` page
+except one the audit kept as unsure, which is named in the report. Commit the brain in the repo's own commit, together
+with 4p. Report the pages kept, cut, deleted and unsure (the unsure ones by name, with the reason), and the size of
+`wiki/` before and after in bytes. Nothing is asked of the operator beyond the unsure list.
 
 **5. Stamp the new version.**
 Write the skill's `ENGINE_VERSION` back as the repo's `engine_version`:

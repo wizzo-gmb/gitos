@@ -83,6 +83,15 @@ When you delegate implementation to agents:
 - Parallel agents touch **disjoint files** — different sections of one file is not
   safe; pin them to non-overlapping files.
 - When a work-order lists Options, **pin** which one each agent uses.
+- **Match the model to the part of the job.** Security- or consent-critical code (a gate, a permission or consent
+  path, anything that decides what may run or be sent) goes to the stronger model, because a defect there is silent
+  and costs more than the run; wiring, docs and moving tests go to the cheaper one; a mechanical pass (renaming,
+  regenerating, a find-and-replace across files) goes to the cheapest. Split one order across tiers rather than
+  running all of it on the strongest (the ceiling in `references/model-optimization.md` still binds when it is enabled).
+- **A revision of a large-history agent starts a fresh agent.** When the agent that landed an order has a large
+  history and the revision is small, brief a new agent on the order, its Revisions section and the diff instead of
+  resuming the old one: the old history is re-read at every turn and the revision pays for it, while the order and
+  the diff already hold everything the revision needs.
 - **Background work has a time limit and an end.** Tell each implementer that every background command
   gets a time limit and a known log, and that it stops what it started before handing back.
 - **Require the notes-back.** Tell each implementer to fill the work-order's **Implementer

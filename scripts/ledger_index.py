@@ -21,6 +21,9 @@ the part `form`. An INDEX with no marker is not touched: the tool prints one lin
     the H1 (`# WO-NNN - Title`) and the first word of `## Severity`; evidence then reads an em dash. The evidence
     cell is cut at EVIDENCE_MAX characters (the order file holds it whole). Sorted by severity (critical, high,
     medium, low, unconfirmed), then number.
+  * An open order may carry `pending: <what it waits on>` (a live proof, a run; WO-125): the Open row marks the title
+    `[pending: <what>]`, the canary lists it as `order-pending` and does not advise closing it. The orchestrator removes
+    the key when the wait is over.
   * Parked rows come from the parked orders (WO-116): an order file in `work-orders/` whose front matter says
     `status: parked` and `trigger: <restart trigger>`, as `| NNN | Title | trigger | evidence |`, by number.
     Nobody types a row here.
@@ -100,6 +103,17 @@ def _info(path: Path) -> dict:
             "evidence": meta.get("evidence") or EM_DASH}
 
 
+PENDING_MAX = 40            # characters of the pending text in a title cell
+
+
+def pending_text(meta: dict) -> str:
+    """What an order waits on (`pending:` in its front matter), one line; "" when it has none."""
+    v = meta.get("pending")
+    if isinstance(v, list):
+        v = ", ".join(v)
+    return " ".join(str(v or "").split())
+
+
 def _orders(d: Path) -> list[tuple[str, Path]]:
     out = []
     if d.is_dir():
@@ -132,7 +146,9 @@ def open_rows(home: Path) -> list[str]:
             continue
         sev = i["severity"]
         rank = SEVERITY_ORDER.index(sev) if sev in SEVERITY_ORDER else len(SEVERITY_ORDER)
-        rows.append((rank, nnn, f"| {nnn} | {sev} | {i['title']} | {_short(i['evidence'])} |"))
+        pend = pending_text(i["meta"])
+        title = i["title"] + (f" [pending: {_short(pend.replace('|', '/'), PENDING_MAX)}]" if pend else "")
+        rows.append((rank, nnn, f"| {nnn} | {sev} | {title} | {_short(i['evidence'])} |"))
     return [r[2] for r in sorted(rows, key=lambda r: (r[0], r[1]))]
 
 

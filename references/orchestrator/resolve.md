@@ -86,6 +86,7 @@ Read this when a landing is verified and you adjudicate its notes (work-loop ste
    leaves the board at that regeneration and nothing is copied anywhere. The order file in `resolved/` is the record,
    `ls work-orders/resolved` the list and `git log` the timeline; a landing's footprint is `git show --name-only <sha>`,
    so there is no footprint log to write. The canary's `index-drift` check gates a board that differs from the files.
+   An order held open for a live proof carries `pending: <what>` in its front matter; remove it when the proof lands.
    **Sort each `### Durable facts` item** (judgment, one sentence in the adjudication): a code comment where the fact
    lives (most), the tool's reference doc, a brain page only if it passes the write test, or nowhere.
    Write a decision page on a non-trivial choice only when the order does not already record the why,

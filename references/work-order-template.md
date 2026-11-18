@@ -19,6 +19,12 @@ whose front matter adds `status: parked` and `trigger: <restart trigger>` (and `
 (`parked-no-trigger`), and `loose_ends.py status` lists one whose trigger names a resolved order or a passed date.
 When the trigger fires, remove `status: parked` and write its Proposed fix scope.
 
+**A pending work-order** is an open order held for a wait that is not work: a live proof, a run. Its front matter (a
+single file, or a folder's `order.md`) adds `pending: <what it waits on>`. The board marks the title
+`[pending: <what>]`; the canary lists it once as the advisory `order-pending` with the text and does not advise
+`order-ready-to-close` for it. `order-split-advice` and `slice-oversized` stay: they are about the order's shape. The
+orchestrator removes the key when the wait is over, then closes the order.
+
 Legacy homes carry the same file as `outputs/debug/bug_<NNN>_<slug>.md`; that path still reads
 correctly and needs no retrofit. New work-orders use the `<home>/work-orders/` convention above.
 
