@@ -376,6 +376,44 @@ def locate(payload):
 ORCHESTRATOR_MARKER_RE = re.compile(r"\[gitos[^A-Za-z0-9\]]{1,8}orchestrator\b", re.IGNORECASE)
 
 
+SLICE_STATUS_RE = re.compile(r"^status:\s*([A-Za-z-]+)", re.MULTILINE)
+CLOSED_STATUSES = ("landed", "dropped")
+
+
+def order_has_open_slice(home, order):
+    """True when the folder order directory name `order` under work-orders/ has a slice not landed or dropped.
+    An unreadable slice counts as open."""
+    sdir = Path(home) / "work-orders" / order / "slices"
+    if not sdir.is_dir():
+        return False
+    for f in sdir.glob("*.md"):
+        try:
+            head = f.read_text(encoding="utf-8", errors="replace")[:600]
+        except OSError:
+            return True
+        m = SLICE_STATUS_RE.search(head)
+        if m is None or m.group(1).lower() not in CLOSED_STATUSES:
+            return True
+    return False
+
+
+def has_open_slice(home, rel):
+    """True when `rel` (a path under the home) sits inside a folder order that has an open slice, or sits outside
+    every order (INDEX.md, a state file) while some open folder order (not resolved/) has one. A path in resolved/
+    is not open."""
+    parts = Path(rel).parts
+    if len(parts) >= 3 and parts[0] == "work-orders":
+        if parts[1] == "resolved":
+            return False
+        if parts[1].startswith("WO-"):
+            return order_has_open_slice(home, parts[1])
+    wdir = Path(home) / "work-orders"
+    if not wdir.is_dir():
+        return False
+    return any(d.is_dir() and d.name.startswith("WO-") and order_has_open_slice(home, d.name)
+               for d in wdir.iterdir())
+
+
 def stop_state(home, canary):
     """The unresolved-state findings for a home. -> (state key, instruction) or None. Four sources: an order landed
     and still open, RESUME.md behind the ledger, notes waiting for adjudication, a reapable worktree."""
@@ -387,7 +425,10 @@ def stop_state(home, canary):
     if stale is not None:
         keys.append(f"stale:{stale['newer']}@{stale.get('newer_mtime', 0)}")
         asks.append(f"RESUME.md is older than {stale['newer']}")
-    resolve_asks = list(asks)
+    # RESUME behind a ledger file of an order that still has an open slice is only a stale resume: the order is
+    # not ready to resolve, so the resolution text is for the landed orders and the closed-slice case.
+    stale_open = stale is not None and has_open_slice(home, stale["newer"])
+    resolve_asks = [a for a in asks if not (stale_open and a.startswith("RESUME.md is older"))]
     # An implementer's report that landed: Implementer notes filled, no adjudication yet (the canary's own test).
     # An advisory line only; a check that cannot look says nothing.
     try:
@@ -413,6 +454,9 @@ def stop_state(home, canary):
     if resolve_asks:
         tail.append("finish the resolution now: move the order to work-orders/resolved/, update its "
                     "INDEX row, replace RESUME.md wholesale, then run canary.py")
+    if stale_open:
+        tail.append("RESUME.md is out of date: refresh it (replace it wholesale); the order has an open slice, "
+                    "so do not resolve it yet")
     if waiting:
         tail.append("adjudicate each note point now, in this turn (ACCEPT, DEFER or REJECT, then route it)")
     if reap:

@@ -1897,23 +1897,33 @@ def _git(root: Path, *args) -> "str | None":
     return p.stdout if p.returncode == 0 else None
 
 
-def _default_range(root: Path, nnn: str) -> "str | None":
-    """The merge-base with the current branch to `wo-NNN`; when on `wo-NNN`, to HEAD from the
-    merge-base with main or master."""
-    branch = f"wo-{nnn}"
+def _default_range(root: Path, nnn: str, slice_id: "str | None" = None) -> "list[str]":
+    """The ranges to digest, a list (empty = none found). The order's branches are `wo-NNN` and its slice
+    branches `wo-NNN-sN` (all of them, or only `slice_id`'s when given). On one of them: to HEAD from the
+    merge-base with main or master. Elsewhere: merge-base with HEAD to each of the order's branches."""
+    import re
     cur = (_git(root, "rev-parse", "--abbrev-ref", "HEAD") or "").strip()
-    has = _git(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}") is not None
-    if has and cur != branch:
-        base = (_git(root, "merge-base", "HEAD", branch) or "").strip()
-        return f"{base}..{branch}" if base else None
+    refs = (_git(root, "for-each-ref", "--format=%(refname:short)", f"refs/heads/wo-{nnn}",
+                 f"refs/heads/wo-{nnn}-*") or "").split()
+    pat = re.compile(rf"wo-{re.escape(nnn)}(-s\d+)?$", re.I)
+    branches = [r for r in refs if pat.match(r)]
+    if slice_id:
+        branches = [r for r in branches if r.lower() == f"wo-{nnn}-{slice_id}".lower()]
+    if branches and cur not in branches:
+        out = []
+        for br in branches:
+            base = (_git(root, "merge-base", "HEAD", br) or "").strip()
+            if base:
+                out.append(f"{base}..{br}")
+        return out
     for trunk in ("main", "master"):
         if trunk != cur and _git(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{trunk}") is not None:
             base = (_git(root, "merge-base", "HEAD", trunk) or "").strip()
-            return f"{base}..HEAD" if base else None
-    return None
+            return [f"{base}..HEAD"] if base else []
+    return []
 
 
-def scope_check(home, wo: str, rng: "str | None" = None) -> dict:
+def scope_check(home, wo: str, rng: "str | None" = None, slice_id: "str | None" = None) -> dict:
     """A code rule on the paths a work-order's scope names: a changed file the scope's Not in scope names
     is `forbidden`, one no scope path names is `outside-scope`. No model; writes nothing."""
     home = Path(home)
@@ -1929,13 +1939,17 @@ def scope_check(home, wo: str, rng: "str | None" = None) -> dict:
             forbidden += f
         forbidden = [x for x in dict.fromkeys(forbidden) if x not in inside]
     root = Path((_git(home, "rev-parse", "--show-toplevel") or str(home.parent)).strip())
-    rng = rng or _default_range(root, nnn)
-    if not rng:
-        raise ValueError(f"no range for WO-{nnn}: no branch wo-{nnn} and no main/master; pass --range A..B")
-    names = _git(root, "diff", "--no-renames", "--name-only", rng)
-    if names is None:
-        raise ValueError(f"git diff {rng} failed under {root}")
-    files = [x for x in names.splitlines() if x.strip()]
+    ranges = [rng] if rng else _default_range(root, nnn, slice_id)
+    if not ranges:
+        raise ValueError(f"no range for WO-{nnn}: no branch wo-{nnn} or wo-{nnn}-sN and no main/master; "
+                         "pass --range A..B")
+    files = []
+    for one in ranges:
+        names = _git(root, "diff", "--no-renames", "--name-only", one)
+        if names is None:
+            raise ValueError(f"git diff {one} failed under {root}")
+        files += [x for x in names.splitlines() if x.strip() and x.strip() not in files]
+    rng = ", ".join(ranges)
     try:
         own = home.resolve().relative_to(root.resolve()).as_posix() + f"/work-orders/WO-{nnn}-*.md"
     except ValueError:
@@ -1962,7 +1976,7 @@ def format_scope(d: dict) -> str:
 def _scope_cli(args) -> int:
     home = _resolve_home(args.home)
     try:
-        d = scope_check(home, args.wo, args.range)
+        d = scope_check(home, args.wo, args.range, getattr(args, "slice", None))
     except (OSError, ValueError) as e:
         print(f"scope: {e}", file=sys.stderr)
         return 2
@@ -2680,7 +2694,8 @@ def main(argv: "list | None" = None) -> int:
     sc = sub.add_parser("scope", help="advisory scope check of a work-order's diff (writes nothing)")
     sc.add_argument("home", help="the home directory (or the repo root that holds it)")
     sc.add_argument("wo", help="a work-order number")
-    sc.add_argument("--range", help="A..B (default: merge-base to the branch wo-NNN)")
+    sc.add_argument("--range", help="A..B (default: merge-base to the branch wo-NNN and its slice branches wo-NNN-sN)")
+    sc.add_argument("--slice", help="SN: only that slice's branch wo-NNN-sN (default: the order and all its slices)")
     sc.add_argument("--json", action="store_true")
     given = sys.argv[1:] if argv is None else list(argv)
     if given and not given[0].startswith("-") and given[0] not in sub.choices:

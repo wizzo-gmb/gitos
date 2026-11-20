@@ -2590,6 +2590,10 @@ def _header_fault(path: Path, code: str, got: object = _UNSET, key: "str | None"
 # because the state is READ BACK from an archive - possibly one this engine did not write - and
 # printed to the SENDER when a settled finding is re-filed.
 DISPOSITION_STATES = ("accepted", "declined")
+# The two words a SENDER can mark its OWN earlier proposal with (`file --supersedes` / `--withdraw`).
+# They live in the same `disposition` slot but are not the receiver's verdict: the proposal stays
+# in `intake/` where it landed, and the listing reports it as marked instead of as live.
+MARK_STATES = ("superseded", "withdrawn")
 
 
 def _sanitize_disposition(value: object) -> "dict | None":
@@ -2610,10 +2614,13 @@ def _sanitize_disposition(value: object) -> "dict | None":
     if not isinstance(value, dict):
         return None
     state = value.get("state")
-    out = {"state": state if state in DISPOSITION_STATES else "settled"}
+    out = {"state": state if state in DISPOSITION_STATES + MARK_STATES else "settled"}
     for field in ("at", "note", "native_work_order"):
         raw = value.get(field)
         out[field] = None if raw is None else sanitize_title(raw)
+    # The replacing proposal's id: a 32-hex token or nothing, so it is arithmetic, not prose.
+    by = value.get("superseded_by")
+    out["superseded_by"] = by if valid_proposal_id(by) else None
     return out
 
 
@@ -2776,7 +2783,10 @@ def mark_proposal_header(meta: dict) -> dict:
                               "at": mark_foreign_document(disp.get("at")),
                               "note": mark_foreign_document(disp.get("note")),
                               "native_work_order": mark_foreign_document(
-                                  disp.get("native_work_order"))}
+                                  disp.get("native_work_order")),
+                              # `_sanitize_disposition` made it 32 hex or None: ours.
+                              "superseded_by": (None if disp.get("superseded_by") is None
+                                                else Engine(disp["superseded_by"]))}
     return out
 
 
@@ -2890,6 +2900,66 @@ def already_dispositioned(target_home: Path, proposal_id: str) -> "dict | None":
                                         "native_work_order": None},
                         "title": Engine(""), "filed": Engine("")}
     return None
+
+
+def marked_proposal_text(target_home: Path, proposal_id: str, state: str, reason: str,
+                         superseded_by: "str | None" = None,
+                         now: "datetime | None" = None) -> str:
+    """The text of an EARLIER proposal of ours with a sender's mark in its header - **never written
+    here**. It only reads `<target>/intake/<id>.md` and returns the bytes the caller may hand to
+    `write_proposal`, so the one function that writes under another repo stays the only one.
+
+    The mark is the header's `disposition` slot: `state` (`superseded` / `withdrawn`), the stamp,
+    the one-line reason (the sender's own words, bounded to one line) and, for a supersede, the
+    replacing proposal's id. **The body is copied through byte-for-byte**, as `dispose_proposal`
+    does - the receiver's evidence is not reformatted by a sender's afterthought. A mark that is
+    already there with the same state, reason and replacing id keeps its original stamp, so
+    repeating the command rewrites the same bytes and the caller can see "unchanged".
+    """
+    if state not in MARK_STATES:
+        raise FederationError(f"unknown mark {state!r}")
+    if superseded_by is not None and not valid_proposal_id(superseded_by):
+        raise FederationError("the replacing id is not a 32-character hex token")
+    src = proposal_path(intake_dir(target_home), proposal_id)
+    header_region, body = _split_proposal(src)
+    raw = "".join(ln for ln in header_region.splitlines(keepends=True)[1:]
+                  if ln.strip() not in ("```json", "```"))
+    meta = _parse_header(raw, src)
+    note = sanitize_title(reason)
+    prior = meta.get("disposition") or {}
+    same = (prior.get("state") == state and prior.get("note") == note
+            and prior.get("superseded_by") == superseded_by)
+    meta["disposition"] = {"state": state, "at": prior["at"] if same and prior.get("at")
+                           else utc_stamp(now),
+                           "note": note, "native_work_order": None,
+                           "superseded_by": superseded_by}
+    return render_proposal(meta, body)
+
+
+def resolve_outbound_id(home: Path, target_id: str, token: object) -> str:
+    """The full id of one of THIS sender's own earlier proposals into `target_id`, from a full id
+    or a unique prefix (8+ hex) of one recorded in this repo's own outbox. Reads only this home.
+
+    A full id passes through unchecked here: whether the target holds it, and whose it is, is
+    answered by the target's own header at the call site - that is the ownership check, and this
+    lookup is only a convenience for the 8 characters a listing shows.
+    """
+    if not isinstance(token, str) or not INTAKE_PREFIX_RE.fullmatch(token):
+        raise FederationError(Message.template(
+            "proposal id {token} is not a hex prefix -> an id is 8 to 32 lowercase hex "
+            "characters (`federation status` lists what this repo filed)", token=Foreign(str(token))))
+    if valid_proposal_id(token):
+        return token
+    names = sorted({r["proposal_id"] for r in read_outbox(home)
+                    if not r.get("error") and r.get("target_id") == target_id
+                    and valid_proposal_id(r.get("proposal_id"))
+                    and r["proposal_id"].startswith(token)})
+    if len(names) != 1:
+        raise FederationError(Message.template(
+            "proposal id {token} {why} in this repo's outbox for that target -> give the full "
+            "32-character id", token=Foreign(token),
+            why=Engine("is AMBIGUOUS" if names else "matches nothing")))
+    return names[0]
 
 
 def record_outbound(home: Path, record: dict) -> Path:
@@ -3019,8 +3089,8 @@ def list_intake(home: Path, registry: "str | os.PathLike | None" = None,
     """
     now = now or datetime.now(timezone.utc)
     d = intake_dir(home)
-    out: dict = payload(intake_path=Engine(str(d)), present=d.is_dir(), pending=[], malformed=[],
-                        accepted=0, declined=0, pending_days=pending_days)
+    out: dict = payload(intake_path=Engine(str(d)), present=d.is_dir(), pending=[], marked=[],
+                        malformed=[], accepted=0, declined=0, pending_days=pending_days)
     if not d.is_dir():
         # NOT-APPLICABLE IS NOT EMPTY: a repo nobody has ever filed into has no intake at all.
         return out
@@ -3035,6 +3105,19 @@ def list_intake(home: Path, registry: "str | os.PathLike | None" = None,
             # --json, the canary's unbidden finding) inherits the classification rather than a
             # pre-rendered string it has to trust.
             out["malformed"].append(payload(file=Foreign(path.name), reason=e.marked()))
+            continue
+        disp = meta.get("disposition")
+        if isinstance(disp, dict) and emission_text(disp.get("state")) in MARK_STATES:
+            # THE SENDER MARKED ITS OWN PROPOSAL (`file --supersedes` / `--withdraw`): it is no
+            # longer a live decision, so it is listed apart and neither the pending count nor the
+            # ageing and closed-intake checks that read `pending` see it. It stays on disk until
+            # this repo's operator archives it. The state and replacing id are ours (fixed
+            # vocabulary, 32 hex); the reason and stamp are the sender's words and stay marked.
+            out["marked"].append(payload(
+                proposal_id=meta["proposal_id"], sender_id=meta["sender_id"],
+                sender_name=Foreign(meta["sender_name"], cap=18), title=meta["title"],
+                state=disp["state"], superseded_by=disp.get("superseded_by"),
+                reason=disp.get("note"), marked_at=disp.get("at"), file=Engine(path.name)))
             continue
         secs = age_seconds(meta["filed"], now)
         # ONE registry path per proposal, NAMED BY THE PROPOSAL - never an enumeration. "Is this
@@ -3778,7 +3861,7 @@ def cmd_heartbeat(root: Path, home: Path, args: argparse.Namespace) -> "tuple[in
     return 0, report
 
 
-def _print_refusal(kind: str, result: dict) -> None:
+def _print_refusal(kind: str, result: dict, fallback: "str | None" = None) -> None:
     """One refusal shape for both acting commands, INCLUDING the INV-10 fallback line.
 
     The fallback is printed on EVERY refusal, because the failure this subsystem cannot have is a
@@ -3789,7 +3872,7 @@ def _print_refusal(kind: str, result: dict) -> None:
     print(f"federation {kind}: REFUSED ({result['reason']}) - asked for {result.get('query')}")
     print(f"  because   {result['message']}")
     print(f"  fix       {result['fix']}")
-    print(f"  fallback  {ACTIONS[result.get('action', kind)]['fallback']}")
+    print(f"  fallback  {fallback or ACTIONS[result.get('action', kind)]['fallback']}")
 
 
 def _print_consult(result: dict) -> None:
@@ -3829,7 +3912,14 @@ def _print_file(result: dict) -> None:
     """The send verdict. A PREVIEW is not a send, and the difference is stated at the step."""
     tgt = result.get("target") or {}
     if result["verdict"] == "refuse":
-        _print_refusal("file", result)
+        _print_refusal("file", result, fallback=(
+            "the earlier proposal is still pending in that repo, unmarked - tell its operator it "
+            "no longer stands (they can decline it), or re-run once the cause above is fixed. A "
+            "refused mark must never leave a stale proposal nobody was told about."
+            if result.get("mark") else None))
+        return
+    if result.get("mode") == "withdraw":
+        _print_withdraw(result)
         return
     if result["verdict"] == "preview":
         # THE OUTBOUND CONFIRM GATE, printed AT THE STEP WHERE THE SEND HAPPENS. A rule placed
@@ -3850,6 +3940,7 @@ def _print_file(result: dict) -> None:
               "action into somebody else's repo, and this is the orchestrator's standing "
               "'irreversible / outward-facing actions' boundary "
               "(references/roles/orchestrator.md -> Role boundary) applied at THIS step.")
+        _print_mark_lines(result)
         print("  next      confirm with the OPERATOR, then re-run the same command with "
               "--confirm.")
         return
@@ -3859,8 +3950,210 @@ def _print_file(result: dict) -> None:
     print(f"  outbound  recorded at {result['outbox_path']}")
     print("  landed as a PROPOSAL, not a work-order: it becomes work in that repo only if that "
           "repo's operator accepts it and that repo authors its own work-order.")
+    _print_mark_lines(result)
     print("  scope     one file, in that repo's intake/ - nothing else there was read or "
           "written.")
+
+
+def _print_mark_lines(result: dict) -> None:
+    """The mark a `--supersedes` filing carries, printed under the filing's own lines."""
+    if not result.get("mark"):
+        return
+    by = f" by {result['superseded_by']}" if result.get("superseded_by") else ""
+    print(f"  marks     {result['marks_proposal']}  -> {result['mark']}{by}   "
+          f"({result['mark_write']}; reason: {result['mark_reason']})")
+    print(f"            in {result['mark_path']} - the earlier proposal's header only; its body "
+          f"is untouched and it leaves that repo's live listing")
+
+
+def _print_withdraw(result: dict) -> None:
+    """The withdraw verdict (preview or sent). Same gate wording as a filing, at the same step."""
+    tgt = result.get("target") or {}
+    if result["verdict"] == "preview":
+        print("federation file: NOT SENT - the OUTBOUND CONFIRM gate is open (dry-run is the "
+              "default for every outward-facing action this engine ships)")
+        print(f"  target    {tgt.get('name')}  id={tgt.get('id')}")
+        print(f"  would mark {result['mark_path']}")
+        print(f"  proposal  {result['marks_proposal']}   ({result['mark']})")
+        print(f"  reason    {result['mark_reason']}")
+        print("  gate      OUTBOUND CONFIRM - marking a proposal is a write into somebody else's "
+              "repo, the same outward-facing, hard-to-reverse action as filing one "
+              "(references/roles/orchestrator.md -> Role boundary) applied at THIS step.")
+        print("  next      confirm with the OPERATOR, then re-run the same command with "
+              "--confirm.")
+        return
+    print(f"federation file: WITHDRAWN - {tgt.get('name')}  id={tgt.get('id')}")
+    print(f"  proposal  {result['marks_proposal']}   ({result['mark_write']})")
+    print(f"  reason    {result['mark_reason']}")
+    print(f"  wrote     {result['mark_path']}")
+    print("  scope     one file, in that repo's intake/: the earlier proposal's header. It stays "
+          "there until that repo's operator archives it; its listing now reports it as "
+          "withdrawn, not live.")
+
+
+def _file_usage_fault(args: argparse.Namespace, mark_token: "str | None") -> "str | None":
+    """Usage faults of `file` that argparse cannot state, because `--withdraw` files nothing (so
+    `--title` / `--summary` / `--source-ref` are required only without it). A fault is a usage
+    error (exit 2), never a refusal: it is this side's command line, not the target's decision."""
+    words = {"--title": args.title, "--summary": args.summary, "--source-ref": args.source_ref}
+    if mark_token is None:
+        if args.reason is not None:
+            return "--reason belongs to --supersedes / --withdraw (a plain file has no reason)"
+    elif not sanitize_title(args.reason or ""):
+        return ("--supersedes / --withdraw needs --reason \"...\" -> one line saying why the "
+                "earlier proposal no longer stands; the receiver's listing shows it")
+    if args.withdraw:
+        given = [k for k, v in words.items() if v is not None]
+        return (f"--withdraw files nothing, so it takes no {', '.join(given)}" if given else None)
+    missing = [k for k, v in words.items() if v is None]
+    return f"the following arguments are required: {', '.join(missing)}" if missing else None
+
+
+def _plan_mark(home: Path, sender: dict, verdict: dict, target_home: Path,
+               args: argparse.Namespace, token: str, state: str,
+               new_pid: "str | None") -> "dict | tuple":
+    """Decide whether THIS sender may mark that earlier proposal, and compute the bytes - writes
+    nothing. Runs AFTER `authorize_file` (the one authorization path, so a refused target is never
+    read, let alone marked) and BEFORE the confirm gate, so the preview already knows whether the
+    mark can land. -> a usage `(rc, payload)`, or a plan dict whose `refuse` is a verdict or None.
+
+    **OWNERSHIP IS THE TARGET'S OWN HEADER, not this repo's say-so.** The earlier proposal must be
+    pending in that intake and its `sender_id` must be this repo's id: a sender cannot mark
+    another sender's proposal, and cannot mark one the receiver already accepted or declined.
+    """
+    target_id = emission_text(verdict["target"]["id"])
+    try:
+        old_id = resolve_outbound_id(home, target_id, token)
+    except FederationError as e:
+        print(f"federation file: {e}", file=sys.stderr)
+        return 2, payload(error=e.marked())
+    if old_id == new_pid:
+        print("federation file: --supersedes names the proposal being filed -> it must name an "
+              "EARLIER one (a different title or --source-ref makes a different proposal)",
+              file=sys.stderr)
+        return 2, payload(error=Engine("a proposal cannot supersede itself"))
+    them = verdict["target"]["name"]
+
+    def refuse(code: str, message: object, fix: str) -> dict:
+        return {"refuse": _refuse(code, message, fix, target=verdict["target"],
+                                  query=Foreign(str(args.target)), action=Engine("file"),
+                                  proposal_id=Engine(old_id), mark=Engine(state))}
+
+    settled = already_dispositioned(target_home, old_id)
+    if settled is not None:
+        return refuse(
+            "already-dispositioned",
+            Message.template("{them} has already {state} proposal {pid} - a settled proposal "
+                             "cannot be marked", them=them, pid=Engine(old_id),
+                             state=(settled.get("disposition") or {}).get("state")
+                             or Engine("settled")),
+            "that repo has judged it; if it is wrong, talk to their operator")
+    path = proposal_path(intake_dir(target_home), old_id)
+    if not path.is_file():
+        return refuse(
+            "no-such-proposal",
+            Message.template("{them} holds no pending proposal {pid} in its intake",
+                             them=them, pid=Engine(old_id)),
+            "`federation status` lists what this repo filed; name one of those ids (a proposal "
+            "its operator already archived cannot be marked)")
+    try:
+        meta = read_proposal_header(path)
+    except FederationError:
+        return refuse(
+            "proposal-unreadable",
+            Message.template("{them}'s copy of {pid} is not a conforming proposal, so it is not "
+                             "marked", them=them, pid=Engine(old_id)),
+            "tell that repo's operator; this tool never edits a file it cannot read as a proposal")
+    if emission_text(meta["sender_id"]) != sender["id"]:
+        return refuse(
+            "not-your-proposal",
+            Message.template("proposal {pid} in {them}'s intake was filed by another sender, not "
+                             "by this repo", them=them, pid=Engine(old_id)),
+            "a sender marks only its OWN proposals; nothing was written")
+    text = marked_proposal_text(target_home, old_id, state, str(args.reason),
+                                new_pid if state == "superseded" else None)
+    existing = None
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            existing = fh.read()
+    except OSError:
+        pass
+    return {"refuse": None, "old_id": old_id, "state": state, "reason": sanitize_title(args.reason),
+            "by": new_pid if state == "superseded" else None, "text": text,
+            "existing": existing, "dest": path}
+
+
+def _mark_fields(plan: dict, write_state: "str | None" = None) -> dict:
+    """The mark's part of a preview / sent payload. The state, ids and the reason are this
+    sender's own words (the operator typed the reason), so they are `Engine`; the path is rooted in
+    somebody else's home, so it is foreign bytes with a filesystem job."""
+    return payload(
+        marks_proposal=Engine(plan["old_id"]), mark=Engine(plan["state"]),
+        mark_reason=Engine(plan["reason"]),
+        superseded_by=None if plan["by"] is None else Engine(plan["by"]),
+        mark_path=Foreign.path(plan["dest"]),
+        mark_write=Engine(write_state or ("unchanged" if plan["existing"] == plan["text"]
+                                          else "would mark")))
+
+
+def _apply_mark(home: Path, target_home: Path, plan: dict) -> str:
+    """Write the planned mark through `write_proposal` (the one writer under another repo) and
+    note it on the sender's own outbox record for that proposal. Nothing is written when the file
+    is already byte-identical."""
+    if plan["existing"] == plan["text"]:
+        write_state = "unchanged (byte-identical; nothing was written)"
+    else:
+        write_proposal(target_home, plan["old_id"], plan["text"])
+        write_state = "marked"
+    rec_path = proposal_path(outbox_dir(home), plan["old_id"]).with_suffix(".json")
+    if rec_path.is_file():
+        try:
+            rec = _read_json(rec_path)
+        except FederationError:
+            rec = None
+        if isinstance(rec, dict):
+            rec.update({"mark": plan["state"], "mark_reason": plan["reason"],
+                        "superseded_by": plan["by"], "marked": utc_stamp()})
+            record_outbound(home, rec)
+    return write_state
+
+
+def _cmd_withdraw(home: Path, args: argparse.Namespace) -> "tuple[int, dict]":
+    """`file TARGET --withdraw ID --reason "..."`: mark one earlier proposal of ours withdrawn.
+    The same authorization path and the same OUTBOUND CONFIRM gate as filing - dry run until
+    `--confirm` - and the same single writer. It sends no new proposal."""
+    verdict = authorize_file(home, args.target, registry=args.registry)
+    if verdict["verdict"] != "allow":
+        verdict[Engine("mark")] = Engine("withdrawn")
+        if not args.json:
+            _print_file(emit_human(verdict))
+        return 0, verdict
+    sender = read_federation(home)
+    target_home = Path(emission_text(verdict["target"]["home_path"]))
+    plan = _plan_mark(home, sender, verdict, target_home, args, args.withdraw, "withdrawn", None)
+    if isinstance(plan, tuple):
+        return plan
+    if plan["refuse"] is not None:
+        if not args.json:
+            _print_file(emit_human(plan["refuse"]))
+        return 0, plan["refuse"]
+    if not args.confirm:
+        report = payload(verdict=Engine("preview"), reason=Engine("confirm-required"),
+                         action=Engine("file"), mode=Engine("withdraw"), target=verdict["target"],
+                         query=Foreign(str(args.target)),
+                         message=Engine("the OUTBOUND CONFIRM gate is open - nothing was "
+                                        "written"),
+                         fix=Engine("confirm with the operator, then re-run with --confirm"))
+        report.update(_mark_fields(plan))
+    else:
+        write_state = _apply_mark(home, target_home, plan)
+        report = payload(verdict=Engine("sent"), reason=Engine("sent"), action=Engine("file"),
+                         mode=Engine("withdraw"), target=verdict["target"],
+                         query=Foreign(str(args.target)))
+        report.update(_mark_fields(plan, write_state))
+    if not args.json:
+        _print_file(emit_human(report))
+    return 0, report
 
 
 def cmd_file(root: Path, home: Path, args: argparse.Namespace) -> "tuple[int, dict]":
@@ -3877,8 +4170,21 @@ def cmd_file(root: Path, home: Path, args: argparse.Namespace) -> "tuple[int, di
       4. THE OUTBOUND CONFIRM GATE. Without `--confirm` this prints exactly what WOULD be sent
          and writes nothing.
       5. Write ONE file into `<target>/intake/`, then record the outbound HERE.
+
+    `--supersedes ID` adds a second, same-kind write after step 5: the sender's OWN earlier
+    proposal gets a mark in its header (`_plan_mark` checks ownership and settledness after step 2
+    and before step 4, so the preview already knows). `--withdraw ID` is that mark alone, with no
+    new proposal (`_cmd_withdraw`). Both go through steps 2 and 4 unchanged.
     """
     del root
+    mark_token = args.withdraw or args.supersedes
+    mark_state = None if mark_token is None else ("withdrawn" if args.withdraw else "superseded")
+    fault = _file_usage_fault(args, mark_token)
+    if fault:
+        print(f"federation file: {fault}", file=sys.stderr)
+        return 2, payload(error=Engine("usage"))
+    if args.withdraw:
+        return _cmd_withdraw(home, args)
     title = sanitize_title(args.title)
     summary = str(args.summary)
     if not title:
@@ -3938,6 +4244,16 @@ def cmd_file(root: Path, home: Path, args: argparse.Namespace) -> "tuple[int, di
             _print_file(emit_human(refusal))
         return 0, refusal
 
+    plan = None
+    if mark_token is not None:
+        plan = _plan_mark(home, sender, verdict, target_home, args, mark_token, mark_state, pid)
+        if isinstance(plan, tuple):
+            return plan
+        if plan.get("refuse") is not None:
+            if not args.json:
+                _print_file(emit_human(plan["refuse"]))
+            return 0, plan["refuse"]
+
     filed = preserved_filed_stamp(target_home, pid) or utc_stamp()
     header = {"schema": PROPOSAL_SCHEMA, "proposal_id": pid, "sender_id": sender["id"],
               "sender_name": sender["name"], "sender_groups": sender["groups"], "title": title,
@@ -3973,6 +4289,8 @@ def cmd_file(root: Path, home: Path, args: argparse.Namespace) -> "tuple[int, di
                          message=Engine("the OUTBOUND CONFIRM gate is open - nothing was "
                                         "written"),
                          fix=Engine("confirm with the operator, then re-run with --confirm"))
+        if plan is not None:
+            report.update(_mark_fields(plan))
         if not args.json:
             _print_file(emit_human(report))
         return 0, report
@@ -4000,6 +4318,11 @@ def cmd_file(root: Path, home: Path, args: argparse.Namespace) -> "tuple[int, di
                      proposal_id=Engine(pid), proposal_path=Foreign.path(written),
                      write=Engine(write_state), outbox_path=Engine(str(outbox)),
                      title=Engine(title), source_ref=Engine(header["source_ref"]))
+    if plan is not None:
+        # The replacement is already on disk; marking the earlier one is the second write and
+        # the same kind of write (one file under `intake/`). Re-running the same command after a
+        # failure between the two is safe: the first is byte-identical, the second completes.
+        report.update(_mark_fields(plan, _apply_mark(home, target_home, plan)))
     if not args.json:
         _print_file(emit_human(report))
     return 0, report
@@ -4037,6 +4360,17 @@ def _print_intake(view: dict) -> None:
         tail = f"   ({'; '.join(marks)})" if marks else ""
         print(f"  {p['proposal_id'][:8]}  {p['sender_name']:<22} {p['age']:<12} "
               f"{p['title']}{tail}")
+    marked = view.get("marked") or []
+    if marked:
+        print(f"  not live  {len(marked)} marked by their own sender (still in intake/ until you "
+              f"archive them; they are not counted above)")
+        for m in marked:
+            by = f" by {m['superseded_by'][:8]}" if m.get("superseded_by") else ""
+            why = f"   reason {m['reason']}" if m.get("reason") else ""
+            print(f"  {m['proposal_id'][:8]}  {m['state']}{by:<14} {m['sender_name']:<22} "
+                  f"{m['title']}{why}")
+        print("            archive one with `--decline <id> --reason \"...\"`; the mark is the "
+              "sender's claim, not this repo's decision.")
     if view["accepted"] or view["declined"]:
         print(f"  archived  {view['accepted']} accepted, {view['declined']} declined "
               f"(intake/{ACCEPTED_DIRNAME}/, intake/{DECLINED_DIRNAME}/)")
@@ -4244,16 +4578,28 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--accept-proposals", dest="accept_proposals", default=None,
                            type=_onoff, metavar="on|off")
         if name == "file":
-            p.add_argument("--title", required=True,
+            p.add_argument("--title", default=None,
                            help="one line naming the finding (it is what the target's intake "
                                 "listing shows, and it is part of the proposal fingerprint)")
-            p.add_argument("--summary", required=True,
+            p.add_argument("--summary", default=None,
                            help=f"the finding, summarized (max {SUMMARY_MAX} chars). A summary "
                                 f"plus a pointer - NEVER verbatim evidence: this file rides the "
                                 f"target repo's git history forever")
-            p.add_argument("--source-ref", dest="source_ref", required=True,
+            p.add_argument("--source-ref", dest="source_ref", default=None,
                            help="the pointer back to YOUR work-order / investigation, where the "
                                 "evidence stays (also part of the fingerprint)")
+            mg = p.add_mutually_exclusive_group()
+            mg.add_argument("--supersedes", metavar="ID", default=None,
+                            help="also mark an EARLIER proposal this repo filed into the same "
+                                 "target as superseded by this one (needs --reason); it stops "
+                                 "counting as live in their intake listing. Same confirm gate")
+            mg.add_argument("--withdraw", metavar="ID", default=None,
+                            help="file nothing; mark an EARLIER proposal this repo filed into "
+                                 "the target as withdrawn (needs --reason, takes no --title / "
+                                 "--summary / --source-ref). Same confirm gate")
+            p.add_argument("--reason", default=None,
+                           help="one line: why the earlier proposal no longer stands (only with "
+                                "--supersedes / --withdraw)")
             p.add_argument("--confirm", action="store_true",
                            help="THE OUTBOUND CONFIRM GATE. Without it this is a dry run that "
                                 "writes nothing - a cross-file is an outward-facing action into "

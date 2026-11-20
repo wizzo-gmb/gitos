@@ -30,6 +30,10 @@ TYPED, not that it matches the tier the work-order derives. So:
     measured defect - a dispatch with a model and no effort key at all, and one with neither.
     One exception, read from the repo's mapping: a model its catalog records as having no
     effort levels, routed with effort `default`, is complete with the model alone.
+  * THE MAPPING FLOOR, on whenever optimization is enabled and the repo has a claude mapping,
+    with no receipt and no opt-in: the pair must be one the mapping uses, and must be a legitimate
+    worker under the mapping's lead (ceiling) pair by `worker_refusal`. Optimization off, or no
+    claude mapping, is exactly the presence floor above.
   * THE TIER BINDING, on only where an operator DELIBERATELY ASKED for it (see BINDING_KEY) AND
     the repo has a tier to bind to (optimization enabled): the pair must match a routing
     RECEIPT that `select` authorized. A receipt is single-use and short-lived, because a stale
@@ -296,6 +300,37 @@ def effort_not_applicable(model, root, engine):
         return False
 
 
+def mapping_refusal(config, engine, model, effort):
+    """The mapping floor. -> None, or the reason a pair is refused, once optimization is enabled.
+
+    Needs no receipt and no opt-in: the repo's own mapping already says which pairs are routable.
+    (a) A pair no choice of the claude mapping uses was not derived from any tier. (b) A pair
+    that the mapping does use is still refused when it is not a legitimate worker under the
+    mapping's lead pair (its ceiling), by the same `worker_refusal` rule `select` applies; the
+    recorded ceiling stands in for the lead's actual pair, which this boundary cannot observe.
+    No claude mapping means no opinion: there is nothing to judge against.
+    """
+    mapping = (config.get("harnesses") or {}).get("claude")
+    if not isinstance(mapping, dict):
+        return None
+    choices = mapping["choices"]
+    choice = next((c for c in choices.values()
+                   if c["effort"] == effort and same_model(model, c["model"])), None)
+    if choice is None:
+        pairs = ", ".join(sorted({f"{c['model']}/{c['effort']}" for c in choices.values()}))
+        return (f"this dispatch requests {model}/{effort}, which no choice of this repo's claude "
+                f"mapping uses (mapped pairs: {pairs}), so it was not derived from any tier. "
+                f"{ADVICE}")
+    ceiling = choices[mapping["ceiling"]]
+    refusal = engine.worker_refusal(
+        choice, ceiling["model"], ceiling["effort"], ceiling,
+        engine.has_no_effort_levels(mapping["catalog"]["models"].get(choice["model"])))
+    if refusal is not None:
+        return (f"this dispatch requests {model}/{effort}, which is not a legitimate worker under "
+                f"the mapping's lead pair: {refusal}. Dispatch a tier below the lead.")
+    return None
+
+
 def decide(payload, engine=None, now=None):
     """The one decision. -> a deny document, or None meaning "no opinion, proceed".
 
@@ -336,11 +371,13 @@ def decide(payload, engine=None, now=None):
         return deny(f"this dispatch sets no {named}, so no task tier was chosen for it - it "
                     f"inherits the lead's pair, which is the ceiling. {ADVICE}")
 
-    # THE TIER BINDING, only where an operator opted in AND there is a tier to bind to. A repo
-    # with optimization off has no `select` decision to compare against; a repo with it on but
-    # no opt-in asked to be ROUTED, not to have unreceipted dispatches refused. Either way the
-    # floor already refuses the measured defect. Off has never meant "spend the ceiling by
-    # default", and the floor is what makes that true.
+    # THE MAPPING FLOOR, and then THE TIER BINDING. Both need the engine and the repo's setting;
+    # the first applies whenever optimization is enabled, the second only where an operator opted
+    # in AND there is a tier to bind to. A repo with optimization off has no mapping to judge
+    # against and no `select` decision to compare with; a repo with it on but no opt-in asked to
+    # be ROUTED, not to have unreceipted dispatches refused. Either way the presence floor above
+    # already refuses the measured defect. Off has never meant "spend the ceiling by default",
+    # and the floor is what makes that true.
     engine = _engine() if engine is None else engine
     if engine is None:
         return None
@@ -349,7 +386,15 @@ def decide(payload, engine=None, now=None):
         return None
     try:
         home = engine.home_path(root)
-        if not home.is_dir() or not binding_requested(engine.load_config(home)):
+        if not home.is_dir():
+            return None
+        config = engine.load_config(home)
+        if config.get("enabled") is True:
+            reason = mapping_refusal(config, engine, tool_input["model"].strip(),
+                                     "default" if effortless else tool_input["effort"].strip())
+            if reason is not None:
+                return deny(reason)
+        if not binding_requested(config):
             return None
     except Exception:
         return None

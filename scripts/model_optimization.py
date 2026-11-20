@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -537,6 +538,24 @@ def outside_order(word):
     return why + ("; `ultra` is not a depth level" if word == "ultra" else "")
 
 
+_GUARD = []
+
+
+def same_model(a, b):
+    """Whether two model names are one model: dispatch_guard.same_model (an alias and a full id of its
+    family are one model), loaded once from beside this file by path. Exact equality when it cannot be loaded."""
+    try:
+        if not _GUARD:
+            spec = importlib.util.spec_from_file_location("_gitos_mo_dispatch_guard",
+                                                          Path(__file__).resolve().parent / "dispatch_guard.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _GUARD.append(module)
+        return _GUARD[0].same_model(a, b)
+    except Exception:
+        return a == b
+
+
 def worker_refusal(choice, lead_model, lead_effort, ceiling, effortless):
     """The orchestrator outranks every worker. -> None when `choice` may be dispatched, else the
     refusal, which names both pairs and the clause that failed.
@@ -557,7 +576,7 @@ def worker_refusal(choice, lead_model, lead_effort, ceiling, effortless):
                     f"routable for a worker and is refused, not guessed. A routed dispatch names a level")
         if EFFORT_LEVELS.index(effort) > EFFORT_LEVELS.index(WORKER_EFFORT_CAP):
             return f"Clause 4 (workers cap at {WORKER_EFFORT_CAP}) refuses {both}"
-        if choice["model"] == lead_model:
+        if same_model(choice["model"], lead_model):
             if lead_effort not in EFFORT_LEVELS:
                 return (f"Unknown lead effort ({both}): {outside_order(lead_effort)}, so a "
                         f"same-model worker cannot be compared with it. A worker on a lower model "
@@ -933,7 +952,7 @@ def select(config, harness, tier="standard", lead=None, lead_effort=None, runtim
         return stop("Actual lead model/effort unknown; establish the ceiling before routing")
     # The lead's MODEL must be the ceiling's; its effort may move without a revalidation, because
     # the rule below is judged against the lead's actual effort every time.
-    if lead != ceiling["model"]:
+    if not same_model(lead, ceiling["model"]):
         return stop("Lead changed; revalidate the mapping and ceiling")
     choice = mapping["choices"][mapping["tiers"][tier]]
     result["requested"] = {"model": choice["model"], "effort": choice["effort"]}

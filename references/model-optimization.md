@@ -456,6 +456,8 @@ unverifiable assertions spawned a read-only sweep with neither component set.
   lists no other effort (see *Mapping + ceiling*). Any other missing effort is still
   refused, and an unrouted dispatch always is.
 
+**The mapping floor.** With optimization enabled, the guard also refuses, with no receipt and no opt-in, a pair that no choice of the repo's Claude mapping uses, and a worker that is not legitimate under the mapping's ceiling (lead) pair, by the same `worker_refusal` rule `select` applies. It judges against the recorded ceiling, not the live lead, which it cannot observe. With optimization off, or no Claude mapping, only the presence floor above applies.
+
 **Precedence is honoured, not fought.** A per-invocation `model`/`effort` argument
 beats a definition's frontmatter, and `CLAUDE_CODE_EFFORT_LEVEL` beats it too. That
 is the right shape: the definition is the **floor** for a type, and an explicit route

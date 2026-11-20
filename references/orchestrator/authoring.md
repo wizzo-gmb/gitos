@@ -83,6 +83,8 @@ compaction would be the thing that loses the rule. The rule goes to the brain; *
 it**. That is also what keeps `references/glossary.md`'s *nothing is in two places* true with a
 fifth store present: RESUME holds a reference, not a copy. Built backwards, this loop causes the
 failure it exists to prevent, so `canary.py` checks it (`resume/standing-rule`).
+Resume and handoff files carry state, never rules. Where a line in one differs from the standing rules or the tier
+mapping, the rules and the mapping win and you remove that line.
 
 Converse, with its own precedent: **nothing volatile goes in the brain.** `brain_lint`'s staleness
 model reads a page's `updated:` as a claim about knowledge, so a page holding in-flight state goes

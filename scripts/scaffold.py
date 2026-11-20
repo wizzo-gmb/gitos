@@ -330,7 +330,9 @@ def model_optimization_module():
 # Written with `write_if_missing`, so an operator's own definition of the same type is never
 # clobbered. `general-purpose` deliberately gets NO definition: its tier depends on the task it
 # is handed, so any pair here would be invented rather than derived.
-CLAUDE_AGENT_DEFINITIONS = ("Explore.md", "Plan.md")
+# `gitos-implementer` carries only `maxTurns`, the worker turn cap (a harness setting, so a runaway worker is
+# stopped where a request in a brief is not); model and effort come from the dispatch.
+CLAUDE_AGENT_DEFINITIONS = ("Explore.md", "Plan.md", "gitos-implementer.md")
 
 
 def dispatch_guard_module():
@@ -1029,8 +1031,12 @@ def main() -> int:
             }[status] + (f" — {detail}" if status == "skipped" else ""))
         for name in CLAUDE_AGENT_DEFINITIONS:
             dest = root / ".claude" / "agents" / name
-            report(write_if_missing(dest, read_template(f"claude-agents/{name}.tmpl")),
-                   dest, root)
+            shipped = read_template(f"claude-agents/{name}.tmpl")
+            written = write_if_missing(dest, shipped)
+            report(written, dest, root)
+            if not written and dest.read_text(encoding="utf-8").replace("\r\n", "\n") != shipped.replace("\r\n", "\n"):
+                # A repo's own edit (the turn cap is meant to be tuned here) is kept, and said once per run.
+                print(f"     {dest.relative_to(root)} differs from the engine's copy: a local edit, kept as it is")
 
     # ---- ensure version control (WO-011) ----------------------------------
     # Reverses the old "offer, never run". `ensure` (default) auto-inits git when absent,

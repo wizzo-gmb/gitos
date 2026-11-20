@@ -71,13 +71,23 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    model/outcome entry: observed settings or explicit unknown, revisions/escalation,
    and a material reason. Do not infer execution from the requested model, write
    routing memory, or add a mandatory lesson. See `references/model-optimization.md`.
-4. **End your background work, then return.** Every background command gets a time limit and
+4. **End your background work, then return.** Run commands in the foreground with a time limit. Do not stop to wait
+   on background work of your own, and hand back once, at the end. Every background command you do start gets a time limit and
    writes its log to a known place. Before returning, stop every process you started. Anything
    deliberately left running is named in *Process notes* with its pid or marker, its log and how to
    stop it. <!-- rule:implementer-stop-background -->
 5. **Return.** Your report is a *claim*; the orchestrator trust-but-verifies the diff and
    adjudicates your notes (ACCEPT / DEFER / REJECT). You do not move the work-order, update the INDEX,
    bump VERSION/CHANGELOG, or touch the brain.
+
+## Turn budget
+
+Your definition (`gitos-implementer`) carries a hard turn cap and names a soft budget lower than
+it. Near the soft budget, start nothing new: finish the edit in hand, leave the worktree in a state that runs, write your
+notes and hand back. Handing back unfinished is not failing; the orchestrator continues with a fresh worker. If you hit
+the hard cap you return no report, and there is nothing to do: the continuation reads the worktree diff and your notes.
+When you are the continuation, your brief carries the order, the earlier worker's notes and the diff: start from them and
+do not redo finished work.
 
 ## Role boundary
 

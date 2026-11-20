@@ -700,6 +700,8 @@ federation file: NOT SENT - the OUTBOUND CONFIRM gate is open (dry-run is the de
   next      confirm with the OPERATOR, then re-run the same command with --confirm.
 ```
 
+**Replacing or retracting an earlier proposal.** `federation.py file <target> --supersedes <id> --reason "..." --title ... --summary ... --source-ref ...` files the replacement and marks the earlier one as superseded by it. `federation.py file <target> --withdraw <id> --reason "..."` marks it withdrawn and files nothing. `<id>` is a proposal this repo filed (8+ hex prefix or full id). Both go through the same authorization and the same OUTBOUND CONFIRM gate as filing, and write only the earlier proposal's header in `<target>/intake/`. A proposal the target already accepted or declined, or one another sender filed, cannot be marked.
+
 **The OUTBOUND CONFIRM gate is at the send step, and it is the default state of the command.**
 Without `--confirm` nothing is written — the intake directory is not even created. A cross-file
 is an **outward-facing, hard-to-reverse action into somebody else's repo**, which the
@@ -791,7 +793,10 @@ dropped finding.**
 |---|---|---|
 | *(the eight shared reasons)* | caller not federated · unknown / ambiguous target · target is self · path unresolvable · no longer federated · config unreadable · no shared group | as in the consult table above — same path, same corrections |
 | `not-accepting-proposals` | reachable, but its live file says `accept_proposals: off` | only **its** operator re-opens it (`federation set --accept-proposals on` there) |
-| `already-dispositioned` | that repo has already accepted or declined this exact proposal | if it is genuinely new, give it a distinct `--title`; if you disagree with their decision, talk to their operator — do not re-send |
+| `already-dispositioned` | that repo has already accepted or declined this exact proposal | if it is genuinely new, give it a distinct `--title`; if you disagree with their decision, talk to their operator — do not re-send; also returned when `--supersedes` / `--withdraw` names a proposal they already settled |
+| `not-your-proposal` | `--supersedes` / `--withdraw` named a proposal another sender filed | none; a sender marks only its own |
+| `no-such-proposal` | the target's intake holds no pending proposal with that id (never filed, or already archived) | `federation status` lists what this repo filed |
+| `proposal-unreadable` | the target's copy is not a conforming proposal, so it is not edited | tell that repo's operator |
 | `confirm-required` *(a preview, not a refusal)* | the outbound confirm gate is open and nothing was written | confirm with the operator, then re-run with `--confirm` |
 
 **`already-dispositioned` reports the receiver's own note back to you, and the same bounding rule
@@ -820,6 +825,8 @@ federation intake: 2 pending  (d:\work\my-repo\.gitos\intake)
   quoted    the two "quoted" columns are the SENDER'S OWN WORDS …
   next      the OPERATOR decides, one at a time: …
 ```
+
+A proposal its own sender marked superseded or withdrawn is listed apart under `not live`, with its state, the replacing id and the sender's one-line reason. It is not counted as pending and the ageing check does not see it. It stays in `intake/` until you archive it (`--decline <id> --reason ...`). The mark is the sender's claim, not this repo's decision.
 
 **A proposal body is foreign, LLM-authored text sitting in a file that this repo's orchestrator
 will be looking at — an instruction-injection surface by construction.** The engine's own

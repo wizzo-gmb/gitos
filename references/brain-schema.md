@@ -96,6 +96,20 @@ construction.
 
 There is no `wiki/log.md`. What changed in the brain, and when, is git's: `git log -- <home>/brain`.
 
+## Core rules and topic pages
+
+Rules that every window reads at session start grow until the read costs more than the work. Split them. In one
+measured case this took the read from about 91 KB to about 55 KB.
+
+- **Core rules page**, about 10 KB at most. It holds only what binds all work, then an index of the topic pages. Each
+  index line carries that page's "read this when" line. The index opens with "do not read these by default".
+- **Topic page**, one per lasting area, about 12 KB at most.
+- **A new rule** goes on a topic page by default. It goes in core only if it binds all work, and then something
+  moves out so core stays under the cap. A new page is for a lasting area, or for a page over its cap that holds a
+  whole sub-area.
+- **Adding a page:** create it, add one index line to core, regenerate the brain index (section 4), run the canary.
+- **At each checkpoint**, RESUME links only the topic pages the work ahead touches (`references/orchestrator/checkpoint.md`).
+
 ## 5. The maintenance loop
 
 ### Layer 1 — Inline capture: the write test, then upsert

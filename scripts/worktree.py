@@ -8,7 +8,11 @@ stdlib-only, harness-neutral (plain git; no client feature is assumed).
                branch), for an open work-order. Prints the absolute path to dispatch the implementer
                into. A re-run prints the existing path and changes nothing. Worktrees already under
                `.claude/worktrees/` are still found, classified and reaped.
-  reap NNN     Remove that worktree and delete its branch, only if the branch is merged (into the
+  new NNN --slice SN
+               The same for slice SN of a folder order, in its own worktree `wo-NNN-sN` on branch `wo-NNN-sN`
+               (one per slice, so parallel slices never share a checkout), with the slice marker the edit hook
+               reads. `status`, `reap` and the canary treat it like `wo-NNN`.
+  reap NNN     Remove that worktree (and every `wo-NNN-sN` slice worktree of the order) and delete its branch, only if the branch is merged (into the
                current branch, the default branch or a declared integration branch) and the
                worktree has no changed or untracked files. A removal git refuses over a long path
                ("Filename too long", or on Windows a path past 260 characters) is retried (see LONG PATHS).
@@ -19,8 +23,8 @@ stdlib-only, harness-neutral (plain git; no client feature is assumed).
                classed in flight / reapable / abandoned / dirty. `--json` for scripts.
 
 Usage:
-    python worktree.py new NNN [ROOT] [--home DIR]
-    python worktree.py reap NNN | --merged [ROOT] [--home DIR]
+    python worktree.py new NNN [--slice SN] [ROOT] [--home DIR]
+    python worktree.py reap NNN | wo-NNN-sN | --merged [ROOT] [--home DIR]
     python worktree.py status [ROOT] [--home DIR] [--json]
 Exit codes: 0 = done / nothing to do, 1 = refused (reason printed), 2 = usage or not a git repo.
 
@@ -97,7 +101,8 @@ HOMES = (".gitos", "outputs/debug", ".pipeline", "docs/agents")
 WORKTREES_REL = ".claude/worktrees"
 IGNORE_LINE = ".claude/worktrees/"
 IGNORE_COMMENT = "# Agent worktrees (gitos worktree.py): one per work-order, never tracked."
-WO_BRANCH_RE = re.compile(r"^wo-(\d{3})$")
+# `wo-NNN`, or `wo-NNN-sN` for slice N of a folder order (group 1 is the order either way)
+WO_BRANCH_RE = re.compile(r"^wo-(\d{3})(?:-s\d+)?$")
 BUILTIN_PREFIX = "worktree-"
 # canary.WO_FILE_RE, restated (this file must not import the canary, which imports it); the selftest
 # gate asserts the two agree on a list of names.
@@ -505,7 +510,9 @@ def findings(inv):
         what = it["name"] if it["path"] is None else f"{it['name']} ({posix(it['path'])})"
         target = f"WO-{it['nnn']}" if it["nnn"] else "a worktree-* branch"
         if it["class"] == "reapable":
-            cmd = f"worktree.py reap {it['nnn']}" if it["nnn"] else "worktree.py reap --merged"
+            slice_branch = it["nnn"] and it["name"] != f"wo-{it['nnn']}"   # `reap NNN` would take the order's other slices too
+            cmd = (f"worktree.py reap {it['name'] if slice_branch else it['nnn']}"
+                   if it["nnn"] else "worktree.py reap --merged")
             out.append({"kind": "worktree-reapable", "name": it["name"], "wo": target if it["nnn"] else "",
                         "has_worktree": it["path"] is not None,
                         "finding": f"{what} is merged into "
@@ -625,7 +632,7 @@ def cmd_new(root, home, nnn, slice_id=None):
         print("worktree: this repository has no commit yet -> commit once, then retry",
               file=sys.stderr)
         return 1
-    branch = f"wo-{nnn}"
+    branch = f"wo-{nnn}-{slice_id.lower()}" if slice_id else f"wo-{nnn}"
     path = layout_root(root, layout) / branch
     entries = _entries(root) or []
     for e in entries[1:]:
@@ -968,7 +975,10 @@ def cmd_reap(root, home, target, merged_all):
             return 0
     else:
         wanted = f"wo-{target}" if re.fullmatch(r"\d{3}", target) else target
-        todo = [i for i in inv["items"] if wanted in (i["branch"], i["name"]) and i["kind"] != "other"]
+        if re.fullmatch(r"\d{3}", target):      # an order number reaps the order's own worktree and every slice's
+            todo = [i for i in inv["items"] if i["kind"] == "wo" and i["nnn"] == target]
+        else:
+            todo = [i for i in inv["items"] if wanted in (i["branch"], i["name"]) and i["kind"] != "other"]
         if not todo:
             print(f"worktree: no worktree or branch named {wanted} to reap", file=sys.stderr)
             return 1
@@ -1010,7 +1020,7 @@ def main(argv=None):
             ap.error("--slice SN (e.g. S2) belongs to `new`")
         if a.cmd == "reap" and target.startswith("-"):
             ap.error("reap needs NNN, a branch or worktree name, or --merged")
-        if a.cmd == "reap" and WO_BRANCH_RE.match(target):
+        if a.cmd == "reap" and re.fullmatch(r"wo-\d{3}", target):
             target = target[3:]
     if len(pos) > 1:
         ap.error("too many arguments")

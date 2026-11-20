@@ -102,7 +102,7 @@ The script does NOT ingest — that is your job in Phase 3.
 
 **The one offer round.** Once the scaffold has laid the home, run
 `python <SKILL_DIR>/scripts/offer.py <ROOT>`. It computes every opt-in this repo has not answered (model
-optimization, lenses, System One, federation, legacy registers, the harness popup) by calling each subsystem's own
+optimization, lenses, System One, federation, legacy registers, the harness popup, ccusage once per machine) by calling each subsystem's own
 check, and prints **one question batch**, or **nothing** when nothing is unanswered (then say nothing and go on).
 Pass its `questions` to the harness's question UI (in Claude Code `AskUserQuestion`, in the groups its `calls` name;
 `--text` is for a harness with none), then run the commands its `apply` names for each answer. A question left

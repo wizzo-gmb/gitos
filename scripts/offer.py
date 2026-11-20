@@ -19,6 +19,9 @@ An answered question is never asked again, because a question exists only while 
     legacy registers     a register file not yet imported or declined (two asked per round)       [loose_ends.py]
     harness popup        `harness.py audit` holds removal candidates (the popup's sync questions
                          come with them)                                                          [harness.py]
+    ccusage              not on PATH, npm is, and this machine has no answer in
+                         <claude-home>/gitos-ccusage.json (asked once per machine; `later` stores
+                         nothing)                                                                 [cost_report.py]
 
 Nothing to ask prints nothing (stdout empty, exit 0). A check that cannot run is said on stderr ("offer: X not read
 (reason)") and its question is not asked; it is never reported as "nothing to ask". Output is JSON:
@@ -31,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from importlib import util as importlib_util
@@ -249,9 +253,40 @@ def check_harness(root, home, claude_home=None, claude_json=None, harness_popup=
              "label_to_name": harness_popup.get("label_to_name", {}), "sync_flags": harness_popup.get("sync_flags", {})}]
 
 
+def check_ccusage(root, home, claude_home=None, which=shutil.which, **_) -> list:
+    """Offer ccusage once per machine. The install command is printed in the batch; nothing here runs or writes it."""
+    if which("ccusage"):
+        return []
+    cr = _mod("cost_report")
+    ch = cr.claude_home(claude_home)
+    try:
+        answered = cr.stored_answer(ch)
+    except ValueError as e:
+        raise NotRead(f"ccusage answer: {e}")
+    if answered:
+        return []
+    if not which("npm"):
+        raise NotRead("npm is not on PATH, so ccusage cannot be installed here")
+    home_arg = ["--claude-home", claude_home] if claude_home else []
+    record = lambda ans: _cmd("cost_report.py", "ccusage", "set", ans, *home_arg)  # noqa: E731
+    return [_entry(
+        "ccusage",
+        _q("Install ccusage? It is a cost report for Claude Code. Installing runs `npm i -g ccusage` once on this "
+           "machine. If you decline, gitos uses its own cost report, which also splits the orchestrator from its "
+           "workers.", "ccusage",
+           [("Install it now", "Runs npm i -g ccusage after your answer. Asked once per machine."),
+            ("No, use gitos's own", "Records the answer; ccusage is not offered again on this machine."),
+            ("Ask me later", "Records nothing; the question comes back in the next round.")]),
+        {"Install it now": ["npm i -g ccusage", record("installed")],
+         "No, use gitos's own": [record("declined")], "Ask me later": []},
+        follow_up="Run the install command only after the answer is Install it now. If it fails, say so and do not "
+                  "record `installed`.")]
+
+
 CHECKS = (("model-optimization", check_model_optimization), ("lenses", check_lenses),
           ("system-one", check_system_one), ("federation", check_federation),
-          ("legacy-registers", check_legacy), ("harness", check_harness))
+          ("legacy-registers", check_legacy), ("harness", check_harness),
+          ("ccusage", check_ccusage))
 
 
 # ------------------------------------------------------------------ the batch

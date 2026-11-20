@@ -21,7 +21,7 @@ order (live processes not to touch, a budget, the pinned Option). The adjudicati
    **An order with two or more slices is a folder** (`references/work-order-template.md` -> *The folder form*), and a
    dispatch names a slice, not the order. Pick it with `python <SKILL_DIR>/scripts/slice.py next [WO-NNN] <home>` (the
    first `ready` slice whose `depends_on` are all `landed`), make the worktree with
-   `worktree.py new NNN --slice SN` (it writes the marker the edit hook reads), set the slice `in-progress`, and give the
+   `worktree.py new NNN --slice SN` (its own worktree and branch `wo-NNN-sN`, one per slice, with the marker the edit hook reads; `reap NNN` takes them all), set the slice `in-progress`, and give the
    worker the output of `python <SKILL_DIR>/scripts/slice.py brief WO-NNN/SN <home>` as its brief: `order.md`, the
    slice, and the Durable facts of each landed dependency, each with its path. A second slice is added with
    `slice.py add WO-NNN NAME <home>`, which converts a single-file order to the folder with `git mv` first; the
@@ -92,8 +92,20 @@ When you delegate implementation to agents:
   history and the revision is small, brief a new agent on the order, its Revisions section and the diff instead of
   resuming the old one: the old history is re-read at every turn and the revision pays for it, while the order and
   the diff already hold everything the revision needs.
-- **Background work has a time limit and an end.** Tell each implementer that every background command
-  gets a time limit and a known log, and that it stops what it started before handing back.
+- **Background work has a time limit and an end.** Tell each implementer to run commands in the foreground with a
+  time limit, not to stop and wait on background work of its own, and to hand back once at the end. A background
+  command it does start gets a time limit and a known log, and it stops it before handing back.
+- **Dispatch a worker through its definition, so it carries a turn cap.** Dispatch an implementer with
+  `subagent_type: gitos-implementer`, the definition `scaffold.py` lays into
+  `<repo>/.claude/agents/`. It holds only `maxTurns`; the soft budget (hand back near it, notes written) is in its body,
+  so the brief does not restate either number. Model and effort come from the dispatch: name the pair the order's tier
+  maps to (the tier mapping when optimization is on) on the call, as the dispatch guard requires; the definition adds
+  only the cap. Agent definitions load at session start, so a definition laid mid-session is not dispatchable until a
+  new window. A worker stopped at the cap returns no report, so treat a worker result that says it hit
+  its turn limit as a handed-back slice, not a failure: its worktree and the order's notes are intact. Continue with a
+  fresh worker briefed on the order, its notes and `git diff` of the worktree (the revision rule above), and review the
+  diff as you would any landing. A repo whose `.claude/agents/` lacks the definitions dispatches as before, uncapped; the
+  canary says so only for a definition that lost its `maxTurns`.
 - **Require the notes-back.** Tell each implementer to fill the work-order's **Implementer
   notes** section on completion (deviations / surprises / durable facts / process notes /
   follow-ups). It is the feedback channel, not optional — without it the orchestrator and
@@ -103,6 +115,15 @@ When you delegate implementation to agents:
   (a positive result gets (k) attack-your-own-win).
 - **Trust-but-verify** every landing with `git diff` / grep / targeted reads. The
   agent's report is a claim, not evidence.
+- **See where the spend went** (orchestrator window versus workers, by model, before and after a change) with
+  `python scripts/cost_report.py --repo <path>` (read-only; dollars approximate, shares reliable).
+- **Audit where tokens go, only when the operator asks.** Nothing runs this on a schedule or at a checkpoint. Run
+  `cost_report.py`, and `ccusage daily` or `ccusage blocks --active` as well when
+  `python scripts/cost_report.py ccusage status` prints `installed`. Read the costliest workers, the opus share and
+  the dispatch pairs, then answer in one block: what is using the tokens, and what to change (a smaller slice, a
+  fresh worker instead of a resume, a lower tier), each proposed as an order. With ccusage declined or absent,
+  `cost_report.py` alone is the audit. The offer round asks about ccusage once per machine and installs it
+  (`npm i -g ccusage`) only after the operator says yes.
 
 ## Optional model optimization
 

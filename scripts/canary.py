@@ -1538,6 +1538,23 @@ RESUME_POINTER_RE = re.compile(
     r"\]\(|\[\[|brain/|wiki/|work-orders/|INDEX\.md|HANDOFF\.md|handoff\.md|"
     r"references/|SKILL\.md")
 RESUME_LINE_CAP = 160          # how much of a flagged line is quoted back
+# Two shapes of a COPIED rule the register above cannot see (no prohibition word, often a pointer
+# on the line): a worker/agent/dispatch line that carries a model name, an effort level or a numeric
+# cap (a value that lives in the mapping or the rules page, not here), and a `Per <rules page>: ...`
+# restatement. Unlike the register above these are NOT exempted by a pointer: the copy is the damage.
+RESUME_ROLE_RE = re.compile(r"\b(?:workers?|agents?|sub-?agents?|dispatch(?:es|ed|ing)?)\b", re.IGNORECASE)
+RESUME_VALUE_RE = re.compile(
+    r"\b(?:opus|sonnet|haiku|fable)\b|\b(?:x?high|medium|low|max)\s+effort\b|"
+    r"\beffort\s*(?:level)?\s*[:=]?\s*(?:x?high|medium|low|max)\b|"
+    r"\b(?:cap(?:ped)?|limit(?:ed)?|max(?:imum)?|up\s+to|at\s+most)\b[^\w\n]{0,3}(?:(?:of|at|to)\s+)?\d+|"
+    r"\b\d+\s+(?:workers?|agents?|parallel|concurrent|in\s+flight)\b", re.IGNORECASE)
+RESUME_PER_RE = re.compile(
+    r"^\W*per\s+(?:the\s+)?[^:\n]{0,80}\brules?\b[^:\n]{0,40}:\s*\S", re.IGNORECASE)
+
+
+def _copied_rule(line: str) -> bool:
+    return bool(RESUME_PER_RE.search(line)
+                or (RESUME_ROLE_RE.search(line) and RESUME_VALUE_RE.search(line)))
 
 
 def resume_rule_lines(text: str) -> list[tuple[int, str]]:
@@ -1559,7 +1576,8 @@ def resume_rule_lines(text: str) -> list[tuple[int, str]]:
         line = raw.strip()
         if not line or line.startswith("#") or set(line) <= set("|-: "):
             continue
-        if RESUME_RULE_RE.search(line) and not RESUME_POINTER_RE.search(line):
+        if ((RESUME_RULE_RE.search(line) and not RESUME_POINTER_RE.search(line))
+                or _copied_rule(line)):
             out.append((n, line[:RESUME_LINE_CAP]))
     return out
 
@@ -1635,7 +1653,8 @@ def resume_stale_item(home: Path) -> dict | None:
 # filled BEFORE the orchestrator verifies, so that state is a landing awaiting review and not a
 # missed resolution. NOT detected, by construction: a fast-forward or squash merge (no merge
 # subject names the branch) and a repo with no git. Both stay silent rather than guess.
-LANDED_MERGE_RE = re.compile(r"^Merge branch '(?:[^']*/)?wo[-_]?(\d{3})(?!\d)[^']*'", re.IGNORECASE)
+# A `wo-NNN-sN` slice branch is one slice of a folder order, not the order: its merge says nothing about the rest.
+LANDED_MERGE_RE = re.compile(r"^Merge branch '(?:[^']*/)?wo[-_]?(\d{3})(?!\d)(?!-s\d+')[^']*'", re.IGNORECASE)
 LANDED_SCAN = 400               # how many recent merge commits are read
 
 
@@ -1797,6 +1816,69 @@ def check_resume(home: Path) -> tuple[list[dict], str | None]:
                                  f"pointer -> a rules section here holds pointers only; move "
                                  f"the content to the brain and point at it from here"})
     return items, None
+RULES_CORE_NAME = "standing-rules.md"
+RULES_CORE_MAX = 10 * 1000        # the core page every session reads: about 10 KB
+RULES_TOPIC_MAX = 12 * 1000       # a topic page: about 12 KB
+WIKILINK = re.compile(r"\[\[([^\]|#]+)")
+
+
+def _rules_stems(text: str) -> set[str]:
+    """Page names a text links to, by markdown link or [[wikilink]] (fences and code spans skipped)."""
+    stems = {Path(t).stem for t in extract_links(text) if t.lower().endswith(".md")}
+    clean = re.sub(r"`[^`]*`", "", "\n".join(
+        ln for ln in text.splitlines() if not FENCE.match(ln)))
+    stems |= {Path(m.strip()).stem for m in WIKILINK.findall(clean)}
+    return stems
+
+
+def rules_pages(home: Path) -> tuple["Path | None", list[Path]]:
+    """The core standing-rules page under the brain and the topic pages it links to ([] if none)."""
+    wiki = home / "brain" / "wiki"
+    if not wiki.is_dir():
+        return None, []
+    cores = sorted(wiki.rglob(RULES_CORE_NAME))
+    if not cores:
+        return None, []
+    core = cores[0]
+    text = _read(core)
+    if text is None:
+        return core, []
+    by_stem = {p.stem: p for p in sorted(wiki.rglob("*.md")) if p != core}
+    return core, [by_stem[s] for s in sorted(_rules_stems(text)) if s in by_stem]
+
+
+def check_rules_pages(home: Path) -> list[dict]:
+    """Size of the standing-rules pages, and the RESUME naming a topic page. Silent without a topic layout.
+
+    Applies only where the core page links topic pages: a repo with one small rules page has no
+    layout to outgrow. A page past its cap is a finding to SPLIT, never split here. The RESUME
+    finding is advisory: it judges only a RESUME that already points at the rules.
+    """
+    core, topics = rules_pages(home)
+    if core is None or not topics:
+        return []
+    items: list[dict] = []
+    pages = [(core, RULES_CORE_MAX, "core")] + [(t, RULES_TOPIC_MAX, "topic") for t in topics]
+    for page, cap, role in pages:
+        try:
+            size = page.stat().st_size
+        except OSError:
+            continue
+        if size > cap:
+            items.append({"kind": "rules-page-oversized", "page": page.name, "bytes": size,
+                          "finding": f"the {role} rules page {page.name} is {size} bytes, over about "
+                                     f"{cap} -> split it: move the rules of one clear area out to a "
+                                     f"topic page whole and leave a pointer (nothing is split for you)"})
+    resume = _read(home / RESUME_FILENAME)
+    if resume is not None and core.stem in resume:
+        if not _rules_stems(resume) & {t.stem for t in topics}:
+            items.append({"kind": "resume-topic-pages", "advisory": True,
+                          "finding": f"{RESUME_FILENAME} points at the rules but links no topic page while "
+                                     f"{core.name} lists {len(topics)} -> at the checkpoint, list as links "
+                                     f"the topic pages the work ahead touches"})
+    return items
+
+
 # ------------------------------------------------- the harness category (OPTIONAL, WO-052)
 # Same rule as `federation` above: NOT-APPLICABLE IS NOT SKIPPED. A repo with no
 # `<home>/harness.json` has no such category - no line, not in `checked`, not in `skipped`. A repo
@@ -1898,6 +1980,34 @@ def check_dispatch_gate(root: Path, skill_dir: Path | None) -> tuple[list[dict],
                                  "off by configuration (disableAllHooks, "
                                  "allowManagedHooksOnly) - a guardrail, not a proof"})
     return items, None
+
+
+def check_agent_turn_cap(root: Path) -> list[dict]:
+    """Advisory `agent-no-turn-cap`: a worker definition `<root>/.claude/agents/gitos-*.md` whose frontmatter has no
+    positive integer `maxTurns` (WO-135).
+
+    WHY AN ADVISORY. Claude Code ignores a frontmatter key it does not recognise, without an error, so a definition
+    that lost the cap (a hand edit, a misspelt key, an older copy) runs uncapped and nothing says so. Only the engine's
+    own worker definitions (the `gitos-` prefix) are judged: a repo's other definitions are its own. Never gating, never
+    counted. Nothing is reported when the folder is absent or a file cannot be read.
+    """
+    items: list[dict] = []
+    folder = root / ".claude" / "agents"
+    if not folder.is_dir():
+        return items
+    for path in sorted(folder.glob("gitos-*.md")):
+        text = _read(path)
+        if text is None:
+            continue
+        pairs = parse_frontmatter(text) or {}
+        value = pairs.get("maxTurns", "")
+        if not (value.isdigit() and int(value) > 0):
+            items.append({"kind": "agent-no-turn-cap", "advisory": True, "file": f".claude/agents/{path.name}",
+                          "finding": f".claude/agents/{path.name} has no positive integer `maxTurns` in its frontmatter "
+                                     f"(found {value!r}), so a worker dispatched through it is not stopped at a turn cap "
+                                     f"and Claude Code ignores an unrecognised key without saying so -> add `maxTurns: <n>` "
+                                     f"between the `---` lines, spelt exactly so (the engine's own definition carries the value)"})
+    return items
 
 
 def _matcher_covers(matcher: object, source: str) -> bool:
@@ -3039,6 +3149,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,
     # visible skip, never a silent CLEAN.
     rs_items, rs_reason = check_resume(home)
     r["resume"].extend(rs_items)
+    r["resume"].extend(check_rules_pages(home))
     if rs_reason is None:
         checked.add("resume")
     else:
@@ -3086,7 +3197,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,
     # unscaffolded home never had the gate laid, so it gets no key and no line at all.
     if claude.is_file() and CLAUDE_ANCHOR_START in (_read(claude) or ""):
         d_items, d_reason = check_dispatch_gate(home.parent, skill_dir)
-        r["dispatch"] = d_items
+        r["dispatch"] = d_items + check_agent_turn_cap(home.parent)
         if d_reason is None:
             checked.add("dispatch")
         else:

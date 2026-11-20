@@ -344,6 +344,15 @@ orchestrator's merge review is the backstop. Then run the canary: a single-file 
 section is a `order-needs-folder` finding; `slice.py add WO-NNN NAME <home>` converts it with `git mv`.
 Claude Code only, and `disableAllHooks` switches it off.
 
+**4w. Worker agent definitions.**
+Run `python <SKILL_DIR>/scripts/scaffold.py <root> --git skip`: it lays `gitos-implementer.md`
+into `<repo>/.claude/agents/` (with `Explore.md` and `Plan.md`) when it is absent. It carries only `maxTurns`, so a worker
+dispatched through it stops at a turn cap; model and effort come from the dispatch. A second run writes
+nothing. An existing file is never replaced, as with the other `.claude/agents/` files, so a repo that tuned the cap
+keeps it; scaffold names a file that differs from the engine's as a local edit and leaves it. The canary's advisory
+`agent-no-turn-cap` reports a `gitos-*` definition with no positive `maxTurns` (an older copy, or a hand edit that dropped
+it): add the key by hand.
+
 **4t. Follow-ups on orders.**
 An order takes no `## Carried loose ends` boxes any more (v57). `drain accept ID --work-order NNN --slice NAME` writes
 a `proposed` slice with `origin:` set to the items (a single-file order becomes a folder); without `--slice` the
@@ -430,7 +439,7 @@ tools and the audits of 4v, so every question is computed against the repo as up
 opt-in is still unanswered (model optimization has no recorded preference; lenses have no `lenses.json` and a lens
 exists; System One has no repo choice in `<home>/system-one.json` and a machine config exists or
 `system_one.py setup --detect` prints a line; federation has something to offer;
-a legacy register is unanswered; the harness audit holds removal candidates) and prints **one question batch**,
+a legacy register is unanswered; the harness audit holds removal candidates; ccusage is not installed, npm is, and this machine has no answer yet) and prints **one question batch**,
 or **nothing** when nothing is unanswered. **If it prints nothing, this step is over: say nothing.** It writes
 nothing itself. A line `offer: X not read (reason)` on stderr means that check could not run and its question was
 not asked: report it, never treat it as an empty offer.

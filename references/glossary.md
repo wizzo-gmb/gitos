@@ -214,7 +214,7 @@ The orchestrator's written ruling on each note, one of three verdicts: ACCEPT (`
 routing grammar of `loose_ends.py drop --to` and `drain decline --route` (`closed: <reason>` in place of a verdict).
 
 **Worktree**
-The implementer's own git checkout, `<parent>/<repo>.worktrees/wo-NNN` on branch `wo-NNN`, reaped once merged and
+The implementer's own git checkout, `<parent>/<repo>.worktrees/wo-NNN` on branch `wo-NNN` (`wo-NNN-sN` for a slice), reaped once merged and
 clean. A **slice marker** in a slice worktree's git dir arms the `slice_guard` hook.
 
 **Scope bound**

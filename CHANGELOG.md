@@ -18,6 +18,27 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v66 — 2026-11-20
+breaking: no
+
+- `scripts/cost_report.py`: on request, a repo's session spend split into orchestrator and workers by model, the costliest workers and the dispatch pairs; dollars approximate, shares exact (WO-134)
+- ccusage offered once per machine in the offer round (install, no: gitos's own report, later); never installed unasked (WO-134)
+- Worker turn cap: one cap-only `gitos-implementer` agent definition (`maxTurns` 150, hand back by about 120), laid by scaffold / upgrade step 4w and usable from the next window; model and effort come from the dispatch; canary advisory `agent-no-turn-cap` (WO-135)
+- Per-slice worktrees `wo-NNN-sN`; `select` matches a full model id to its alias (it refused every routed dispatch); system_one scope finds slice branches; unpriced workers listed first in cost_report (WO-136)
+
+---
+
+## v65 — 2026-11-20
+breaking: no
+
+- Dispatch guard mapping floor: with model optimization on, a pair no tier uses, or a worker at or above the lead's pair, is refused with no receipt and no new setting; a repo whose dispatches use unlisted pairs must list them in its mapping (WO-133)
+- Canary: RESUME lines copying a model, effort or cap beside workers/agents/dispatch, and `Per <rules page>:` lines, are `resume-standing-rule`; `rules-page-oversized` past about 10 KB core / 12 KB topic; advisory `resume-topic-pages` (WO-133)
+- Stop reminder: a stale RESUME while an order has an open slice asks only for a RESUME refresh, never the resolution (WO-133)
+- `federation file --supersedes ID` / `--withdraw ID`: a sender marks its own earlier proposal in the target's intake; listed apart as not live (WO-133)
+- Directives: resume and handoff carry state, never rules; core rules page plus topic pages (brain-schema.md); a worker runs in the foreground and hands back once (WO-133)
+
+---
+
 ## v64 — 2026-11-18
 breaking: no
 audit: owner board route (references/upgrade.md step 4s)

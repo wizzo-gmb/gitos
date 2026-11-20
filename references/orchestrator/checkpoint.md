@@ -35,6 +35,9 @@ RESUME), the next three steps, pointers to the standing rules. Short (target und
 pointer-only; the template is the engine's `assets/RESUME.md.tmpl`, laid by the scaffold. The
 canary reports a RESUME over 150 lines (`resume-oversized`) and a bullet under a rules heading that
 points at nothing (`resume-rules-section`).
+RESUME carries state only. If a line in it differs from the standing rules or the tier mapping, remove the line: the
+rules and the mapping win. List, as links, only the topic pages the work ahead touches (`references/brain-schema.md`,
+*Core rules and topic pages*), not every page.
 **Drain the loose ends** at each checkpoint, for the whole list (*Draining the loose ends*).
 **Sweep background work** at each checkpoint and before any `/clear`: watchers and wait loops are
 stopped; a test run or a server is stopped only after reading what it is doing; whatever stays running
