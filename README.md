@@ -248,9 +248,8 @@ orchestrator.
 ### System One: connecting a local model (optional)
 
 If you have a local model, **System One** connects it to the engine and the drain runs on it instead of the cloud
-helper: free per call, and the same proposals through the same checks. When it is down (say, while you use the
-GPU) the drain falls back to the cloud helper or waits; that is reported once, never as a problem, and never
-blocks a commit.
+helper: free per call, and the same proposals through the same checks. When it is down (say, while your machine is busy) the drain falls back to the cloud
+helper or waits; that is reported once, never as a problem, and never blocks a commit.
 
 ```text
 system_one.py setup                  find and check a local server; --write saves the machine config
@@ -262,23 +261,22 @@ system_one.py helper                 which model the cloud helper runs on
 system_one.py uses-check             check every question type against a server after a model change
 ```
 
-**What it takes.** A CUDA GPU with about 20 GB free, and Linux or WSL2. The tested model is
-[`Qwen/Qwen3.5-9B`](https://huggingface.co/Qwen/Qwen3.5-9B) at BF16, run alone on the card; any server that
-answers the same request shape works.
+**What it takes.** Any model you can serve locally, behind a server that answers `POST /v1/systemone` (the engine
+sends it one small question at a time and checks every answer). The engine does not care which model or hardware
+you use; a small instruction-tuned model is enough. The repo ships a reference server
+(`assets/system-one/serve_general.py`) you can point at a model directory, or you can put the same endpoint in
+front of whatever you already run.
 
 **Connecting it, once per machine.**
 
-1. Download the model (`hf download Qwen/Qwen3.5-9B --local-dir models/qwen3.5-9b`) and install its requirements
-   in a Python 3.12 environment.
-2. Start the shipped server: `python assets/system-one/serve_general.py models/qwen3.5-9b --warmup`. It listens on
-   `127.0.0.1:8765`.
-3. Run `python scripts/system_one.py setup`, then `uses-check`. `setup` checks that the server is really a System
-   One server, shows what it would write, and writes the machine config only with `--write`.
-4. Each repo is then asked once, at inception or on the next `/gitos upgrade`, whether to use it; `system_one.py
+1. Start your server so it answers on a local address (the reference server listens on `127.0.0.1:8765`).
+2. Run `python scripts/system_one.py setup`, then `uses-check`. `setup` checks that the server is really a System
+   One server, shows what it would write, and writes the machine config (endpoint and model label) only with
+   `--write`. `uses-check` runs every question type against the server; run it again after any model change.
+3. Each repo is then asked once, at inception or on the next `/gitos upgrade`, whether to use it; `system_one.py
    repo on` turns it on directly. A repo that has not chosen it uses the cloud helper.
 
-Auto-start, serving other machines on your network, the Windows settings that matter when the GPU also drives
-your display, and measured speeds: **`references/system-one.md`** → *Machine setup*.
+Auto-start, serving other machines on your network, and the full config: **`references/system-one.md`** → *Machine setup*.
 
 ## Federation — optional, off by default
 
