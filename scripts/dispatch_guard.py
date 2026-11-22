@@ -65,6 +65,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import time
@@ -264,6 +265,10 @@ def same_model(requested, recorded):
     What an alias resolves to is the client's, and this gate cannot observe it.
     """
     a, b = requested.strip(), recorded.strip()
+    if a == b:
+        return True
+    # A trailing context-window suffix (`opus[1m]`) names the same model with a larger window, not another model.
+    a, b = re.sub(r"\[[^\]]*\]$", "", a).strip(), re.sub(r"\[[^\]]*\]$", "", b).strip()
     if a == b:
         return True
     if a.lower() in CLAUDE_ALIASES or b.lower() in CLAUDE_ALIASES:

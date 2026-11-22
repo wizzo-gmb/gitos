@@ -2,8 +2,9 @@
 """board.py - the owner board of one gitos home. Standard library only.
 
 A small web page on a loopback address (127.0.0.1 unless board.json says `host`) where the owner answers what the agent
-asks: every owner approval is a card here. It lives at <home>/board/: this file and board.json (port, board_id, optional
-host, tabs, routes) are tracked; data/, inbox/ and outbox/ are git-ignored.
+asks: a plan, a send, a `claim()` approval and anything asked while the operator is away is a card here; a single
+in-window question is asked in chat. It lives at <home>/board/: this file and board.json (port, board_id, optional host,
+tabs, routes) are tracked; data/, inbox/ and outbox/ are git-ignored.
 
 Agent side. No command here records an answer: only the board page does, through POST /api/answer.
   ensure [--tab T]             start this home's board when it is not answering, then print one line:
@@ -94,7 +95,7 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-BOARD_VERSION = 4
+BOARD_VERSION = 5
 DEFAULT_HOST = "127.0.0.1"
 PORT_LO, PORT_HI = 8800, 8999
 BASE_TABS = ("decisions",)

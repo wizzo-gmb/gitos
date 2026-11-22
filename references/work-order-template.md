@@ -25,6 +25,11 @@ single file, or a folder's `order.md`) adds `pending: <what it waits on>`. The b
 `order-ready-to-close` for it. `order-split-advice` and `slice-oversized` stay: they are about the order's shape. The
 orchestrator removes the key when the wait is over, then closes the order.
 
+**Sprint marks.** An order's front matter may carry the optional key `sprint`: `ready` means an interactive orchestrator checked
+the order against the sprint eligibility criteria and the operator agreed (an unattended sprint with no `--orders` list takes only
+`ready` orders); `no` means never in a sprint, for any reason. Neither is set by a sprint; remove the key to clear it
+(`orchestrator/sprint-prep.md`).
+
 Legacy homes carry the same file as `outputs/debug/bug_<NNN>_<slug>.md`; that path still reads
 correctly and needs no retrofit. New work-orders use the `<home>/work-orders/` convention above.
 
@@ -92,9 +97,9 @@ evidence: <primary file:line>
 
 > **▶ Role on direct open.** Opened this work-order in a fresh window to *do the work* (or were
 > dispatched to it)? You are the **Implementer** (`references/roles/implementer.md`), **not** the
-> orchestrator: read this WO in full, **plan first → then execute**, edit **only** what
-> `## Proposed fix scope` names, and fill `## Implementer notes` on completion. Driving the whole
-> repo / deciding what's next instead? That's the orchestrator — `references/roles/orchestrator.md`.
+> orchestrator: read this WO in full, **plan first → then execute**, edit **only** what the
+> Proposed fix scope section names, and fill the Implementer notes section on completion. Driving the
+> whole repo / deciding what's next instead? That's the orchestrator — `references/roles/orchestrator.md`.
 
 ## Severity
 critical | high | medium | low | unconfirmed
@@ -194,9 +199,9 @@ evidence: <the design or decision page it rests on>
 
 > **▶ Role on direct open.** Opened this work-order in a fresh window to *do the work* (or were
 > dispatched to it)? You are the **Implementer** (`references/roles/implementer.md`), **not** the
-> orchestrator: read this WO in full, **plan first → then execute**, edit **only** what
-> `## Proposed fix scope` names, and fill `## Implementer notes` on completion. Driving the whole
-> repo / deciding what's next instead? That's the orchestrator — `references/roles/orchestrator.md`.
+> orchestrator: read this WO in full, **plan first → then execute**, edit **only** what the
+> Proposed fix scope section names, and fill the Implementer notes section on completion. Driving the
+> whole repo / deciding what's next instead? That's the orchestrator — `references/roles/orchestrator.md`.
 
 ## Severity
 critical | high | medium | low | unconfirmed

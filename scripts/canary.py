@@ -278,6 +278,7 @@ WO_FORM_NAMES = ("<prefix><sep>NNN<sep><slug>.md — an optional letter prefix (
 # `<dir>/order.md`, so every reader that joins a listed name onto the ledger dir reads the folder form unchanged.
 WO_DIR_RE = re.compile(rf"^(?:[A-Za-z]+[-_.]?)?{IDENT_NNN}(?:[-_.][A-Za-z0-9][\w.-]*)?$")
 ORDER_FILE = "order.md"
+SPRINT_MARKS = ("ready", "no")     # the values of an order's `sprint:` front matter key (the sprint driver refuses any other)
 SLICE_HEAD_RE = re.compile(r"^###\s+S\d+(?!\d)")
 NNN_RE = re.compile(r"\d{3}")
 EMDASH = "—"           # resolved rows may carry an em-dash NNN (no work-order number)
@@ -1744,11 +1745,28 @@ def worktree_items(home: Path, skill_dir: "Path | None" = None) -> list[dict]:
     return mod.findings(inv) if inv is not None else []
 
 
+def layout_findings(home: Path, mod) -> list[dict]:
+    """`worktree-layout-unparseable`: the home's `worktrees.json` does not load (`worktree.load_layout` names the problem). The
+    inventory raises on it and reads as "git could not be read", so this is the one place it is said."""
+    try:
+        mod.load_layout(home)
+    except Exception as e:
+        text = str(e)
+        lead = f"{mod.LAYOUT_FILE}: "
+        return [{"kind": "worktree-layout-unparseable", "file": f"{home.name}/{mod.LAYOUT_FILE}",
+                 "finding": f"{home.name}/{mod.LAYOUT_FILE}: {text[len(lead):] if text.startswith(lead) else text} -> fix it "
+                            "(worktree.py and the sprint driver refuse until then)"}]
+    return []
+
+
 def check_worktrees(home: Path, skill_dir: "Path | None") -> tuple[list[dict], str | None]:
     """-> (items, skip-reason | None)."""
     mod, inv = worktree_inventory(home, skill_dir)
     if mod is None:
         return [], f"{WORKTREE_TOOL} not found beside canary.py or in the skill"
+    bad_layout = layout_findings(home, mod)
+    if bad_layout:
+        return bad_layout, None
     if inv is None:
         return [], "git could not be read here (no repository, or git failed)"
     return mod.findings(inv), None
@@ -2562,7 +2580,8 @@ def _pending_text(meta: dict) -> str:
 def check_slices(home: Path, skill_dir: "Path | None", today: "date | None" = None) -> list[dict]:
     """The folder orders' slices (WO-110). Gating: `slice-landed-no-commit` (a landed slice with an empty `commit:`),
     `slice-depends-dangling` (a `depends_on` naming no slice), `slice-depends-cycle`. Advisory: `order-ready-to-close` (an
-    open order whose slices are all landed or dropped and that does not wait on `pending:`), `order-pending` (an open order whose front
+    open order whose slices are all landed or dropped and that does not wait on `pending:`), `sprint-mark-unknown` (gating: an open
+    order whose `sprint:` value is neither `ready` nor `no`), `order-pending` (an open order whose front
     matter says `pending: <what it waits on>`, listed once with the text; WO-125), `slice-stale` (in-progress, no commit touching the file for
     SLICE_STALE_DAYS), `order-oversized` and `slice-oversized` (order.md or a slice over its per-file limit), `order-split-advice` (an open
     order with SPLIT_ADVICE_SLICES or more slices). Read-only; nothing to check without ledger_index.py."""
@@ -2629,6 +2648,11 @@ def check_slices(home: Path, skill_dir: "Path | None", today: "date | None" = No
     pending: dict[str, str] = {}
     for nnn, f in li._orders(home / "work-orders"):
         meta = li.parse_front_matter(_read(f) or "")[0]
+        mark = meta.get("sprint", "")
+        if not li.is_parked(meta) and mark and str(mark).strip().lower() not in SPRINT_MARKS:
+            items.append({"kind": "sprint-mark-unknown", "wo": f"WO-{nnn}", "file": f.relative_to(home).as_posix(),
+                          "finding": f"WO-{nnn} has `sprint: {str(mark).strip()}`, which is not `ready` or `no` (a sprint "
+                                     "skips it without saying so) -> set one of them or remove the key"})
         text = _pending_text(meta)
         if text and not li.is_parked(meta):
             pending[nnn] = text

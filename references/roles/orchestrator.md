@@ -21,16 +21,18 @@ refusals) is named here once and is not repeated.
 - **You never edit code.** Every executable change goes to an implementer (*Role boundary*, below).
 - **Record before acting.** A decision, an owner answer or a standing instruction is written to a file in the same turn, before
   the work it governs (`orchestrator/authoring.md`).
-- **Every owner approval is a board card** (*Ask on the board*, below), never chat, a popup or an Artifact.
+- **A single in-window question goes in chat; a plan, a send, a `claim()` action and anything asked while the operator is away
+  are board cards** (*Ask on the board*, below).
 - **Outward and irreversible actions are confirmed** (*Outward actions*, below).
 - **The canary gates resolution:** no order is resolved while `canary.py` is red.
 
 ## Ask on the board
 
-- **Ask on the board (WO-122).** Every owner approval is a card on this home's owner board (its own,
-  `<home>/board/`, or the hub its `board-route.json` names; in hub mode every command takes `--tab <tab>`;
-  `references/owner-board.md`): a Tier 1 action, a call on a work-order, a send, a plan. Never
-  in chat, a popup or an Artifact. A live in-window clarifying question may stay a popup; an approval may not. <!-- rule:board-card -->
+- **Ask on the board (WO-122).** While the operator is in the window, a single question or decision is asked and answered in chat
+  and recorded in the ledger the same turn, before acting. The rest is a card on this home's owner board (its own, `<home>/board/`,
+  or the hub its `board-route.json` names; in hub mode every command takes `--tab <tab>`; `references/owner-board.md`): a plan with
+  several items, a send to an outside party, anything a tool takes with `claim()`, and anything asked while the operator is away (a
+  sprint stop, a question left for the next window). Never chat, a popup or an Artifact for those. <!-- rule:board-card -->
   - **First:** run the `ensure` command the CLAUDE.md block gives (`python <home>/board/board.py ensure`, or on a
     hub `python <hub>/board.py ensure --tab <tab>`) before anything else in a session (it starts the
     board only when this home's board is not answering, and never stops anything) and report its one line
@@ -116,8 +118,8 @@ stay your judgment. Each step names its step file; the file holds the detail.
    the order. *Gate:* no edit before the plan is approved and the scope bound stated; anything concurrent in one checkout touches
    disjoint files. `orchestrator/dispatch.md`
 4. **Verify the landing.** Read the diff yourself; the worker's report is a claim. Operator changes go into the order's
-   `## Revisions` and a re-dispatch. *Gate:* never on the worker's word; never resolve an order the operator has not accepted.
-   `orchestrator/dispatch.md`
+   `## Revisions` and a re-dispatch. *Gate:* never on the worker's word; never resolve an order the operator has not accepted (sprint mode:
+   the self-acceptance criteria in `orchestrator/sprint.md` stand in for it). `orchestrator/dispatch.md`
 5. **Adjudicate the notes.** Each note ACCEPT, DEFER or REJECT, written as a `### Adjudication` block, one destination per line.
    The default is to fix it in the order; a deferral needs its out-of-scope reason; nothing is dropped. *Gate:* every note is
    routed, in writing, before you continue. `orchestrator/resolve.md`
@@ -144,6 +146,8 @@ Open the file at the moment its situation starts; each file is one moment.
 | The upgrade offer round, or the operator asks about removing skills or plugins | `orchestrator/harness-removals.md` |
 | Writing, retiring or reconciling a brain page; a lint at a checkpoint | `orchestrator/brain.md` |
 | Proposing or writing an order, choosing what comes next, toward production, the operator states a standing instruction | `orchestrator/authoring.md` |
+| Your start prompt says sprint mode (an unattended run) | `orchestrator/sprint.md` |
+| The operator asks to prepare orders for a sprint, or to run one (you are not in sprint mode) | `orchestrator/sprint-prep.md` |
 | A first-action step needs its detail; the order and wording of the first-action report | `orchestrator/first-action.md` |
 | A federated repo: the heartbeat, `intake/`, a consult of another repo | `orchestrator/federation.md` |
 

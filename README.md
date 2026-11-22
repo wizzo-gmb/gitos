@@ -165,6 +165,38 @@ lens the repo uses, so a quant repo never checks design lenses and the other way
 `/gitos upgrade` asks once, and in a repo that already has lenses it suggests keeping what that repo uses.
 `python scripts/lenses.py status` shows what is active.
 
+## Owner board
+
+Every gitos home carries a small local web page, the **owner board** (`<home>/board/`), where you answer what
+the agent asks. A plan with several items, a send to an outside party, or a question left while you are away
+becomes a card there; a single question while you are in the window is just asked in chat. It is stdlib-only
+Python on a loopback address, its answers are files in the home, and any session finds it again after a
+compaction, `/clear` or a new window. Start or find it with `python <home>/board/board.py ensure`. A workspace of
+several repos can share one board (a hub). Details: [owner board](references/owner-board.md).
+
+## Sprint mode — work the ledger while you are away
+
+A sprint works through a repo's open work-orders unattended, in a visible Claude session you can watch and step
+into. You start it with one command in a terminal (Windows only for now):
+
+```bash
+python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --autocompact 500k --effort medium
+```
+
+- **Same orchestration as a normal window:** parallel implementers, one worktree per order, the same dispatch
+  rules and model mapping. The flags set the orchestrator session only; your own permission setting applies.
+- **Only the orders you cleared.** Tell a normal orchestrator window "prepare for a sprint": it settles in-flight
+  work and marks orders `sprint: ready`. `--orders 12,14` narrows it further. Anything outward or shared-state
+  (a push, a deploy, a migration) stops the sprint; it commits, and push stays yours.
+- **Rotates itself.** After the session compacts twice, the orchestrator checkpoints and the driver starts a
+  fresh session, which resumes from the ledger.
+- **Quiet.** Each reply is the role marker line alone; progress goes to a `sprint` tab on the owner board (a
+  self-refreshing log with a cost line), the commits and the ledger.
+- **Stops cleanly.** The board's Stop card stops after the current order; a malformed input is refused and
+  reported back for your next normal window. Every stop writes the resume state first.
+
+Operator guide: [sprint mode](references/sprint.md).
+
 
 ## Model optimization — optional, off by default
 

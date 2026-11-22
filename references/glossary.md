@@ -396,8 +396,10 @@ Opt-in model and effort routing per dispatch, by tier (light / standard / deep) 
 
 **Owner board**
 The local answer page every home carries at `<home>/board/` (`references/owner-board.md`), served on 127.0.0.1 and
-started by `board.py ensure`. Every owner approval is a card there, never in chat or an Artifact; an answer counts
-only against the card as it is now, is recorded in the ledger before anything acts on it, and is used once. <!-- rule:glossary-board-entry -->
+started by `board.py ensure`. A plan, a send, a `claim()` approval and anything asked while the operator is away is a
+card there, never in chat or an Artifact; a single in-window question is asked and answered in chat, recorded in the
+ledger the same turn. An answer counts only against the card as it is now, is recorded in the ledger before anything
+acts on it, and is used once. <!-- rule:glossary-board-entry -->
 
 **Waiting view** (`loose_ends.py status`, `scripts/waiting.py`)
 The one place that lists everything waiting on the operator: drain `ask` proposals, loose-ends rows in state

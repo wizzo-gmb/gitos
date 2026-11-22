@@ -818,9 +818,10 @@ def main() -> int:
             print(f"OK   wrote {repo_decl.relative_to(root)} (starter, adopted: false)")
 
     # ---- the owner board (WO-122) ------------------------------------------
-    # `<home>/board/`: every owner approval is a card on this local page. Built before the CLAUDE.md block and
-    # the RESUME, which both carry its port. Full-role scaffolds only; the same pass is upgrade's step for a repo
-    # without one (references/upgrade.md).
+    # `<home>/board/`: a plan, a send, a `claim()` approval and anything asked while the operator is away is a card on
+    # this local page; a single in-window question is asked in chat. Built before the CLAUDE.md block and the RESUME,
+    # which both carry its port. Full-role scaffolds only; the same pass is upgrade's step for a repo without one
+    # (references/upgrade.md).
     hub_mode = False
     if not diagnostic_only:
         try:

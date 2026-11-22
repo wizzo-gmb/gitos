@@ -67,10 +67,12 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
    valid answer. Write them **under those five labels** (they help the orchestrator read them), and
    make *Durable facts* the reasons, limits, rules and traps a later change must know, **not**
    a description of what you built (the code and the work-order already hold that).
+   When you edit an order's notes by script, find the section by its heading at the start of a line, below the role line,
+   never by the first occurrence of its text.
    If dispatched with model optimization enabled, complete its existing compact
    model/outcome entry: observed settings or explicit unknown, revisions/escalation,
    and a material reason. Do not infer execution from the requested model, write
-   routing memory, or add a mandatory lesson. See `references/model-optimization.md`.
+   routing memory, or add a mandatory lesson. See `references/model-optimization.md`. <!-- rule:implementer-notes-heading -->
 4. **End your background work, then return.** Run commands in the foreground with a time limit. Do not stop to wait
    on background work of your own, and hand back once, at the end. Every background command you do start gets a time limit and
    writes its log to a known place. Before returning, stop every process you started. Anything

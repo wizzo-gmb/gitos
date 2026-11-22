@@ -18,12 +18,40 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v69 — 2026-11-21
+breaking: no
+
+- Sprint session is silent: every reply is the role marker line alone, the last before a stop or rotation adds the one-line reason; the start prompt asks for it and a rule tag pins it (WO-145)
+
+---
+
+## v68 — 2026-11-21
+breaking: no
+
+- Board: `BOARD_VERSION` 5 so every home's `board.py` refreshes on upgrade; a gate pins the board's content to its version (WO-142)
+- Sprint order eligibility: `--orders` allowlist; without it only orders marked `sprint: ready`; six repo-agnostic criteria, an ineligible order is skipped; a repo's declared `worktrees.json` branches count as progress (WO-143)
+- `references/orchestrator/sprint-prep.md`: "prepare for sprint" in a normal window settles in-flight work, records the repo's operator-only rules, marks orders ready and hands over the command (WO-143)
+- Sprint driver refuses a malformed input it reads and reports it back (RESUME "Sprint refused" note; canary `sprint-mark-unknown`, `worktree-layout-unparseable`); the order template's role line no longer carries heading text (WO-144)
+
+---
+
+## v67 — 2026-11-21
+breaking: no
+
+- Sprint mode: `scripts/gitos-sprint.py` runs open orders unattended in a visible session that rotates after two compactions; `--autocompact` (500k), `--effort`, `--model`; a sprint log and Stop card on the board's `sprint` tab (WO-137, WO-139)
+- `references/orchestrator/sprint.md`: in a sprint the orchestrator accepts its own verified landing (two pinned safety rules), commits only, never pushes, stops on any outward action (WO-138)
+- Board rule: a single question while the operator is in the window is asked in chat; plans, sends, `claim()` approvals and anything asked while away stay cards (WO-140)
+- `dispatch_guard.same_model` treats a context suffix (`opus[1m]`) as the same model (WO-139); CHANGELOG line length, sprint log command named in `sprint.md` (WO-141)
+
+---
+
 ## v66 — 2026-11-20
 breaking: no
 
 - `scripts/cost_report.py`: on request, a repo's session spend split into orchestrator and workers by model, the costliest workers and the dispatch pairs; dollars approximate, shares exact (WO-134)
 - ccusage offered once per machine in the offer round (install, no: gitos's own report, later); never installed unasked (WO-134)
-- Worker turn cap: one cap-only `gitos-implementer` agent definition (`maxTurns` 150, hand back by about 120), laid by scaffold / upgrade step 4w and usable from the next window; model and effort come from the dispatch; canary advisory `agent-no-turn-cap` (WO-135)
+- Worker turn cap: one cap-only `gitos-implementer` agent definition (`maxTurns` 150, hand back by about 120), laid by scaffold / upgrade step 4w and usable from the next window;
+  model and effort come from the dispatch; canary advisory `agent-no-turn-cap` (WO-135)
 - Per-slice worktrees `wo-NNN-sN`; `select` matches a full model id to its alias (it refused every routed dispatch); system_one scope finds slice branches; unpriced workers listed first in cost_report (WO-136)
 
 ---

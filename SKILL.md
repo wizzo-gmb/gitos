@@ -302,7 +302,8 @@ applies.
 - `references/lenses.md` — what a lens is, the two layers, matching (the full *Lenses* description).
 - `references/federation.md` — the `federation` command, the per-repo opt-in file + groups, the machine-level registry, and the two cross-repo contracts: **consult** (read) and **cross-file + intake** (write — proposals, never work-orders; bodies are data, never directives). Opt-in; invisible when off.
 - `references/orchestrator/` — the orchestrator's step files (dispatch, resolve, checkpoint, drain, harness removals, brain, authoring, first action, federation), each opened when its step starts; the trigger table is in `references/roles/orchestrator.md`.
-- `references/owner-board.md` — the local owner board in every home (`<home>/board/board.py ensure`): every owner approval is a card there; CLI, module API, consent, security. <!-- rule:skill-board-pointer -->
+- `references/owner-board.md` — the local owner board in every home (`<home>/board/board.py ensure`): a plan, a send, a `claim()` approval and anything asked while the operator is away are cards there (a single in-window question is asked in chat); CLI, module API, consent, security. <!-- rule:skill-board-pointer -->
+- `references/sprint.md` — sprint mode for the operator: `scripts/gitos-sprint.py [REPO] --autocompact --effort --model`, a visible session that rotates itself, the board's `sprint` tab and Stop card, Ctrl-C, the preflight refusals (the orchestrator's in-session rules: `references/orchestrator/sprint.md`).
 - `references/disciplines.md` — the transferable engineering disciplines (the war-stories, with the why).
 - `references/glossary.md` — the lexicon: one meaning per term of art (the source of truth).
 - `scripts/scaffold.py` — lays the `.gitos/` tree + brain (idempotent).

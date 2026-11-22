@@ -59,6 +59,7 @@ STOP_PREFIX = "gitos-stop-seen-"
 OPEN_WO_CAP = 10
 WORKTREE_CAP = 8
 ROTATE_AT = 2
+SPRINT_ENV = "GITOS_SPRINT"     # set to 1 by the sprint driver for the session it starts (references/sprint.md)
 # The engine's detection order (model_optimization.HOMES).
 HOMES = (".gitos", "outputs/debug", ".pipeline", "docs/agents")
 
@@ -327,9 +328,17 @@ def build_output(payload):
         count = bump_count(root, session if isinstance(session, str) else "")
         tail.append(f"Compaction count for this session: {count}.")
     if count >= ROTATE_AT:
-        tail.append("This is the second compaction or later in this window, which is a "
-                    "rotation trigger: checkpoint RESUME.md, tell the operator a fresh window "
-                    "is ready, and stop (references/orchestrator/checkpoint.md, Rotation triggers).")
+        if os.environ.get(SPRINT_ENV) == "1":
+            tail.append("This is the second compaction or later in this window, which is a rotation "
+                        "trigger in sprint mode: checkpoint RESUME.md (the reattach line of any worker "
+                        f"in flight included), write {home / 'sprint' / 'ROTATE'} (one line, the "
+                        "reason: second compaction) and end the session. Do not tell the operator a "
+                        "fresh window is ready: the sprint driver starts the next one "
+                        "(references/orchestrator/sprint.md, Rotation).")
+        else:
+            tail.append("This is the second compaction or later in this window, which is a "
+                        "rotation trigger: checkpoint RESUME.md, tell the operator a fresh window "
+                        "is ready, and stop (references/orchestrator/checkpoint.md, Rotation triggers).")
 
     rows = background_rows(resume_text) if resume_text is not None else 0
     if rows:

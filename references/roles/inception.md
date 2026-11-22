@@ -95,7 +95,7 @@ files. It lays:
 - `.gitos/brain/` — the empty brain structure (BRAIN.md, raw/, wiki/ with sources/
   entities/ concepts/ decisions/ directories, a generated index.md, .brainmeta.json)
 - `.gitos/tools/brain_lint.py` + `.gitos/tools/canary.py` — the deterministic backstops (brain health + home-state drift), self-contained in the home
-- `.gitos/board/` — the owner board (`board.py`, `board.json` with its port; `data/` git-ignored), pointed at from the `CLAUDE.md` block and `RESUME.md`. **Every owner approval is a card there, never asked in chat** (`references/owner-board.md`); the interview and the offer round stay questions in the window.
+- `.gitos/board/` — the owner board (`board.py`, `board.json` with its port; `data/` git-ignored), pointed at from the `CLAUDE.md` block and `RESUME.md`. **A plan, a send, a `claim()` approval and anything asked while the operator is away is a card there; a single in-window question is asked in chat**, recorded in the ledger the same turn (`references/owner-board.md`); the interview and the offer round stay questions in the window.
 - a `<!-- gitos:agent-system -->` block in the repo-root `CLAUDE.md` (created if absent) — the **durable context anchor**: the canary's recovery seed, carried in the layer the harness re-injects every window (SKILL.md → *Canary*). Managed block only; your own `CLAUDE.md` content is never touched.
 
 The script does NOT ingest — that is your job in Phase 3.
