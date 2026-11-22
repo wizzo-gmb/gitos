@@ -218,15 +218,15 @@ optimization preserves previous evidence and guidance.
 
 Configuration, harness support, and limits: [model optimization](references/model-optimization.md).
 
-## System One — optional, off by default
+## Loose ends and System One
 
 Loose ends pile up between work orders: a follow-up an implementer named, a remark that was not acted on, a
 small gap found while doing something else. gitos writes each one down on the repo's loose-ends list so the
-current order stays on track. **System One** is a small local model that drains that list between orders, so
-it never goes stale and nobody has to read it row by row.
+current order stays on track, and a **drain** clears that list between orders, so it never goes stale and nobody
+has to read it row by row.
 
-It turns every loose end into exactly one proposal: join a related open order, a new order for a group of
-related items, park it until an event, ask you, close it, or "read it" when the model is unsure. Each proposal
+The drain turns every loose end into exactly one proposal: join a related open order, a new order for a group of
+related items, park it until an event, ask you, close it, or "read it" when the reader is unsure. Each proposal
 carries the items' own text and context gathered by code (the orders they came from, the files they mention,
 open orders touching the same files). A proposed item moves off the list into the drain pile, so the list only
 ever holds what has not been looked at yet. The orchestrator decides each proposal from the pile: it writes the
@@ -235,25 +235,38 @@ for your confirmation. An item accepted into an order becomes a checkbox there (
 of work that carries it, and the order cannot be resolved while a box is open. Items join only small orders; a
 large one gets a new, single-theme order instead.
 
-System One only does work the main model is not already doing. Decisions made while reading an order, such as
+**By default the drain runs on a small cloud model.** Nothing to set up: the orchestrator exports the drain's
+questions to a file, dispatches a helper on the cheapest model the harness offers (Claude Code: Haiku; Codex:
+`gpt-5.1-codex-mini`; otherwise you are asked once to pick one) to answer them, and code checks each answer and
+writes the proposals. The orchestrator never answers them itself. On the labelled set, Haiku handed back 27% and
+got 15 of 16 settled items right. With model optimization on, the helper runs on the repo's light choice.
+
+The drain only does work the main model is not already doing. Decisions made while reading an order, such as
 routing implementer notes, what goes into the brain, which lenses apply, or reviewing a diff, stay with the
-orchestrator. A second reader there would only add work.
+orchestrator.
+
+### System One: connecting a local model (optional)
+
+If you have a local model, **System One** connects it to the engine and the drain runs on it instead of the cloud
+helper: free per call, and the same proposals through the same checks. When it is down (say, while you use the
+GPU) the drain falls back to the cloud helper or waits; that is reported once, never as a problem, and never
+blocks a commit.
 
 ```text
 system_one.py setup                  find and check a local server; --write saves the machine config
 system_one.py repo on|off|status     use it in this repo, or not
 system_one.py status --brief         one line: on, off, not chosen, or down
-system_one.py drain <home>           turn the loose ends into proposals (drain accept|decline|defer|status)
-system_one.py drain <home> --export F / --answers F   the same drain, answered by a cloud helper
+system_one.py drain <home>           drain on the local server (drain accept|decline|defer|status)
+system_one.py drain <home> --export F / --answers F   the same drain, answered by the cloud helper
 system_one.py helper                 which model the cloud helper runs on
 system_one.py uses-check             check every question type against a server after a model change
 ```
 
-**What you need.** A CUDA GPU with about 20 GB free, and Linux or WSL2. The tested model is
+**What it takes.** A CUDA GPU with about 20 GB free, and Linux or WSL2. The tested model is
 [`Qwen/Qwen3.5-9B`](https://huggingface.co/Qwen/Qwen3.5-9B) at BF16, run alone on the card; any server that
 answers the same request shape works.
 
-**Setting it up, once per machine.**
+**Connecting it, once per machine.**
 
 1. Download the model (`hf download Qwen/Qwen3.5-9B --local-dir models/qwen3.5-9b`) and install its requirements
    in a Python 3.12 environment.
@@ -261,20 +274,11 @@ answers the same request shape works.
    `127.0.0.1:8765`.
 3. Run `python scripts/system_one.py setup`, then `uses-check`. `setup` checks that the server is really a System
    One server, shows what it would write, and writes the machine config only with `--write`.
-4. Each repo is then asked once, at inception or on the next `/gitos upgrade`, whether to use it. A repo that
-   hasn't answered stays off.
+4. Each repo is then asked once, at inception or on the next `/gitos upgrade`, whether to use it; `system_one.py
+   repo on` turns it on directly. A repo that has not chosen it uses the cloud helper.
 
 Auto-start, serving other machines on your network, the Windows settings that matter when the GPU also drives
 your display, and measured speeds: **`references/system-one.md`** → *Machine setup*.
-
-**Without a local model.** The drain still runs. `drain --export` writes its questions to a file, a small
-cloud helper answers them (Claude Code: Haiku; Codex: `gpt-5.1-codex-mini`; otherwise you are asked once to pick a
-model), and `drain --answers` checks each answer and writes the same proposals. On the labelled set, Haiku
-handed back 27% and got 15 of 16 settled items right. A local server that is down (say, while you use the GPU) is
-reported once, never as a problem, and never blocks a commit.
-
-**Without either, nothing changes.** No machine config and no helper means no extra output and no network call.
-The loose-ends list still works; the orchestrator drains it itself.
 
 ## Federation — optional, off by default
 
