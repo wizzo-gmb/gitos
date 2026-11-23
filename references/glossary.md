@@ -75,7 +75,7 @@ A product's end user ("user-facing"), or a Claude Code settings scope ("user sco
 operator, except in the skill's trigger text, which speaks the harness's language.
 
 **Role**
-One of four: inception, orchestrator, diagnostic, implementer (`SKILL.md` calls it the *mode*). The first three are
+One of five: inception, orchestrator, diagnostic, assessor, implementer (`SKILL.md` calls it the *mode*). The first four are
 **repo-entry**: reached by detecting the repo's state and the operator's intent. The implementer is entered on one
 work-order, by dispatch or by the operator opening a window on it. ("Operator-entry" is the retired name.)
 
@@ -91,6 +91,19 @@ adjudicates the notes, resolves orders and stewards the brain. Never edits code:
 **Diagnostic**
 The read-only finder: builds the log vocabulary, scans the anomaly families, writes evidence-first work-orders. It
 never edits code and never dispatches; asked for fixes, it hands its work-orders to the orchestrator.
+
+**Assessor**
+The read-only judge of direction: asks whether, given the goal, the project is doing the right work and what it is
+fooling itself about (the diagnostic asks what is broken). Started only by the operator in a fresh window, never
+dispatched; refuses while a sprint runs or `sprint/STATE.md` is unfolded. Reads the goal, the work and the claims, asks the
+live orchestrator by direct message (an answer is a claim), and writes one *assessment*. Edits nothing else, writes no
+work-order; its one allowed dispatch is a read-only helper for an earlier assessment's follow-through, only when needed.
+
+**Assessment**
+The assessor's durable report, `<home>/assessments/<YYYY-MM-DD>-<slug>/report.md`: focus, findings with evidence, numbered
+recommendations, the questions asked and the answers as claims. Never pruned. The orchestrator puts it to the operator as
+one board card and answers below the assessor's text under `## Orchestrator response`; only operator-approved items
+become work. Earlier assessments are not read by default (`references/roles/assessor.md`).
 
 **Implementer**
 Lands one work-order or one slice, then returns. It edits only what the Proposed fix scope names and reports in

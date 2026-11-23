@@ -4,6 +4,12 @@ Two hooks in one file, one entry: `SessionStart` matched on `compact|clear` rest
 asks once when a work-order has landed unresolved, an implementer's notes wait for adjudication, or RESUME
 is behind the ledger (see `stop_output`). The text below describes the restore half.
 
+A sprint session (GITOS_SPRINT=1) keeps its state in `<home>/sprint/STATE.md` and never writes RESUME.md: its restore also
+prints STATE.md, its rotation line says to checkpoint there, its `Stop` entry never calls RESUME behind and prints nothing
+once `<home>/sprint/STOP` or `ROTATE` exists. The client documents that a `Stop` hook which prints nothing and exits 0 lets the
+turn end, and that `hookSpecificOutput.additionalContext` from a `Stop` hook continues the conversation
+(https://code.claude.com/docs/en/hooks, Stop).
+
 See references/orchestrator/checkpoint.md, *Rotation triggers*. Compaction summarizes the conversation
 and everything a hook added earlier, so the state the engine depends on (the live resume, the
 standing rules, the role marker, this repo's federation presence) is lost exactly when a long
@@ -60,6 +66,8 @@ OPEN_WO_CAP = 10
 WORKTREE_CAP = 8
 ROTATE_AT = 2
 SPRINT_ENV = "GITOS_SPRINT"     # set to 1 by the sprint driver for the session it starts (references/sprint.md)
+STATE_REL = Path("sprint") / "STATE.md"     # a sprint's own state, in place of RESUME.md (references/orchestrator/sprint.md)
+SPRINT_SIGNALS = ("STOP", "ROTATE")         # the files under <home>/sprint/ that mean the session is ending
 # The engine's detection order (model_optimization.HOMES).
 HOMES = (".gitos", "outputs/debug", ".pipeline", "docs/agents")
 
@@ -284,6 +292,21 @@ def background_rows(text):
     return len([r for r in rows[2:] if re.search(r"[^|\s-]", r)]) if len(rows) > 2 else 0
 
 
+def in_sprint():
+    """True in a session the sprint driver started (it sets GITOS_SPRINT=1 in that session's environment)."""
+    return os.environ.get(SPRINT_ENV) == "1"
+
+
+def clip_section(name, body, budget, path):
+    """`--- name ---` section holding `body` cut to `budget` characters (the cut is stated, with the file's path)."""
+    body = body.strip()
+    if len(body) > budget:
+        cut = len(body) - budget
+        body = (body[:budget].rstrip() + f"\n[{name.removesuffix('.md')} truncated: {cut} of {len(body)} "
+                f"characters cut; full file at {path}]")
+    return f"--- {name} ---\n{body}\n--- end {name} ---"
+
+
 def build_output(payload):
     """The text to print for a compact payload, or None for no output at all."""
     if not isinstance(payload, dict):
@@ -303,18 +326,29 @@ def build_output(payload):
     marker = (f"The conversation was just {'cleared' if cleared else 'compacted'}. Before anything "
               f"else, re-read in full, with the Read tool, the gitos router {skill / 'SKILL.md'} "
               "and then the brief for the role you are working in, with <role> one of orchestrator, "
-              "implementer, diagnostic or inception (the router tells you which): "
+              "implementer, diagnostic, assessor or inception (the router tells you which): "
               f"{skill / 'references' / 'roles'}{os.sep}<role>.md. The directives must be re-read: "
               f"{why}. Keep your first-line role marker (`[gitos · <role> · <focus>]`) in every "
               "reply and run canary.py to confirm state.")
     tail = []
+    sprint = in_sprint()
     resume = home / RESUME_FILENAME
     resume_text = None
     try:
         resume_text = resume.read_text(encoding="utf-8-sig")
     except OSError:
         resume_text = None
-    if resume_text is not None:
+    state = home / STATE_REL
+    state_text = None
+    if sprint:
+        try:
+            state_text = state.read_text(encoding="utf-8-sig")
+        except OSError:
+            state_text = None
+        tail.append(f"Sprint state: this sprint keeps its checkpoints in {state} "
+                    f"({'printed above' if state_text is not None else 'not written yet'}) and never writes RESUME.md, "
+                    "which is the interactive orchestrator's and is printed here to read only.")
+    elif resume_text is not None:
         tail.extend(freshness_lines(root, resume, resume_text, cleared))
     tail.extend(live_facts(root, home))
     rules = home / STANDING_RULES_REL
@@ -330,8 +364,8 @@ def build_output(payload):
     if count >= ROTATE_AT:
         if os.environ.get(SPRINT_ENV) == "1":
             tail.append("This is the second compaction or later in this window, which is a rotation "
-                        "trigger in sprint mode: checkpoint RESUME.md (the reattach line of any worker "
-                        f"in flight included), write {home / 'sprint' / 'ROTATE'} (one line, the "
+                        f"trigger in sprint mode: checkpoint {state} (never RESUME.md; the reattach line of any "
+                        f"worker in flight included), write {home / 'sprint' / 'ROTATE'} (one line, the "
                         "reason: second compaction) and end the session. Do not tell the operator a "
                         "fresh window is ready: the sprint driver starts the next one "
                         "(references/orchestrator/sprint.md, Rotation).")
@@ -340,20 +374,20 @@ def build_output(payload):
                         "rotation trigger: checkpoint RESUME.md, tell the operator a fresh window "
                         "is ready, and stop (references/orchestrator/checkpoint.md, Rotation triggers).")
 
-    rows = background_rows(resume_text) if resume_text is not None else 0
+    rows = background_rows(resume_text) if resume_text is not None and not sprint else 0
     if rows:
         tail.append(f"Background: {rows} row(s) in RESUME → Serving / running; check each is still "
                     "wanted, stop it or re-record it.")
     parts = [marker]
+    fixed = len(marker) + sum(len(t) for t in tail) + 200
+    budget = max(0, OUTPUT_CAP - fixed - 250)
+    if state_text is not None:
+        # The sprint's state comes first and may take up to half of what there is; RESUME gets the rest.
+        section = clip_section(state.name, state_text, budget // 2, state)
+        parts.append(section)
+        budget = max(0, budget - len(section) - 100)
     if resume_text is not None:
-        fixed = len(marker) + sum(len(t) for t in tail) + 200
-        budget = max(0, OUTPUT_CAP - fixed - 250)
-        body = resume_text.strip()
-        if len(body) > budget:
-            cut = len(body) - budget
-            body = (body[:budget].rstrip() + f"\n[RESUME truncated: {cut} of {len(body)} "
-                    f"characters cut; full file at {resume}]")
-        parts.append(f"--- {RESUME_FILENAME} ---\n{body}\n--- end {RESUME_FILENAME} ---")
+        parts.append(clip_section(RESUME_FILENAME, resume_text, budget, resume))
     parts.extend(tail)
     out = "\n".join(parts)
     return out[:OUTPUT_CAP - 1]
@@ -423,14 +457,16 @@ def has_open_slice(home, rel):
                for d in wdir.iterdir())
 
 
-def stop_state(home, canary):
+def stop_state(home, canary, sprint=False):
     """The unresolved-state findings for a home. -> (state key, instruction) or None. Four sources: an order landed
-    and still open, RESUME.md behind the ledger, notes waiting for adjudication, a reapable worktree."""
+    and still open, RESUME.md behind the ledger, notes waiting for adjudication, a reapable worktree. In a sprint
+    (`sprint` true) RESUME.md is not the sprint's file: it is never called behind and never asked to be rewritten, and
+    the state to update is `<home>/sprint/STATE.md`."""
     keys, asks = [], []
     for item in canary.landed_unresolved(home):
         keys.append(f"landed:{item['wo']}")
         asks.append(f"{item['wo']} has landed but is still open in work-orders/")
-    stale = canary.resume_stale_item(home)
+    stale = None if sprint else canary.resume_stale_item(home)
     if stale is not None:
         keys.append(f"stale:{stale['newer']}@{stale.get('newer_mtime', 0)}")
         asks.append(f"RESUME.md is older than {stale['newer']}")
@@ -460,7 +496,10 @@ def stop_state(home, canary):
         keys.append(f"reap:{f['name']}")
         asks.append(f"the worktree {f['name']} is merged and clean")
     tail = []
-    if resolve_asks:
+    if resolve_asks and sprint:
+        tail.append("finish the resolution now: move the order to work-orders/resolved/, update its "
+                    f"INDEX row, record the state in {home / STATE_REL} (never RESUME.md), then run canary.py")
+    elif resolve_asks:
         tail.append("finish the resolution now: move the order to work-orders/resolved/, update its "
                     "INDEX row, replace RESUME.md wholesale, then run canary.py")
     if stale_open:
@@ -505,12 +544,15 @@ def stop_output(payload):
     if found is None:
         return None
     home, root = found
-    if not (home / RESUME_FILENAME).is_file():
+    sprint = in_sprint()
+    if sprint and any((home / "sprint" / name).exists() for name in SPRINT_SIGNALS):
+        return None         # the sprint session wrote STOP or ROTATE: it is ending, and nothing here may hold it one more turn
+    if not (home / RESUME_FILENAME).is_file() and not (sprint and (home / STATE_REL).is_file()):
         return None
     canary = _canary()
     if canary is None:
         return None
-    state = stop_state(home, canary)
+    state = stop_state(home, canary, sprint)
     if state is None:
         return None
     key, text = state

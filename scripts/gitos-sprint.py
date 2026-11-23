@@ -19,11 +19,16 @@ The start prompt asks for replies that are the role marker line alone.
 
 Defaults: --autocompact 500k, --effort medium, --model opus[1m], --max-rotations 20. They apply to the orchestrator session
 only. Permission mode is never passed (the operator's own setting applies) and no permission-bypass flag is ever passed.
-Every repo file the driver parses (the layout, the board's config and route, the model-optimization config, each candidate
-order's `sprint:` mark) is checked before the first launch and again at each rotation. A malformed one is a refusal, never a
-silent fallback: the driver names the file, logs it and leaves a note under RESUME's *In flight* for the next interactive
-orchestrator (`input_problems`).
-Exit status: 0 the sprint ended on a stop signal, 1 it ended on an error, an interruption or a cap, 2 nothing was launched.
+Every repo file the driver parses (the layout, the board's config and route, the model-optimization config, the guard file,
+each candidate order's `sprint:` mark) is checked before the first launch and again at each rotation. A malformed one is a
+refusal, never a silent fallback: the driver names the file, logs it and leaves a note in the sprint's state file for the next
+interactive orchestrator (`input_problems`).
+A sprint keeps its own state in `<home>/sprint/STATE.md` and never writes RESUME.md (the driver's notes go there; an interactive
+window folds it into RESUME at its first action). A new sprint is refused while an earlier one's STATE.md exists. A repo may
+declare `<home>/sprint-guard.json` (`guard_config`): the driver runs its command before every launch and after every close, and
+anything but exit 0 stops the sprint (`guard-failed`) with no further launch.
+Exit status: 0 the sprint ended on a stop signal, 1 it ended on an error, an interruption, a cap or a failed guard, 2 nothing
+was launched.
 """
 from __future__ import annotations
 
@@ -62,17 +67,24 @@ KEY_GAP_SECONDS = 0.4
 COST_EVERY = 30.0
 STUCK_AFTER = 2              # rotations in a row with the ledger unchanged
 STOP_IDS = ("operator-decision", "outward-action", "implementer-blocker", "part0-no-go", "verify-failed-twice",
-            "no-open-order", "stop-card")
+            "no-open-order", "stop-card", "guard-failed")
 CARD_TAB = "sprint"
 CARD_OPTION = "stop=Stop after the current WO"
 CARD_TITLE = "Stop the sprint after the current work-order"
-CARD_BODY = ("The sprint finishes the order it is on, writes RESUME and stops. Pressing Stop is the only thing this card does; "
+CARD_BODY = ("The sprint finishes the order it is on, writes its state and stops. Pressing Stop is the only thing this card does; "
              "Ctrl-C in the terminal stops at once.")
 IGNORE_LINES = ("sprint/", "board/local/sprint.html")      # relative to the home
 INTERRUPT_MARK = "<!-- gitos-sprint-interrupted -->"
 REFUSED_MARK = "<!-- gitos-sprint-refused -->"
 SPRINT_MARKS = ("ready", "no")           # the values of an order's `sprint:` front matter key
-REFUSAL_ITEMS_MAX = 4                    # problems named in one RESUME note, the rest counted
+REFUSAL_ITEMS_MAX = 4                    # problems named in one note, the rest counted
+STATE_REL = Path("sprint") / "STATE.md"  # the sprint's own state, relative to the home; RESUME.md is never written
+NOTES_HEADING = "## Notes for the operator"
+GUARD_MARK = "<!-- gitos-sprint-guard -->"
+GUARD_FILE = "sprint-guard.json"         # the repo's optional guard command, relative to the home
+GUARD_KEYS = ("command", "timeout_s")
+GUARD_TIMEOUT_DEFAULT, GUARD_TIMEOUT_MAX = 120, 900
+GUARD_TAIL_LINES, GUARD_TAIL_CHARS = 5, 300
 CARD_ID_RE = re.compile(r"card (\d{8}-\d{6}-\d{6}-[0-9a-f]{4}) added")
 WO_RE = re.compile(r"WO-\d+(?:/S\d+)?")
 HARNESS_PREFIXES = ("CLAUDE", "MCP_")
@@ -239,11 +251,42 @@ def home_file(home: Path, rel: str) -> str:
     return f"{Path(home).name}/{rel}"
 
 
+def guard_config(home: Path) -> "tuple[dict | None, str]":
+    """The repo's guard command, `<home>/sprint-guard.json`: `{"command": ["argv", ...], "timeout_s": N}` (`timeout_s` optional,
+    default 120, at most 900; no other key). -> (config, "") for a sound file, (None, "") when there is no file, and
+    (None, the problem) when it cannot be read, does not parse or has the wrong shape (a malformed input: `input_problems`
+    refuses it). The command is an argv run with no shell; the engine ships no guard and gives it no meaning."""
+    path = Path(home) / GUARD_FILE
+    try:
+        raw = path.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return None, ""
+    except OSError as e:
+        return None, f"cannot be read ({e})"
+    try:
+        cfg = json.loads(raw)
+    except ValueError as e:
+        return None, f"is not valid JSON ({str(e).splitlines()[0] if str(e) else type(e).__name__})"
+    if not isinstance(cfg, dict):
+        return None, "is not a JSON object"
+    extra = sorted(set(cfg) - set(GUARD_KEYS))
+    if extra:
+        return None, f"has an unknown key `{extra[0]}` (only `command` and `timeout_s`)"
+    cmd = cfg.get("command")
+    if not isinstance(cmd, list) or not cmd or not all(isinstance(x, str) and x for x in cmd):
+        return None, "`command` is a non-empty list of non-empty strings (the argv, run with no shell)"
+    t = cfg.get("timeout_s", GUARD_TIMEOUT_DEFAULT)
+    if isinstance(t, bool) or not isinstance(t, (int, float)) or not 0 < t <= GUARD_TIMEOUT_MAX:
+        return None, f"`timeout_s` is a number above 0 and at most {GUARD_TIMEOUT_MAX}"
+    return {"command": list(cmd), "timeout_s": t}, ""
+
+
 def input_problems(home: Path, listed: tuple = ()) -> list:
     """Every repo file the driver parses that is malformed, as (file, problem) pairs; [] when all are sound. The files are
-    `worktrees.json` (through `worktree.load_layout`), `board/board.json`, `board-route.json`, `model-optimization.json`
-    and the `sprint:` value of each candidate order (the `listed` orders of `--orders`, else every open order): anything
-    but `ready` or `no` is refused, an empty value is no mark. A file that does not exist is not malformed. Read only."""
+    `worktrees.json` (through `worktree.load_layout`), `board/board.json`, `board-route.json`, `model-optimization.json`,
+    `sprint-guard.json` (`guard_config`) and the `sprint:` value of each candidate order (the `listed` orders of `--orders`,
+    else every open order): anything but `ready` or `no` is refused, an empty value is no mark. A file that does not exist is
+    not malformed. Read only."""
     import worktree
     home = Path(home)
     out = []
@@ -271,6 +314,9 @@ def input_problems(home: Path, listed: tuple = ()) -> list:
         ceiling_model(home)
     except ValueError as e:
         out.append((home_file(home, "model-optimization.json"), str(e)))
+    _, guard_problem = guard_config(home)
+    if guard_problem:
+        out.append((home_file(home, GUARD_FILE), guard_problem))
     try:
         wanted = {int(ref[3:]) for ref in listed}
         for nnn, rel, value in slog.sprint_mark_values(home):
@@ -303,6 +349,9 @@ def preflight(args, env, root: "Path | None", home: "Path | None", platform: str
                    "unattended); this script never edits that file")
     if (home / "sprint" / "STOP").exists():
         out.append(f"{home / 'sprint' / 'STOP'} exists: read it, then delete it to start a sprint")
+    if (home / STATE_REL).exists():
+        out.append(f"{home / STATE_REL} exists from an earlier sprint: fold it in a normal orchestrator window first "
+                   "(its first action folds it into RESUME.md)")
     window = model_window(args.model)
     if args.autocompact < MIN_WINDOW:
         out.append(f"--autocompact {args.autocompact} is below {MIN_WINDOW}: a window that small thrashes (compacts "
@@ -532,8 +581,8 @@ class Ops:
 
     def snapshot(self, since: str = "") -> tuple:
         """What a sprint has to show for itself: (open orders, resolved orders, branch tips, HEAD, whether a commit
-        since `since` (an earlier HEAD, "" for none) touched anything but RESUME, INDEX and the board). The checkpoint
-        commits RESUME before every rotation, so HEAD alone always moves. The tips are the local branches matching `wo-*` and
+        since `since` (an earlier HEAD, "" for none) touched anything but RESUME, INDEX and the board). A checkpoint commit
+        (the regenerated INDEX and board) moves HEAD before a rotation, so HEAD alone is not progress. The tips are the local branches matching `wo-*` and
         the `integration` and `branches` globs of the repo's own `<home>/worktrees.json` (see `layout_globs`)."""
         cp = self.git("rev-parse", "HEAD")
         head = cp.stdout.strip() if cp is not None and cp.returncode == 0 else ""
@@ -559,7 +608,8 @@ class Ops:
         return tuple(sorted(tips))
 
     def substantive(self, since: str, head: str) -> bool:
-        """Whether a commit in `since..head` touches a path other than <home>/RESUME.md, <home>/INDEX.md and <home>/board/.
+        """Whether a commit in `since..head` touches a path other than <home>/RESUME.md, <home>/INDEX.md, <home>/board/ and the
+        sprint's own state file (git-ignored, so none normally does).
         Unknown (git failed, `since` gone) counts as yes: a sprint is not called stuck on what could not be read."""
         if not since or not head or since == head:
             return False
@@ -570,9 +620,29 @@ class Ops:
             rel = Path(self.home).resolve().relative_to(Path(self.root).resolve()).as_posix()
         except ValueError:
             rel = None
-        ours = (f"{rel}/RESUME.md", f"{rel}/INDEX.md") if rel else ()
+        ours = (f"{rel}/RESUME.md", f"{rel}/INDEX.md", f"{rel}/{STATE_REL.as_posix()}") if rel else ()
         return any(line.strip() and line.strip() not in ours and not (rel and line.strip().startswith(f"{rel}/board/"))
                    for line in cp.stdout.splitlines())
+
+    def guard(self, argv: list, timeout_s: float, env: dict) -> "tuple[bool, str, str]":
+        """Run the repo's guard command: no shell, the repo root as the working directory, `env` as the environment, no
+        console input. Only exit 0 passes. -> (passed, what happened ("exit 1", "timed out after 5 s", "could not be run
+        (...)"), the last lines of its output). A command that outlives `timeout_s` has its process tree killed."""
+        try:
+            proc = subprocess.Popen(argv, cwd=str(self.root), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        except (OSError, ValueError) as e:
+            return False, f"could not be run ({e})", ""
+        try:
+            out, _ = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            self.kill_tree(proc.pid)
+            try:
+                out, _ = proc.communicate(timeout=10)
+            except subprocess.SubprocessError:
+                out = ""
+            return False, f"timed out after {timeout_s:g} s", guard_tail(out)
+        return proc.returncode == 0, f"exit {proc.returncode}", guard_tail(out)
 
     def board(self, *argv: str) -> "subprocess.CompletedProcess":
         return subprocess.run([sys.executable, str(self.home / "board" / "board.py"), *argv], cwd=str(self.root),
@@ -588,6 +658,19 @@ class Ops:
         except (OSError, subprocess.SubprocessError):
             return []
         return re.findall(r"^branch refs/heads/wo-(\d+)", out, re.M)
+
+
+def plain_line(value) -> str:
+    """One line of plain text: markup characters and control characters removed, whitespace collapsed. A value that came from
+    a repo file or a command's output cannot carry markup into the state file."""
+    text = "".join(" " if c in "<>" or ord(c) < 32 or ord(c) == 127 else c for c in str(value))
+    return " ".join(text.split())
+
+
+def guard_tail(output: str) -> str:
+    """The last GUARD_TAIL_LINES non-empty lines of a command's output as one plain line, cut at GUARD_TAIL_CHARS (the end is kept)."""
+    lines = [x for x in (plain_line(x) for x in str(output or "").splitlines()) if x]
+    return " | ".join(lines[-GUARD_TAIL_LINES:])[-GUARD_TAIL_CHARS:]
 
 
 def layout_globs(home: Path) -> tuple:
@@ -687,7 +770,7 @@ def read_first_line(path: Path) -> str:
 def stuck(prev: "tuple | None", cur: tuple, streak: int) -> "tuple[bool, int]":
     """The no-progress cap: `streak` rotations in a row with nothing to show, `cur` and `prev` being `Ops.snapshot()` results.
     Progress is a change in the open orders, the resolved orders or a branch tip (`wo-*` and the repo's declared ones), or a commit (the snapshot's last
-    field) that touches more than RESUME, INDEX and the board: the checkpoint commit before each rotation moves HEAD, so
+    field) that touches more than RESUME, INDEX and the board: a checkpoint commit before a rotation moves HEAD, so
     HEAD alone is not progress. -> (stuck, the new streak)."""
     same = prev is not None and cur[:3] == prev[:3] and not cur[4]
     streak = streak + 1 if same else 0
@@ -709,7 +792,7 @@ def last_order(records: list, worktree_orders: list) -> str:
 
 
 def note_ref(order: str) -> str:
-    """The order ref as it goes into RESUME: one short line of plain characters (the ref comes from the model's `--ref`)."""
+    """The order ref as it goes into the state file: one short line of plain characters (the ref comes from the model's `--ref`)."""
     return " ".join(REF_JUNK_RE.sub(" ", str(order)).split())[:ORDER_REF_MAX]
 
 
@@ -720,30 +803,37 @@ def note_to_log(home: Path, msg: str) -> None:
         pass
 
 
-def put_in_flight(home: Path, mark: str, note: str, failed: str) -> "Path | None":
-    """Put `note` (the `mark` line, then one line) under RESUME's `## In flight` (the rest of the file untouched; an earlier note
-    carrying the same mark is replaced; no RESUME or no such section: made). RESUME is read, then replaced in one step (a
-    temp file beside it, `os.replace`); when it cannot be read or replaced it is left exactly as it is and `failed` (what the
-    note was about) goes to the sprint log instead (-> None)."""
-    path = Path(home) / "RESUME.md"
+STATE_HEADER = ("# STATE (sprint state)\n\nThe sprint's own state: the driver and the sprint's orchestrator write it, never RESUME.md. "
+                "An interactive orchestrator folds it into RESUME.md at its first action and then moves it to "
+                "`sprint/archive/` (references/orchestrator/first-action.md).\n\n")
+
+
+def put_note(home: Path, mark: str, note: str, failed: str) -> "Path | None":
+    """Put `note` (the `mark` line, then one line) under `## Notes for the operator` in the sprint's state file,
+    `<home>/sprint/STATE.md` (the rest of the file untouched; an earlier note carrying the same mark is replaced; no file or no
+    such section: made). The driver writes only here and never to RESUME.md. The file is read, then replaced in one step (a temp
+    file beside it, `os.replace`); when it cannot be read or replaced it is left exactly as it is and `failed` (what the note was
+    about) goes to the sprint log instead (-> None)."""
+    path = Path(home) / STATE_REL
     try:
         text = path.read_bytes().decode("utf-8-sig", errors="replace")
     except FileNotFoundError:
-        text = "# RESUME (live session state)\n\n"
+        text = STATE_HEADER
     except OSError as e:
-        note_to_log(home, f"RESUME.md could not be read ({e}); {failed}")
+        note_to_log(home, f"{STATE_REL.name} could not be read ({e}); {failed}")
         return None
     eol = "\r\n" if "\r\n" in text else "\n"
     text = text.replace("\r\n", "\n")
     text = re.sub(r"\n?" + re.escape(mark) + r"\n[^\n]*\n", "", text)
-    m = re.search(r"^##\s+In flight\b[^\n]*\n", text, re.M)
+    m = re.search(r"^" + re.escape(NOTES_HEADING) + r"\b[^\n]*\n", text, re.M)
     if m:
         text = text[:m.end()] + "\n" + note + text[m.end():]
     else:
-        text = text.rstrip("\n") + "\n\n## In flight\n\n" + note
+        text = text.rstrip("\n") + "\n\n" + NOTES_HEADING + "\n\n" + note
     tmp = None
     try:
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".RESUME-", suffix=".tmp")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".STATE-", suffix=".tmp")
         with os.fdopen(fd, "wb") as fh:
             fh.write(text.replace("\n", eol).encode("utf-8"))
         os.replace(tmp, path)
@@ -753,41 +843,47 @@ def put_in_flight(home: Path, mark: str, note: str, failed: str) -> "Path | None
                 os.unlink(tmp)
             except OSError:
                 pass
-        note_to_log(home, f"RESUME.md could not be written ({e}); {failed}")
+        note_to_log(home, f"{STATE_REL.name} could not be written ({e}); {failed}")
         return None
     return path
 
 
 def write_interrupted_note(home: Path, when: str, order: str, how: str) -> "Path | None":
-    """The interrupted note, by `put_in_flight`. It says what the driver knows and not that anything finished."""
+    """The interrupted note, by `put_note`. It says what the driver knows and not that anything finished."""
     order = note_ref(order)
     note = (f"{INTERRUPT_MARK}\n- **Sprint interrupted at {when}** ({how}); last order in progress: "
             f"{order or 'unknown'}. The orchestrator did not checkpoint this: check the ledger, the worktrees and the "
             f"last commits before trusting the rest of this file.\n")
-    return put_in_flight(home, INTERRUPT_MARK, note, f"interrupted at {when}, last order: {order or 'unknown'}")
+    return put_note(home, INTERRUPT_MARK, note, f"interrupted at {when}, last order: {order or 'unknown'}")
 
 
 def refusal_text(bad: list) -> str:
     """`<file>: <problem>` for the first REFUSAL_ITEMS_MAX malformed inputs, the rest counted. One line of plain text: a value
-    that came from a repo file cannot carry markup into RESUME."""
-    clean = lambda s: " ".join(str(s).replace("<", " ").replace(">", " ").split())  # noqa: E731
-    shown = [clean(f"{name}: {problem}")[:240] for name, problem in bad[:REFUSAL_ITEMS_MAX]]
+    that came from a repo file cannot carry markup into the state file."""
+    shown = [plain_line(f"{name}: {problem}")[:240] for name, problem in bad[:REFUSAL_ITEMS_MAX]]
     if len(bad) > REFUSAL_ITEMS_MAX:
         shown.append(f"and {len(bad) - REFUSAL_ITEMS_MAX} more")
     return " | ".join(shown)
 
 
 def write_refused_note(home: Path, when: str, bad: list) -> "Path | None":
-    """The refusal note, by `put_in_flight`: the next interactive orchestrator reads RESUME at its first action."""
+    """The refusal note, by `put_note`: the next interactive orchestrator folds it into RESUME at its first action."""
     fix = "fix it" if len(bad) == 1 else "fix them"
     note = (f"{REFUSED_MARK}\n- **Sprint refused {when}:** {refusal_text(bad)}; {fix} in a normal orchestrator window, "
             f"then rerun.\n")
-    return put_in_flight(home, REFUSED_MARK, note, f"refused at {when}: {refusal_text(bad)}")
+    return put_note(home, REFUSED_MARK, note, f"refused at {when}: {refusal_text(bad)}")
+
+
+def write_guard_note(home: Path, when: str, text: str) -> "Path | None":
+    """The guard-failure note, by `put_note`: the command, how it ended and the last lines of its output (`text`)."""
+    note = (f"{GUARD_MARK}\n- **Sprint guard failed {when}:** {plain_line(text)}. The sprint stopped (`guard-failed`) and "
+            f"launched nothing after it: look at what the guard guards before the next sprint.\n")
+    return put_note(home, GUARD_MARK, note, f"guard failed at {when}: {plain_line(text)}")
 
 
 def report_refusal(home: Path, bad: list, when: "str | None" = None) -> str:
     """A refusal over a malformed input is reported back, not only printed: an `error` record in the sprint log when the log
-    exists, and the note under RESUME's In flight. -> what became of the note, as a clause for the printed line."""
+    exists, and the note in the sprint's state file. -> what became of the note, as a clause for the printed line."""
     when = when or datetime.now().astimezone().isoformat(timespec="seconds")
     if (Path(home) / slog.LOG_REL).is_file():
         try:
@@ -795,7 +891,8 @@ def report_refusal(home: Path, bad: list, when: "str | None" = None) -> str:
         except OSError:
             pass
     wrote = write_refused_note(home, when, bad)
-    return "RESUME carries a `sprint refused` note" if wrote else "RESUME was left as it is (the note is in the sprint log)"
+    return ("STATE.md carries a `sprint refused` note" if wrote
+            else "no state file was written (the note is in the sprint log)")
 
 
 def ensure_tab(home: Path, tab: str = CARD_TAB) -> bool:
@@ -854,6 +951,7 @@ class Sprint:
         self.sprint_dir = home / "sprint"
         self.stop_file, self.rotate_file = self.sprint_dir / "STOP", self.sprint_dir / "ROTATE"
         self.card_id = ""
+        self.guard = None                        # the repo's guard command (`guard_config`), read once at the start
         self.sessions: list = []
         self.rotations = 0
         self._last_rendered = None
@@ -949,7 +1047,35 @@ class Sprint:
         self.log("error" if left else "note",
                  f"closed ({why}) by {info['method']} in {info['seconds']} s; " +
                  (f"{len(left)} process(es) survived: {', '.join(map(str, left))}" if left else "no process left"))
+        info["guard"] = self.run_guard("after close")      # after every close, a force-kill included
         return info
+
+    def run_guard(self, when: str) -> str:
+        """Run the repo's guard command (none declared: nothing happens). -> "" when it passed, else one line saying which
+        command failed and how (also logged as a `stop` record `guard-failed: ...` and put in STATE.md as a note). The caller
+        launches nothing after a failure."""
+        if self.guard is None:
+            return ""
+        cmd, limit = self.guard["command"], self.guard["timeout_s"]
+        passed, what, tail = self.ops.guard(cmd, limit, child_env(self.env, self.home))
+        if passed:
+            return ""
+        text = plain_line(f"{when}: `{' '.join(cmd)}` {what}" + (f"; last output: {tail}" if tail else ""))
+        self.log("stop", f"guard-failed: {text}")
+        write_guard_note(self.home, datetime.now().astimezone().isoformat(timespec="seconds"), text)
+        return text
+
+    def end_guard_failed(self, text: str) -> int:
+        """The sprint ends because the guard did not pass: no launch follows. A STOP file is left for the operator unless one is
+        there already. Exit 2 when nothing was launched yet, else 1."""
+        if not self.stop_file.exists():
+            try:
+                self.stop_file.write_text(f"guard-failed: {text}"[:200] + "\n", encoding="utf-8")
+            except OSError:
+                pass
+        self.close_card("sprint ended: guard-failed")
+        self.ops.say(f"\nsprint ended: guard-failed: {text}; STATE.md carries a note. Log: {self.home / slog.LOG_REL}")
+        return 1 if self.sessions else 2
 
     def end_stop(self, ident: str, reason: str, ref: str = "") -> int:
         msg = f"{ident}: {reason}" if ident else (reason or "STOP file with no text")
@@ -964,7 +1090,7 @@ class Sprint:
             order = last_order(slog.read_records(self.home), self.ops.worktree_orders())
             when = datetime.now().astimezone().isoformat(timespec="seconds")
             wrote = write_interrupted_note(self.home, when, order, how or msg)
-            where = "RESUME carries an interrupted note" if wrote else "RESUME was left as it is (the note is in this log)"
+            where = "STATE.md carries an interrupted note" if wrote else "no state file was written (the note is in this log)"
             msg = f"{msg}; {where} (last order: {note_ref(order) or 'unknown'})"
         self.log(kind, msg)
         self.close_card(f"sprint ended: {msg}"[:140])
@@ -973,7 +1099,7 @@ class Sprint:
 
     def end_refused(self, bad: list) -> int:
         """The sprint ends because a repo file became malformed (read at a rotation): nothing is relaunched, the file is named
-        in the log, on the console and in a note under RESUME's In flight."""
+        in the log, on the console and in a note in STATE.md."""
         where = report_refusal(self.home, bad)
         msg = f"sprint refused at a rotation: {refusal_text(bad)}"
         self.log("error", msg)
@@ -997,6 +1123,9 @@ class Sprint:
             return 2
         proc = None
         try:
+            failed = self.run_guard("before launch")
+            if failed:
+                return self.end_guard_failed(failed)
             proc, sid = self.launch()
             allow = f" orders={','.join(a.orders)}" if a.orders else ""
             self.log("start", f"model={a.model} effort={a.effort} window={a.autocompact}{allow} session={sid}", session=sid)
@@ -1010,7 +1139,8 @@ class Sprint:
                     info = self.close(proc, "STOP", sid)
                     if info["survivors"]:
                         return self.end_error("error", "stopped with processes left", False)
-                    return self.end_stop(ident, reason)
+                    ended = self.end_stop(ident, reason)
+                    return 1 if info["guard"] else ended
                 signalled = self.rotate_file.exists()
                 if signalled:
                     self.settle(sid, proc)
@@ -1025,6 +1155,8 @@ class Sprint:
                 info = self.close(proc, "ROTATE", sid)
                 if info["survivors"]:
                     return self.end_error("error", "rotation stopped with processes left", False)
+                if info["guard"]:
+                    return self.end_guard_failed(info["guard"])
                 self.rotations += 1
                 cur = self.ops.snapshot(prev[3])
                 is_stuck, streak = stuck(prev, cur, streak)
@@ -1047,6 +1179,9 @@ class Sprint:
                                           "resolved, no wo-* branch moved and no commit beyond RESUME/INDEX/board", False)
                 if self.rotations > a.max_rotations:
                     return self.end_error("stop", f"--max-rotations {a.max_rotations} reached", False)
+                failed = self.run_guard("before relaunch")
+                if failed:
+                    return self.end_guard_failed(failed)
                 proc, sid = self.launch()
                 self.log("note", f"relaunched after rotation {self.rotations}: session {sid}", session=sid)
         except KeyboardInterrupt:
@@ -1062,6 +1197,9 @@ class Sprint:
         """Everything before the first launch that can fail on the repo's own files: -> raises one of RuntimeError (the
         Stop card), ValueError (a board.json that does not parse), OSError and SubprocessError (a board that does not
         answer), which `run` turns into a one-line refusal."""
+        self.guard, problem = guard_config(self.home)
+        if problem:
+            raise ValueError(f"{home_file(self.home, GUARD_FILE)}: {problem}")
         self.sprint_dir.mkdir(parents=True, exist_ok=True)
         slog.archive_previous(self.home)
         try:

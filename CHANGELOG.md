@@ -18,6 +18,20 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v71 — 2026-11-22
+breaking: no
+
+- New role, the assessor: operator-started, read-only, judges whether the work serves the goal; asks the orchestrator by direct message; durable reports in `<home>/assessments/`, one board card (WO-147)
+
+---
+
+## v70 — 2026-11-22
+breaking: no
+
+- Sprint state in `sprint/STATE.md`, never RESUME (folded by the next normal window); sprint-aware Stop hook; optional repo guard command, `guard-failed` (WO-146)
+
+---
+
 ## v69 — 2026-11-21
 breaking: no
 

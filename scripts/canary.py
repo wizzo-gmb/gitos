@@ -29,7 +29,8 @@ cover:
                              adjudication of implementer notes: a row whose State cannot be read,
                              a parked order with no restart trigger, an item a second store also
                              holds, a resolved work-order with implementer notes never
-                             adjudicated, an adjudication pointing at nothing. Report-only)
+                             adjudicated, an adjudication pointing at nothing. Report-only; also the advisory
+                             `assessment-unanswered`: an assessor's report with no orchestrator response)
   - owner board (optional)  (<home>/board/ files vs the CLAUDE.md block line and the RESUME section that
                              point at them: a pointer with no board, or a board nothing points at; a repo
                              routed to a hub (<home>/board-route.json): the route, the hub's files, its tab and
@@ -1624,6 +1625,12 @@ def resume_stale_item(home: Path) -> dict | None:
         resume_mtime = path.stat().st_mtime
     except OSError:
         return None
+    # A sprint keeps its checkpoints in `sprint/STATE.md` and never writes RESUME (references/orchestrator/sprint.md): while that
+    # file exists it is the live pointer, so the RESUME is behind only when the newer of the two is.
+    try:
+        resume_mtime = max(resume_mtime, (home / "sprint" / "STATE.md").stat().st_mtime)
+    except OSError:
+        pass
     newest_name, newest_mtime = None, 0.0
     candidates = [home / n for n in RESUME_STATE_FILES]
     wo_dir = home / "work-orders"
@@ -2164,6 +2171,31 @@ def open_notes_waiting(home: Path) -> list[dict]:
         if notes and notes_filled(notes, True) and not _adjudication_given(_adjudication_text(notes, text)):
             out.append({"kind": "order-notes-waiting", "wo": f"WO-{nnn}", "file": f"work-orders/{rel}"})
     return out
+ASSESSMENTS_DIR = "assessments"
+ASSESSMENT_RESPONSE_RE = re.compile(r"(?m)^## Orchestrator response\b")
+
+
+def unanswered_assessments(home: Path) -> list[dict]:
+    """Advisory `assessment-unanswered`: an assessor's report (`<home>/assessments/<folder>/report.md`) with no
+    `## Orchestrator response` heading at the start of a line. The orchestrator puts it to the operator as one card at
+    first action and writes that section; the section ends the advisory. Advisory only: a report waiting for the
+    operator's card must not block resolving an order. No such folder is nothing to say; an unreadable report is skipped."""
+    out: list[dict] = []
+    base = home / ASSESSMENTS_DIR
+    if not base.is_dir():
+        return out
+    for f in sorted(base.glob("*/report.md")):
+        text = _read(f)
+        if text is None or ASSESSMENT_RESPONSE_RE.search(text):
+            continue
+        rel = f"{ASSESSMENTS_DIR}/{f.parent.name}/report.md"
+        out.append({"kind": "assessment-unanswered", "advisory": True, "file": rel,
+                    "finding": f"{rel} has no `## Orchestrator response` section -> put its recommendations to the "
+                               "operator as one board card and write the response below the assessor's text "
+                               "(`references/orchestrator/first-action.md`, *Assessments*)"})
+    return out
+
+
 PLACEHOLDER_TRIGGER_RE = re.compile(
     r"^(?:|[-—–?.]+|tbd|todo|n/?a|none|unknown|later|someday|<[^>]*>|\{\{[^}]*\}\})$",
     re.IGNORECASE)
@@ -3189,6 +3221,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,
     # loose ends: the Parked list and the adjudication of implementer notes (INDEX + work-orders).
     le_items, le_reason = check_loose_ends(home, today)
     r["loose-ends"].extend(le_items)
+    r["loose-ends"].extend(unanswered_assessments(home))
     if le_reason is None:
         checked.add("loose-ends")
     else:

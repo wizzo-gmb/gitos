@@ -24,6 +24,19 @@ model-optimization mapping. Where this file and another step file differ, this f
   a push or tag push, `federation file`, a deploy, a migration, a data regeneration, a release (`VERSION` bump, sync, publish),
   a send, or anything else that leaves this working tree and `.git`. An order or a note that calls for one is a stop, not a
   step.
+- **State goes in `<home>/sprint/STATE.md`, never in `RESUME.md`.** RESUME stays the interactive orchestrator's file: a sprint
+  does not read it as its own state, refresh it or commit it, and every checkpoint step below that says "write the state" means
+  STATE.md. The driver writes the same file (its interrupted, refused and guard notes) and never RESUME. <!-- rule:sprint-state-not-resume -->
+
+## The state file
+
+`<home>/sprint/STATE.md` is replaced wholesale at every checkpoint, short and pointer-only like RESUME, with these sections and
+a `Refreshed:` line: **In flight** (each worker running: what it is, its branch or worktree and the reattach or verify line),
+**Last order** (the order in progress or just finished and where it stands), **Stop or rotate** (the stop id or the rotation
+reason, and the exact next step) and **Notes for the operator** (what the person who folds it must know; the driver puts its notes
+here, only while no session is running). It is local and git-ignored, like the log. A sprint never commits it; an interactive
+window folds it into RESUME at its first action and moves it to `<home>/sprint/archive/` (`first-action.md`), and the driver
+refuses a new sprint while one is left unfolded. Within one sprint a rotation keeps it: the next session reads it.
 
 ## Self-acceptance (step 4)
 
@@ -73,6 +86,7 @@ A trigger is one of the ids below. Each stops the sprint after the exit sequence
 | `verify-failed-twice` | verification failed twice on one order |
 | `no-open-order` | no eligible open order is left to work (*Which orders a sprint takes*) |
 | `stop-card` | the sprint Stop card is answered, or `<home>/sprint/STOP` exists |
+| `guard-failed` | the repo's guard command (`<home>/sprint-guard.json`) did not exit 0 before a launch or after a close: written by the driver only, with a STATE.md note; you never write it |
 
 Check for the last at first action and at every step 8 (`board.py list --open`; the file). It ends the sprint **after the current
 order is resolved or left open with its finding written**: do not start another order, and do not abandon a landing half verified.
@@ -82,9 +96,9 @@ A `STOP` file you find at your very start: end the session at once and write not
 
 In this order, and nothing between them:
 
-1. **RESUME.** Checkpoint (`checkpoint.md`): commit the verified state, regenerate the board, and replace `<home>/RESUME.md`
-   wholesale. It names the stop id, the order it stopped on and the exact next step. A worker still running has its reattach
-   line there, or you wait for it first.
+1. **STATE.** Checkpoint (`checkpoint.md`): commit the verified state, regenerate the board, and replace
+   `<home>/sprint/STATE.md` wholesale (never `RESUME.md`). It names the stop id, the order it stopped on and the exact next step.
+   A worker still running has its reattach line there, or you wait for it first.
 2. **A board card, only when the operator must answer** (`operator-decision`, `outward-action`, `implementer-blocker`,
    `part0-no-go`, `verify-failed-twice`): `board.py add-decision`, with `--ref WO-NNN`, written for the owner (what you need and what
    each option does). Not for `no-open-order` or `stop-card`.
@@ -101,18 +115,22 @@ Rotation in a sprint rides the second compaction and the marker slip only; the o
 
 On the compaction hook's rotation line (the second compaction in this window), or a **second marker slip** in this window:
 
-1. Checkpoint, as in step 1 of the exit sequence (RESUME with the reattach lines of any worker in flight, and the next step).
+1. Checkpoint, as in step 1 of the exit sequence (STATE.md with the reattach lines of any worker in flight, and the next step;
+   never RESUME).
 2. Write `<home>/sprint/ROTATE`: one line, the reason (`second compaction` or `marker slip`).
 3. End the session as in step 4 of the exit sequence: the marker line and the one-line reason of the ROTATE file.
 
 The hook's line also tells you to tell the operator a fresh window is ready: in a sprint, do not. The driver closes the session
-and starts a fresh one, which reads RESUME and carries on. Never delete `ROTATE` or `STOP` yourself; a `ROTATE` file you find at
+and starts a fresh one, which reads STATE.md (and RESUME for the rest) and carries on. Never delete `ROTATE` or `STOP` yourself; a `ROTATE` file you find at
 your start is the driver's to clear, and you ignore it.
 
 ## First action in a sprint
 
 Run first action as written (`first-action.md`), with these differences:
 
+- **Skip the fold** of an unfolded sprint state: that step is for interactive windows. Read `<home>/sprint/STATE.md` if it exists
+  (your own earlier session's checkpoint, after a rotation) and carry on from it, then RESUME for the rest. Write your
+  checkpoints to STATE.md and never to RESUME.
 - Run the board `ensure` and read the new answers and notes: an answered Stop card is `stop-card`, and any other answer is the
   newest instruction you have.
 - **Report to no one.** The first-action report has no reader. Act on what it would say: fix a red canary finding that blocks
@@ -120,7 +138,7 @@ Run first action as written (`first-action.md`), with these differences:
   System One alone (nothing foreign becomes an order here).
 - Log progress with `python <skill>/scripts/sprint_log.py add KIND MESSAGE --ref WO-N`, where KIND is `start` when you begin an order, `done` when you resolve it, or `note`, and MESSAGE is one short line. The driver sets `GITOS_SPRINT_HOME`, so the log finds the home from any directory, a worktree included.
 - No git repository: stop (`operator-decision`), do not `git init`.
-- Verify RESUME's claims as usual; a dead worker is dispatched again from its order, notes and diff (`dispatch.md`).
+- Verify the claims of STATE.md (and of RESUME, as far as they still hold) as usual; a dead worker is dispatched again from its order, notes and diff (`dispatch.md`).
 - Then take the first open order that is sprint-eligible (*Which orders a sprint takes*) and that the dispatch rules allow, in board order, honouring the order's own sequencing notes and
   folder orders' `slice.py next`.
 
@@ -129,4 +147,4 @@ Run first action as written (`first-action.md`), with these differences:
 Every reply in a sprint is the role marker line alone: no prose, no summary, no menu, no offer, no next-step suggestion. The
 canary depends on the marker. The one exception is the last reply of the exit sequence (and of a rotation): the marker line,
 then the one-line reason on the next line, the same text as the STOP or ROTATE file. Progress goes only where the operator
-reads it: the sprint log (`sprint_log.py add`), the commits, `RESUME.md` and the board. <!-- rule:sprint-reply-marker-only -->
+reads it: the sprint log (`sprint_log.py add`), the commits, `STATE.md` and the board. <!-- rule:sprint-reply-marker-only -->

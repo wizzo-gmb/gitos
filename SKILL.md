@@ -9,10 +9,11 @@ description: >-
   development — "start working on this repo", "what should I do next", "drive this
   project", "plan and dispatch the next steps", prioritize work; or (c) run a
   read-only diagnostic pass — "audit this", "find bugs in X", "diagnose this
-  system", "inspect the logs", "what's wrong with our pipeline". It stands up a
-  four-role system (inception bootstrapper, orchestrator coordinator, read-only
-  diagnostic finder, implementer) plus a per-repo brain (memory), under a
-  `.gitos/` work-order ledger. Trigger even when the user doesn't say
+  system", "inspect the logs", "what's wrong with our pipeline"; or (d) get an
+  outside read-only assessment of whether the work serves the goal — "assess this
+  project". It stands up a five-role system (inception bootstrapper, orchestrator
+  coordinator, read-only diagnostic finder, implementer, read-only assessor) plus
+  a per-repo brain (memory), under a `.gitos/` work-order ledger. Trigger even when the user doesn't say
   "gitos" or "pipeline" but is clearly starting, driving, or auditing a repo.
   Do NOT trigger for a single known-bug fix ("why is this variable null"), a narrow
   review of one small diff, or a pure design discussion with no repo work. PIPELINE
@@ -21,7 +22,7 @@ description: >-
 
 # GitOS
 
-A project operating-system skill. It bootstraps and runs a four-role agent system (three repo-entry roles + an implementer entered on a single work-order)
+A project operating-system skill. It bootstraps and runs a five-role agent system (four repo-entry roles + an implementer entered on a single work-order)
 on any repo, backed by a per-repo **brain** (the orchestrator's memory). SKILL.md is
 the **router**: it tells you what mode you're in and which reference to open. All the
 detail lives in `references/` — keep this file lean and follow the pointers.
@@ -33,6 +34,7 @@ detail lives in `references/` — keep this file lean and follow the pointers.
 | **Inception** | The repo has no pipeline yet — first-time setup | `references/roles/inception.md` |
 | **Orchestrator** | A pipeline exists; you're building / driving / deciding *with* the operator | `references/roles/orchestrator.md` |
 | **Diagnostic** | You're investigating read-only — auditing, finding bugs, cataloging anomalies | `references/roles/diagnostic.md` |
+| **Assessor** | The operator asks for an outside read of direction — "assess this project", "is the beta scope right?" — read-only; operator-started, never dispatched | `references/roles/assessor.md` |
 | **Implementer** | You're handed **one work-order** to land — by an orchestrator dispatch *or* by the operator pointing a fresh window at that WO ("implement this", "do `wo_046`") | `references/roles/implementer.md` |
 
 The **brain** (`.gitos/brain/`) is the orchestrator's long-term memory — a
@@ -56,7 +58,7 @@ lands somewhere.
 ```dot
 digraph route {
   detect [shape=diamond, label="pipeline scaffolded?"];
-  inception [shape=box]; orchestrator [shape=box]; diagnostic [shape=box];
+  inception [shape=box]; orchestrator [shape=box]; diagnostic [shape=box]; assessor [shape=box];
   brain [shape=box, label="seed brain"]; handoff [shape=box, label="write handoff"];
 
   detect -> inception   [label="no (.gitos/, .pipeline/, outputs/debug/ all absent)"];
@@ -66,9 +68,11 @@ digraph route {
   implementer [shape=box];
   intent -> orchestrator [label="build / drive / plan / 'what next'"];
   intent -> diagnostic   [label="audit / find bugs / investigate"];
+  intent -> assessor     [label="assess / is this the right work / judge the direction (operator-started; never dispatched)"];
   intent -> implementer  [label="\"implement / do THIS work-order\" (pointed at one WO)"];
   orchestrator -> diagnostic [label="invoke read-only finder for evidence"];
   diagnostic -> orchestrator [label="return work-orders"];
+  assessor -> orchestrator   [label="a report in <home>/assessments/ (one board card)"];
   orchestrator -> implementers [label="dispatch + verify"];
   orchestrator -> brain [label="read / query / update (maintenance loop)"];
 }
@@ -88,6 +92,11 @@ Detection procedure (deterministic, in order):
 On an initialized repo, before acting, read `<home>/INDEX.md` (work state),
 `<home>/HANDOFF.md` (the birth record, once), and — if a brain exists —
 `<home>/brain/wiki/index.md` (knowledge state). Then route on intent.
+
+**Assessor entry.** "Assess this project", "is this the right work?", "judge the direction", "is the beta scope right?" in
+a fresh window is the **Assessor**, not the orchestrator and not the diagnostic. "Audit this", "find bugs", "investigate" is
+the diagnostic: it asks what is broken; the assessor asks whether the work serves the goal. Only the operator starts it (an orchestrator never dispatches one), and it refuses while a
+sprint runs or `<home>/sprint/STATE.md` is unfolded. Full brief: `references/roles/assessor.md`.
 
 **Implementer entry — the common "fresh window on a work-order" case.** If the operator points you
 at *one specific work-order to execute it* ("implement `wo_046`", "do this WO", a new window opened on
@@ -134,6 +143,7 @@ read-only finder can never be pressured into edits mid-investigation.
 | Inception | scaffolds once, then hands off | the initial `.gitos/` + brain | `references/roles/inception.md` |
 | Orchestrator | no — dispatches all code edits; writes only markdown/state (stewards the brain) | INDEX lifecycle + brain | `references/roles/orchestrator.md` |
 | Diagnostic | **no** — read-only, work-orders only | the vocabulary + open findings | `references/roles/diagnostic.md` |
+| Assessor | **no** — read-only; writes only its own `<home>/assessments/<folder>/` report | the assessment report | `references/roles/assessor.md` |
 | Implementer (dispatched) | yes — but only the files its work-order's Proposed fix scope names | its specified edits + the Implementer notes | `references/roles/implementer.md` |
 
 ## Severity calibration (shared by diagnostic findings + orchestrator triage)
@@ -154,7 +164,7 @@ window's **context**. The **context canary** (the role marker) and the **slippag
 here: they are what the repo-root `CLAUDE.md` anchor points back to. The **state canary**
 (`scripts/canary.py` — report at bootstrap, gate at resolution), the worktree lifecycle, category
 descoping, the durable anchor, the compaction-restore hook and the marker opt-out are in
-`references/canary.md`; the four role briefs carry one-line echoes of the marker.
+`references/canary.md`; the role briefs carry one-line echoes of the marker.
 
 **Context canary — the role marker.** The first line of EVERY reply, in every role:
 
@@ -170,6 +180,7 @@ Lowercase `gitos`, spaced middle dots (`·`), square brackets — one greppable 
 | orchestrator | current WO + work-loop step; on a dispatch turn also the tier and a short reason, e.g. `[gitos · orchestrator · WO-073 dispatch · standard: scoped edits]` |
 | implementer | current WO + lifecycle step |
 | diagnostic | current phase (vocabulary / scan / work-orders) |
+| assessor | current phase (read / ask / write) |
 | inception | current interview stage (then phase, as inception proceeds) |
 
 The tier in a dispatch-turn focus makes the choice visible; it does not make it correct. The
@@ -183,7 +194,7 @@ canary signal.
 
 The `CLAUDE.md` anchor carries this text (generated from this paragraph by `scaffold.py`; edit it here, not there):
 
-Every reply opens with `[gitos · <role> · <focus>]` (role = orchestrator / diagnostic / implementer / inception; focus = current work-order + step). **If your last reply had no such marker, your context has drifted** — re-read `~/.claude/skills/gitos/SKILL.md`, re-detect your role, run `python <home>/tools/canary.py <home>`, and resume marking. The `CLAUDE.md` anchor is a durable backstop the harness reloads into every window, so it survives even when the skill directive washes out under compaction; if you can read it, you can recover. It is a signal, not a guarantee — the operator's glance at the first line is the final check. <!-- rule:anchor-role-marker -->
+Every reply opens with `[gitos · <role> · <focus>]` (role = orchestrator / diagnostic / assessor / implementer / inception; focus = current work-order + step). **If your last reply had no such marker, your context has drifted** — re-read `~/.claude/skills/gitos/SKILL.md`, re-detect your role, run `python <home>/tools/canary.py <home>`, and resume marking. The `CLAUDE.md` anchor is a durable backstop the harness reloads into every window, so it survives even when the skill directive washes out under compaction; if you can read it, you can recover. It is a signal, not a guarantee — the operator's glance at the first line is the final check. <!-- rule:anchor-role-marker -->
 
 **Slippage protocol** — on a missing / wrong-role / stale marker, operator-noticed or
 self-noticed:
@@ -285,7 +296,7 @@ applies.
 - `references/model-optimization.md` — optional model routing; load for its explicit
   command, enabled dispatch/closeout, or the inception offer.
 
-- `references/roles/{inception,orchestrator,diagnostic}.md` — the three repo-entry role briefs.
+- `references/roles/{inception,orchestrator,diagnostic,assessor}.md` — the four repo-entry role briefs.
 - `references/roles/implementer.md` — the dispatched implementer (its boundary's SSOT).
 - `references/agent-system.md` — the role + brain map and role-flow diagram.
 - `references/brain-schema.md` — brain layout, page types, the maintenance/anti-redundancy protocol.

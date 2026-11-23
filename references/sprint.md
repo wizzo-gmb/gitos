@@ -40,6 +40,7 @@ Each refusal is one sentence on the screen, nothing is launched, and the exit st
 - the repo is not trusted in your `~/.claude.json`: open Claude in the repo once and accept the trust dialog (a prompt would
   otherwise wait behind it with no one there). The driver only reads that file;
 - a `STOP` file from an earlier sprint: read `<home>/sprint/STOP`, then delete it;
+- a `<home>/sprint/STATE.md` left by an earlier sprint (*State*): fold it in a normal orchestrator window first;
 - `--autocompact` below 200k, or above the model's context window (a window that small makes the session compact again and
   again);
 - a `--model` that is not the ceiling model of the repo's model-optimization mapping (checked only when that mapping is on);
@@ -49,8 +50,8 @@ Each refusal is one sentence on the screen, nothing is launched, and the exit st
 - an `--add-dir` that is not a folder, a platform other than Windows, or no `claude.exe` on `PATH`.
 
 A file the driver reads that is malformed is refused the same way, before anything is launched: `worktrees.json`, `board/board.json`,
-`board-route.json`, `model-optimization.json`, or an order's `sprint:` value other than `ready` or `no`. The refusal names the file and
-the problem, and the driver writes a `Sprint refused` note into RESUME's *In flight* section. The same happens if a file goes bad during
+`board-route.json`, `model-optimization.json`, `sprint-guard.json` (*The guard command*), or an order's `sprint:` value other than `ready` or `no`. The refusal names the file and
+the problem, and the driver writes a `Sprint refused` note into the sprint's `STATE.md` (*State*). The same happens if a file goes bad during
 a sprint: the sprint ends at the rotation instead of relaunching. Fix the file in a normal orchestrator window ("prepare for sprint"
 clears these first), then rerun. The canary also reports `sprint-mark-unknown` and `worktree-layout-unparseable` when no sprint runs.
 
@@ -83,10 +84,10 @@ worked is still a stop (`outward-action`, `operator-decision`).
 ## Stopping
 
 - **The Stop card.** At the start the driver posts one card on the board's `sprint` tab: *Stop after the current WO*. Press it
-  and the sprint finishes the order it is on, writes RESUME and ends (stop id `stop-card`). The card works once: every sprint
+  and the sprint finishes the order it is on, writes its state and ends (stop id `stop-card`). The card works once: every sprint
   posts its own, and the driver closes it with the outcome at the end.
 - **Ctrl-C in the terminal.** Press it twice, the way Claude asks. The session ends at once, the driver notes the interruption
-  under *In flight* in RESUME (the last order in progress, and that nothing was checkpointed) and logs an error.
+  in `STATE.md` (the last order in progress, and that nothing was checkpointed) and logs an error.
 - **A file.** Creating `<home>/sprint/STOP` yourself closes the session after its log has been still for a few seconds
   (`/exit`, then the process tree is killed if it has not left within 20 s). That ends mid-order; the card is the clean stop.
   A hand-written `STOP` while the session is mid-turn (its log still being written after the quiet wait) is a hard kill:
@@ -95,7 +96,7 @@ worked is still a stop (`outward-action`, `operator-decision`).
 - **The sprint ends on its own** when the orchestrator writes `STOP` (a decision only you can make, an outward action, a
   blocked worker, a failed verification twice, a NO-GO probe, no open order left, the Stop card), when two rotations in a row
   show no progress (`stuck`: no order opened or resolved, no `wo-*` branch moved (nor any branch your `<home>/worktrees.json` lists under
-  `integration` or `branches`), and no commit beyond `RESUME.md`, `INDEX.md` and the board; the checkpoint commit before every
+  `integration` or `branches`), and no commit beyond `RESUME.md`, `INDEX.md` and the board; a checkpoint commit before a
   rotation does not count), when `--max-rotations` is passed, or when the session exits with no
   signal (a crash, or `/exit` typed in it). A `STOP` file is left for you; read it, then delete it before the next sprint.
 
@@ -103,7 +104,37 @@ worked is still a stop (`outward-action`, `operator-decision`).
 
 The orchestrator checkpoints and writes `<home>/sprint/ROTATE` at the second compaction of a session (the compaction hook
 tells it so in a sprint). The driver then closes that session, confirms nothing it started is left running, deletes `ROTATE`
-and starts a fresh session, which reads RESUME and carries on.
+and starts a fresh session, which reads `STATE.md` (and RESUME for the rest) and carries on. `STATE.md` stays through every
+rotation of one sprint.
+
+## State
+
+A sprint keeps its own state in `<home>/sprint/STATE.md` and never writes `RESUME.md`, which stays the interactive
+orchestrator's. The session checkpoints there (what is in flight with each worker's reattach line, the last order, the stop or
+rotation reason, notes for you) and the driver puts its own notes there too: an interruption, a refusal at a rotation, a failed
+guard. The file is local and git-ignored, like the log.
+
+When you next open a normal orchestrator window, its first action **folds** `STATE.md` into RESUME (RESUME is replaced
+wholesale, as always) and moves the file to `<home>/sprint/archive/STATE-<timestamp>.md`. Until then the file exists, and the
+driver **refuses a new sprint** (one sentence, exit status 2): fold it in a normal window first. A sprint session never folds.
+
+## The guard command
+
+A repo may declare a check that says whether it is safe to run unattended, in `<home>/sprint-guard.json`:
+
+```
+{"command": ["python", "scripts/safe_to_run.py"], "timeout_s": 120}
+```
+
+`command` is an argv list run with no shell, in the repo root, with the environment the driver gives the session (it carries
+`GITOS_SPRINT=1`). `timeout_s` is optional: default 120, at most 900. The driver runs it **before every launch** (the first and
+each relaunch after a rotation) and **after every close** (a STOP, a ROTATE, an exit, Ctrl-C, and a session it had to kill).
+Only exit status 0 passes. Anything else, a non-zero exit, a timeout (the process tree is killed) or a command that is not
+found, launches nothing more: the sprint ends with the stop id `guard-failed` (exit status 1; 2 when nothing had been launched yet),
+a log line, a `STOP` file (unless one is there already) and a `STATE.md` note with the command, how it ended and the last lines
+of its output. A file that does not parse or has the wrong shape is a refusal like any malformed input; no file changes nothing.
+The file is read when the sprint starts, and checked again at each rotation. The engine ships no guard and gives it no
+meaning: what it checks is the repo's.
 
 ## What you see
 
@@ -119,7 +150,7 @@ most 140 characters); the previous sprint's log is moved to `<home>/sprint/archi
 ## What it touches
 
 On the first run in a repo: `sprint` is added to `tabs` in `<home>/board/board.json` (no other key changes), and
-`<home>/sprint/` and `<home>/board/local/sprint.html` are git-ignored through the repo's own `.git/info/exclude`, so no `.gitignore` is edited. The child session's environment is yours without any `CLAUDE*` or `MCP_*` variable (a leftover marker from an
+`<home>/sprint/` (the log, the Stop card id and `STATE.md` among it) and `<home>/board/local/sprint.html` are git-ignored through the repo's own `.git/info/exclude`, so no `.gitignore` is edited. The child session's environment is yours without any `CLAUDE*` or `MCP_*` variable (a leftover marker from an
 outer Claude session would turn transcripts off and an inherited compaction window would beat the flag); your own settings
 `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_GIT_BASH_PATH`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX` are kept. The session gets `GITOS_SPRINT=1`.
 

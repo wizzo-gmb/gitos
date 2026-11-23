@@ -7,8 +7,8 @@ new window, and at work-loop step 8.
 
 8. **Next.** Take the next confirmed work-order; refresh the next steps in `RESUME.md`.
    **Then check the rotation triggers** — one fired means checkpoint now (refresh `RESUME.md` and
-   regenerate the board) and offer the operator a fresh window in one line. In sprint mode there is no offer: write
-   `sprint/ROTATE` (`sprint.md`).
+   regenerate the board) and offer the operator a fresh window in one line. In sprint mode there is no offer: a sprint
+   checkpoints to `<home>/sprint/STATE.md`, never `RESUME.md`, then writes `sprint/ROTATE` (`sprint.md`).
    → *Checkpoint + rotation.*
    *Gate:* never advance with an unverified diff, an unadjudicated note, an uncommitted landing, an
    un-maintained brain, or a red canary.
@@ -85,8 +85,8 @@ or 3 usually applies anyway. The restore hook can be switched off (`disableAllHo
 the second-compaction trigger does not fire.
 
 **On a trigger in sprint mode** (`sprint.md`): only the second compaction and a second marker slip rotate a sprint. Checkpoint
-first, then write `<home>/sprint/ROTATE` (one line, the reason) and end the session. There is no line to the operator and no
-window for them to open: the driver closes the session and starts a fresh one, which reads `RESUME.md`.
+first (into `<home>/sprint/STATE.md`, never `RESUME.md`), then write `<home>/sprint/ROTATE` (one line, the reason) and end the session. There is no line to the operator and no
+window for them to open: the driver closes the session and starts a fresh one, which reads `<home>/sprint/STATE.md` (and `RESUME.md` for the rest).
 
 **On a trigger.** Checkpoint first, then **one line** to the operator: that a fresh window is
 ready, and that `/clear` or a new window picks it up (the restore hook reprints `RESUME.md` on

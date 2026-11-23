@@ -1,6 +1,6 @@
 # Agent System — One-Page Map
 
-A concise reference for how the four roles (three repo-entry + an implementer entered on one work-order) and the brain relate. Read this if the
+A concise reference for how the five roles (four repo-entry + an implementer entered on one work-order) and the brain relate. Read this if the
 picture isn't clear after skimming `SKILL.md`. For operating instructions, open the
 role briefs listed at the bottom.
 
@@ -47,16 +47,27 @@ Investigates without editing. Three phases:
 The Diagnostic never edits source code or configuration. All fixes flow through
 work-orders dispatched by the Orchestrator.
 
+### 4. Assessor (read-only judge of direction — started by the operator, never dispatched)
+
+Asks whether, given the goal, the project is doing the right work and what it is fooling itself about; the diagnostic
+asks what is broken. The operator opens a fresh window ("assess this project", or a question such as "is the beta scope
+right?"); it runs on the model the operator chose and refuses while a sprint runs or `<home>/sprint/STATE.md` is
+unfolded. It reads the goal, the work and the claims (checked against code and tests), messages the live orchestrator
+session directly for what it cannot read (an answer is a claim; no live session means the question is recorded as
+unanswered), and writes one durable report, `<home>/assessments/<YYYY-MM-DD>-<slug>/report.md`. It edits nothing else and
+writes no work-order. The orchestrator puts the report to the operator as one board card and records its response below
+the assessor's text. Full brief: `references/roles/assessor.md`.
+
 ### The implementer (entered on a work-order, not on the repo)
 
-The three roles above are **repo-entry** — reached by state detection + operator intent on the *repo*.
+The four roles above are **repo-entry** — reached by state detection + operator intent on the *repo*.
 The **implementer** is the fourth role, entered on a single **work-order**: the orchestrator
 dispatches it, **or** the operator points a fresh window at one work-order ("implement this", "do
 `wo_046`"). Either way it reads that work-order in full, **plans first**, edits only what its
 Proposed fix scope names, fills its Implementer notes, and returns — it lands one order, never drives
 the ledger. It holds no long-term state between orders. Full brief: `references/roles/implementer.md`.
 
-**Lenses are not a fifth role.** Operator-imported specialist prompts (under `<home>/agents/`, per
+**Lenses are not a role.** Operator-imported specialist prompts (under `<home>/agents/`, per
 `references/agent-import.md`) are **cross-role injected context** — read on demand by whatever role is
 active and folded in within that role's boundary, never dispatched or entered. They steer *how* a role
 approaches a domain; they are not an agent themselves.
@@ -70,6 +81,7 @@ Inception ──seeds──▶ brain + writes──▶ HANDOFF.md ──read onc
                                                                       │  ⇅ brain (read/query/update)
                                               calls (read-only)       ├──▶ Diagnostic ──▶ work-orders ──▶ INDEX
                                               dispatches + verifies   └──▶ Implementers ──▶ code
+operator ──starts──▶ Assessor ──report in assessments/──▶ Orchestrator ──one board card──▶ operator
 ```
 
 The handoff is read-only after Inception. The brain is read-write by the Orchestrator
@@ -85,6 +97,7 @@ honest.
 | "init this repo", "scaffold the pipeline", "give this project a brain", "set up the work-order system", "bootstrap the agent system" | **Inception** |
 | "start working on this", "what should I do next", "drive the project", "plan the next steps", "prioritize the backlog", "build X" | **Orchestrator** |
 | "audit this artifact", "find bugs in X", "diagnose the pipeline", "inspect the logs", "what's wrong with Y", "investigate this anomaly" | **Diagnostic** |
+| "assess this project", "is this the right work", "judge the direction", "is the beta scope right", "what are we fooling ourselves about" | **Assessor** |
 
 If the repo is already initialized and the intent is build/drive, it's the
 Orchestrator — even if the operator says "start over" or "what's left". Detection always
@@ -125,5 +138,6 @@ page. Full invariant statements: `references/brain-schema.md §6`.
 | Inception | `references/roles/inception.md` |
 | Orchestrator | `references/roles/orchestrator.md` |
 | Diagnostic | `references/roles/diagnostic.md` |
+| Assessor | `references/roles/assessor.md` |
 | Implementer (work-order entry) | `references/roles/implementer.md` |
 | Brain schema + maintenance loop | `references/brain-schema.md` |

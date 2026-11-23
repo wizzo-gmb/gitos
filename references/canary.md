@@ -3,7 +3,7 @@
 The router (`SKILL.md` → *Canary*) holds the two things every reply needs: the role marker and the slippage
 protocol. The rest of the always-on drift early-warning lives here, moved from the router unchanged. Two cheap
 sentinels catch AI drift where it accumulates — the home's **state** and the window's **context**. This page is
-the SSOT for the **state** sentinel; the four role briefs carry one-line echoes of the marker.
+the SSOT for the **state** sentinel; the role briefs carry one-line echoes of the marker.
 
 ## State canary
 

@@ -8,8 +8,8 @@ cataloguing lenses. It is home-agnostic: `<home>/` is the project's home (defaul
 
 - **Operator-imported specialist context** — a math lens, a niche-research lens, a
   domain-framing prompt. The operator brings the expertise; the engine stores and serves it.
-- **Injected, not dispatched.** A lens is not a fifth role. Any of the four roles
-  (inception, orchestrator, implementer, diagnostic) reads a matching lens and folds it into
+- **Injected, not dispatched.** A lens is not a role. Any role
+  (inception, orchestrator, implementer, diagnostic, assessor) reads a matching lens and folds it into
   its reasoning, *within its own boundary*. A lens changes how a role **thinks**, never what
   it is **allowed to do**.
 - **Distinct from the brain.** The brain holds the project's **facts**; a lens holds **how to

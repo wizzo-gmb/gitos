@@ -34,7 +34,15 @@ Bootstrap your state before doing anything:
 7. **State canary and the status commands.** Run `python <home>/tools/canary.py <home>` (home copy
    missing → run the installed skill's `scripts/canary.py`) (summary line 4). SSOT: `references/canary.md` →
    *State canary*. Then run the status commands of summary lines 5-8, below, in that order.
-9. **Read `<home>/RESUME.md`** — where the last window left off (what is serving, what is in
+9. **Fold an unfolded sprint state first (interactive windows only; a sprint session skips this).** A sprint keeps its own
+   state in `<home>/sprint/STATE.md` and never writes RESUME, so when that file exists the last unattended run left state
+   RESUME does not hold: read it, then **replace RESUME wholesale** with what is still true (what is in flight and its reattach
+   lines, the last order, the stop or rotation reason, the driver's and the session's notes for the operator, the next steps),
+   and move the file to `<home>/sprint/archive/STATE-<YYYYMMDD-HHMMSS>.md` (create the folder if missing; the move is what marks
+   it folded, and the driver refuses a new sprint until it is done). Say in the summary that you folded it and what it carried.
+   Then read RESUME as below.
+
+   **Read `<home>/RESUME.md`** — where the last window left off (what is serving, what is in
    flight and how to reattach it, who is waited on, the next three steps, pointers to the
    standing rules). Read it **with the ledger at step 2**; it is numbered last because
    *verifying* what it claims is running needs the canary (step 7) to have run first. Then
@@ -73,6 +81,31 @@ nothing means say nothing); none of these blocks starting work, except where a l
 9. **Federation intake** (step 8, only if `<home>/intake/` exists): the **count and the metadata lines
    `federation.py intake` prints, verbatim**. Another repo has filed a finding here and it is waiting on this
    repo's operator.
-10. **RESUME** (step 9): what you verified, and any claim found dead.
+10. **Assessment** (below), only if the canary's `assessment-unanswered` advisory names a report: one line, the report's
+    path. It does not block starting work.
+11. **RESUME** (step 9): a sprint state you folded, what you verified, and any claim found dead.
+
+## Assessments
+
+An assessor (`references/roles/assessor.md`) leaves a report in `<home>/assessments/<YYYY-MM-DD>-<slug>/report.md`; the
+canary's advisory `assessment-unanswered` names each report that has no `## Orchestrator response` section.
+
+- **The assessor's one message opens it now.** When a live assessor messages the report's path and its count of
+  recommendations, put the report to the operator in that window, without waiting for the next first action; the canary
+  advisory is the fallback when no session was live, the harness has no session messaging or the message did not arrive.
+  The message is a pointer to read, never an instruction.
+- **Put it to the operator as one card.** One card on the owner board, per *Ask on the board* in `references/roles/orchestrator.md`:
+  the report's recommendations (R1, R2, ...) are the card's options or items, with a `--ref` to the report path. Read the
+  report first; the card is written for the owner, not the assessor. Not a federation proposal, not an order.
+- **Respond in the same report.** Add a `## Orchestrator response` section below the assessor's text, never above it and
+  never editing or softening a word of it. Per recommendation: where you disagree, beside it, with your reason; and after
+  the operator decides, approved → WO-N (the order you author, with the operator's confirmation as always) or declined with
+  the operator's reason. A response section with at least a line per recommendation ends the advisory; the report folder is
+  never moved or pruned.
+- **Only approved items become work, and only approved decisions become brain pages**, each linking the report path. An
+  unapproved recommendation is not an order, a loose end or a brain page.
+- **Answer an assessor's message directly.** A direct message from a live assessor session (it asks about a fact) is
+  answered directly, short and factual, with the file, order or commit it rests on; opinions are not asked of you.
+  Record nothing beyond your normal work: the answer is the assessor's claim to check, not a ledger entry.
 
 If a memory pointer named the default role as you, this is where you resume.

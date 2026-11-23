@@ -1,6 +1,6 @@
 # Domain profiles — layering domain content on the engine
 
-GitOS ships a **generic engine**: the roles (three repo-entry + the implementer), the brain schema, the work-order
+GitOS ships a **generic engine**: the roles (four repo-entry + the implementer), the brain schema, the work-order
 template, the nine anomaly families, the acceptance-criteria and production-handoff
 skeletons. The engine knows nothing about any specific product.
 

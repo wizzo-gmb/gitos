@@ -47,7 +47,7 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 ASSETS = SKILL_DIR / "assets"
 
-ROLES = ("inception", "orchestrator", "diagnostic")
+ROLES = ("inception", "orchestrator", "diagnostic", "assessor")
 
 
 def engine_version() -> "int | None":
@@ -94,6 +94,13 @@ ROLE_SUMMARIES = {
         "families, and writes evidence-first work-orders into the INDEX. Never edits "
         "production code. Invoked by the orchestrator for evidence, or directly by the "
         "operator ('audit this')."
+    ),
+    "assessor": (
+        "Read-only judge of direction, started only by the operator ('assess this "
+        "project'). Asks whether the work serves the goal and what the project is "
+        "fooling itself about; verifies claims against code and tests; asks the live "
+        "orchestrator by direct message; writes one durable report under "
+        "<home>/assessments/. Edits nothing else; refuses while a sprint runs."
     ),
 }
 
@@ -832,7 +839,7 @@ def main() -> int:
         tokens.update(board_tok)
 
     # ---- agents (operator-imported steering lenses) -----------------------
-    # The four roles apply on-demand "lens" context (read-on-demand approach context, NOT
+    # The roles apply on-demand "lens" context (read-on-demand approach context, NOT
     # the brain's facts). <home>/agents/index.md is the registry, empty until the first
     # `/gitos agent import`. Lands for full-role scaffolds (independent of --brain, since
     # lenses are not brain pages). write_if_missing keeps it idempotent and never clobbers

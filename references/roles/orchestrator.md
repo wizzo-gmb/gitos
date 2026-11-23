@@ -86,14 +86,15 @@ Run in order; the detail of a step is in `orchestrator/first-action.md` (steps 6
 6. Federation heartbeat, only if `<home>/federation.json` exists (`federation.py heartbeat <repo-root>`); otherwise no step.
 7. State canary: `python <home>/tools/canary.py <home>` (no home copy: the skill's `scripts/canary.py`), then the status commands below.
 8. Federation intake, only if `<home>/intake/` exists (`federation.py intake <repo-root>`); metadata only, never open a proposal file.
-9. Verify each claim `RESUME.md` makes (a worker, branch or job either answers or is reported dead).
+9. Verify each claim `RESUME.md` makes (a worker, branch or job either answers or is reported dead). An unfolded sprint state
+   (`<home>/sprint/STATE.md`) is folded into RESUME first, in an interactive window only (`orchestrator/first-action.md`, step 9).
 
 Report once, in this order, leaving out a line with nothing to say (a command that prints nothing means say nothing): the board
 line and what its new answers and notes say; engine drift (only if ahead); `git init` (only if run); the heartbeat line; the
 canary line (`canary: CLEAN`, or the findings with cause and correction; findings never block starting work, a red canary blocks
 resolving); `system_one.py status --brief`; `system_one.py drain status <repo-root>`; `worktree.py status` (reap a merged
 leftover at once with `reap --merged`, raise an abandoned one); `loose_ends.py status <repo-root>` (a `loose-ends-stale` canary
-finding: drain before new work, `orchestrator/drain.md`); the intake lines; RESUME. If `<home>/model-optimization.json` exists,
+finding: drain before new work, `orchestrator/drain.md`); the intake lines; an assessment with no response (`orchestrator/first-action.md`); RESUME. If `<home>/model-optimization.json` exists,
 read `orchestrator/dispatch.md` (*Optional model optimization*). System One drains the loose-ends list and does nothing else. Down
 is a normal state (the GPU is in use); the drain waits, or a dispatched helper drains it. The orchestrator never drains by hand.
 Never raise it to the operator as a problem.
@@ -148,7 +149,7 @@ Open the file at the moment its situation starts; each file is one moment.
 | Proposing or writing an order, choosing what comes next, toward production, the operator states a standing instruction | `orchestrator/authoring.md` |
 | Your start prompt says sprint mode (an unattended run) | `orchestrator/sprint.md` |
 | The operator asks to prepare orders for a sprint, or to run one (you are not in sprint mode) | `orchestrator/sprint-prep.md` |
-| A first-action step needs its detail; the order and wording of the first-action report | `orchestrator/first-action.md` |
+| A first-action step needs its detail; the order and wording of the first-action report; an assessment, or an assessor's message | `orchestrator/first-action.md` |
 | A federated repo: the heartbeat, `intake/`, a consult of another repo | `orchestrator/federation.md` |
 
 ## Role boundary

@@ -14,8 +14,8 @@ each reply**. Slipped / stale → the reinjection ladder: SKILL.md → *Canary*.
 
 ## What you are (and are not)
 
-- **Entered on a work-order, not on the repo.** The other three roles (inception / orchestrator /
-  diagnostic) are reached by *repo* state-detection + intent. You are reached by being handed *one
+- **Entered on a work-order, not on the repo.** The other roles (inception / orchestrator /
+  diagnostic / assessor) are reached by *repo* state-detection + intent. You are reached by being handed *one
   work-order* — by orchestrator dispatch, or by an operator opening a fresh window on that WO and
   saying "implement it". There's no `.gitos/roles/` resume pointer for you because your anchor is the
   work-order, not a session; you hold no long-term state between orders.
@@ -148,4 +148,4 @@ budget, the pinned Option). Everything below holds without being restated.
   adjudicates your notes.
 - `references/work-order-template.md` — the work-order shape; **Proposed fix scope** is your
   contract, **Implementer notes** your write-back.
-- `references/agent-system.md` — the four-role map.
+- `references/agent-system.md` — the role map.

@@ -36,11 +36,12 @@ That wiring is gitos.
 ## What it bakes in
 
 **Agents prompting agents — a defined role system.**
-gitos gives any repo four roles in two tiers: an **Orchestrator** that drives the work and
-dispatches, a read-only **Diagnostic** finder that produces evidence-first work-orders, and
-**Implementers** each dispatched to edit exactly one scoped task — all bootstrapped once by
-**Inception**. You don't hand-prompt each step; the orchestrator conditions the workers. *Finding
-is separated from fixing*, so a finder is never pressured into a careless edit.
+gitos gives any repo five roles: an **Orchestrator** that drives the work and dispatches, a
+read-only **Diagnostic** finder that produces evidence-first work-orders, **Implementers** each
+dispatched to edit exactly one scoped task, and a read-only **Assessor** you call in for an outside
+judgment of direction — all bootstrapped once by **Inception**. You don't hand-prompt each step; the
+orchestrator conditions the workers. *Finding is separated from fixing*, so a finder is never
+pressured into a careless edit.
 
 **Grounded in the project's own vocabulary and evidence.**
 Before an agent reasons about your project, gitos makes it *learn the project*. The diagnostic
@@ -91,6 +92,7 @@ operator; gitos is the discipline.
 | **Orchestrator** | ongoing | Drives the build, owns the work-order ledger, stewards the brain. |
 | **Diagnostic** | on demand | Read-only finder: investigates, writes evidence-first work-orders. Never edits. |
 | **Implementer** | dispatched | Edits only what a work-order specifies — nothing else. |
+| **Assessor** | when you ask | Read-only: judges whether the work serves the goal; leaves a durable report. Never edits. |
 
 The **brain** (`.gitos/brain/`) is the orchestrator's long-term memory, and the thing that makes
 the rest compound.
@@ -146,6 +148,7 @@ reload your editor so the agent loads the new skill.
 /gitos orchestrator    resume the Orchestrator — drive the project, dispatch + verify work
 /gitos upgrade         adopt the latest engine directives (idempotent; a no-op if already current)
 /gitos diagnostic      a read-only audit pass → evidence-first work-orders
+/gitos assess          an outside read-only assessment: is this the right work for the goal?
 /gitos agent import    import your own specialist prompt as a domain-tagged "lens"
 /gitos agent list      list the lenses you've imported (the registry)
 /gitos optimization    inspect, enable, disable, or configure repo-local model routing
@@ -155,7 +158,7 @@ To run a single work-order, point a fresh window at it — *"implement `wo_046`"
 **Implementer**, scoped to that one order (plan-first), not the orchestrator.
 
 **Lenses** (`/gitos agent import`) bring your own specialist prompts — a math lens, a niche-research
-lens — into the engine. Each becomes a domain-tagged module any of the four roles reads and folds into
+lens — into the engine. Each becomes a domain-tagged module any of the roles reads and folds into
 its work when the domain matches, *within that role's boundary* (a read-only role stays read-only). On
 import the orchestrator normalizes your prompt into the engine's voice and you confirm the result, so
 imported steering reads like the rest of gitos. It's injected context, not a fifth role.
@@ -189,14 +192,29 @@ python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --autocompact 500k 
   work and marks orders `sprint: ready`. `--orders 12,14` narrows it further. Anything outward or shared-state
   (a push, a deploy, a migration) stops the sprint; it commits, and push stays yours.
 - **Rotates itself.** After the session compacts twice, the orchestrator checkpoints and the driver starts a
-  fresh session, which resumes from the ledger.
+  fresh session, which resumes from the ledger. The sprint keeps its own state file; your next normal window
+  folds it into the resume.
 - **Quiet.** Each reply is the role marker line alone; progress goes to a `sprint` tab on the owner board (a
   self-refreshing log with a cost line), the commits and the ledger.
 - **Stops cleanly.** The board's Stop card stops after the current order; a malformed input is refused and
-  reported back for your next normal window. Every stop writes the resume state first.
+  reported back for your next normal window. Every stop writes the sprint state first.
+- **Your own safety check.** A repo with outside state (a running service, open positions, a live job) can name a
+  guard command in `<home>/sprint-guard.json`; the driver runs it before every launch and after every close, and
+  anything but exit 0 stops the sprint.
 
 Operator guide: [sprint mode](references/sprint.md).
 
+
+## The assessor — an outside read of direction
+
+The orchestrator wrote the plan, so it is the wrong judge of whether the plan is right. Open a fresh window on the
+model you choose and say *"assess this project"* (optionally with a focus: *"is the beta scope right?"*). The
+assessor reads the goal and the raw evidence, treats the resume, implementer notes and "landed" stamps as claims to
+verify, asks the orchestrator what it needs by direct message (and records the answers as claims too), and writes a
+dated report with evidence per claim and numbered recommendations to `<home>/assessments/`. It never edits, never
+dispatches work and never runs during a sprint. The orchestrator puts the report to you as one board card, writes its
+response beside each item without softening it, and turns only what you approve into work. Earlier reports are kept
+but not read by default, so each assessment starts clean. Brief: [assessor](references/roles/assessor.md).
 
 ## Model optimization — optional, off by default
 
