@@ -200,7 +200,9 @@ python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --autocompact 500k 
   reported back for your next normal window. Every stop writes the sprint state first.
 - **Your own safety check.** A repo with outside state (a running service, open positions, a live job) can name a
   guard command in `<home>/sprint-guard.json`; the driver runs it before every launch and after every close, and
-  anything but exit 0 stops the sprint.
+  anything but exit 0 stops the sprint. Its tooling can also hold a `sprint/BUSY` lease while an action with outside
+  effects is in flight: the driver then defers a rotation or stop until it settles, and waits a settle time before
+  the guard looks.
 
 Operator guide: [sprint mode](references/sprint.md).
 

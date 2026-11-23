@@ -127,7 +127,8 @@ A repo may declare a check that says whether it is safe to run unattended, in `<
 ```
 
 `command` is an argv list run with no shell, in the repo root, with the environment the driver gives the session (it carries
-`GITOS_SPRINT=1`). `timeout_s` is optional: default 120, at most 900. The driver runs it **before every launch** (the first and
+`GITOS_SPRINT=1`). `timeout_s` is optional: default 120, at most 900. Two more optional keys, `settle_s` and `busy_max_s`, are
+described under *The BUSY lease and the settle wait* below. The driver runs it **before every launch** (the first and
 each relaunch after a rotation) and **after every close** (a STOP, a ROTATE, an exit, Ctrl-C, and a session it had to kill).
 Only exit status 0 passes. Anything else, a non-zero exit, a timeout (the process tree is killed) or a command that is not
 found, launches nothing more: the sprint ends with the stop id `guard-failed` (exit status 1; 2 when nothing had been launched yet),
@@ -135,6 +136,42 @@ a log line, a `STOP` file (unless one is there already) and a `STATE.md` note wi
 of its output. A file that does not parse or has the wrong shape is a refusal like any malformed input; no file changes nothing.
 The file is read when the sprint starts, and checked again at each rotation. The engine ships no guard and gives it no
 meaning: what it checks is the repo's.
+
+## The BUSY lease and the settle wait
+
+A repo whose steps have outside effects (an action sent somewhere whose result arrives later) can keep the driver from closing a
+session between sending the action and seeing its result. Both parts are opt-in through two more keys of
+`<home>/sprint-guard.json`, validated like the others (a wrong type or range is a malformed input, refused and reported back);
+a file without them behaves exactly as before.
+
+```
+{"command": ["python", "scripts/safe_to_run.py"], "settle_s": 30, "busy_max_s": 600}
+```
+
+- **`busy_max_s`** (1 to 3600) turns the lease on and is the longest any one lease may hold a close. Without it a `BUSY` file is
+  ignored, so a stray file never stalls a sprint.
+- **The lease file** is `<home>/sprint/BUSY`. The repo's own tooling writes it before an action with outside effects and removes
+  it once the outside state is settled; the model and the engine never write it. One line, an ISO-8601 UTC deadline
+  (`2026-11-22T14:05:00Z`). The driver reads it fresh on every check. <!-- rule:sprint-busy-lease-repo-tooling -->
+- **Deferral.** When a `ROTATE` or a `STOP` file asks for a close and a lease is live, the driver does not close: it logs one
+  `note` (`close deferred: BUSY until <deadline>`) and checks again at its normal poll. A lease is live while the file exists and
+  parses, its deadline is in the future and the close has been held back for less than `busy_max_s`. It ends when the file is
+  removed, the deadline passes, `busy_max_s` is reached or the session's process has exited; the close then goes ahead as usual,
+  with a second `note`. A `BUSY` file that does not parse is not a lease: the driver logs that and closes as usual.
+- **A lease left behind is the engine's to handle.** A lease that ends by its deadline or by `busy_max_s` is spent: the driver
+  remembers that file (its content and modification time) for the rest of the sprint and never defers on it again, so it holds
+  one close at most; a `BUSY` the tooling rewrites is a new lease. Before each launch (the first and every relaunch) a spent
+  `BUSY`, or one whose deadline has passed, is moved to `<home>/sprint/archive/BUSY-<timestamp>` with a sprint-log `note`, and each
+  such lease adds one line to the `STATE.md` notes (a lease was left behind and ended by its deadline or `busy_max_s`; the repo's
+  tooling should remove it when its action settles). The tooling removing `BUSY` stays the normal path.
+- **Never deferred:** Ctrl-C (your interrupt), the driver's own stuck and `--max-rotations` stops, and a session that has already
+  exited. A deferral does not count as a rotation and never extends a cap.
+- **`settle_s`** (0 to 600, default 0) is a wait after **every** close (a graceful `/exit`, a kill, a deferred close, a session
+  that exited by itself), logged, before the after-close guard runs, so the guard reads the outside state after it has settled.
+  Ctrl-C during the wait does not cut it short: the guard runs after it and the sprint ends. Ctrl-C twice stops at once, with a
+  `guard-failed` note that the guard did not run.
+- **Survivors.** When a close leaves processes running, the after-close guard still runs after the settle wait, and the `STATE.md`
+  note carries both the guard's result and the survivors; the sprint still ends as an error.
 
 ## What you see
 

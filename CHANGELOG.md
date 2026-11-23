@@ -18,6 +18,13 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v72 — 2026-11-22
+breaking: no
+
+- Sprint guard gains `settle_s` (wait before the after-close guard) and `busy_max_s` (a repo's `sprint/BUSY` lease defers a rotate or file-stop close); a lease left behind is spent, archived and reported (WO-148)
+
+---
+
 ## v71 — 2026-11-22
 breaking: no
 

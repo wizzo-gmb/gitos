@@ -19,7 +19,8 @@ the operator to run in a terminal. An unmarked order is never taken by a sprint 
    the operator, who changes only what is wrong. This repo's own "is it safe to run unattended right now" check, if it has one,
    belongs in `<home>/sprint-guard.json` (`{"command": ["argv", ...], "timeout_s": N}`, `references/sprint.md`): the driver runs
    it before every launch and after every close, and only exit 0 lets the sprint go on. The engine ships none and names no
-   venue; what it checks is the repo's to define.
+   venue; what it checks is the repo's to define. A repo whose work has outside effects also sets `busy_max_s` and `settle_s` in
+   that file and has its own tooling write `<home>/sprint/BUSY` around each such action (`references/sprint.md`).
 3. **Check every open order** against the six criteria in `orchestrator/sprint.md`, *Which orders a sprint takes* (refer to
    them, do not restate them): read the order, its Part-0 and notes, and its board cards (`board.py list --open`).
 4. **Offer the fix for an order that fails a criterion you can fix.** Dispatch its Part-0 probe; ask the operator in chat to pin

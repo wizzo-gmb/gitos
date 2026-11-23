@@ -26,7 +26,9 @@ interactive orchestrator (`input_problems`).
 A sprint keeps its own state in `<home>/sprint/STATE.md` and never writes RESUME.md (the driver's notes go there; an interactive
 window folds it into RESUME at its first action). A new sprint is refused while an earlier one's STATE.md exists. A repo may
 declare `<home>/sprint-guard.json` (`guard_config`): the driver runs its command before every launch and after every close, and
-anything but exit 0 stops the sprint (`guard-failed`) with no further launch.
+anything but exit 0 stops the sprint (`guard-failed`) with no further launch. The same file may set `settle_s` (a wait after every
+close, before the after-close guard) and `busy_max_s` (turns on the BUSY lease: while the repo's own tooling has `<home>/sprint/BUSY`
+live, a ROTATE or a STOP file does not close the session; `live_lease`, `defer_close`).
 Exit status: 0 the sprint ended on a stop signal, 1 it ended on an error, an interruption, a cap or a failed guard, 2 nothing
 was launched.
 """
@@ -44,7 +46,7 @@ import sys
 import tempfile
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -82,8 +84,11 @@ STATE_REL = Path("sprint") / "STATE.md"  # the sprint's own state, relative to t
 NOTES_HEADING = "## Notes for the operator"
 GUARD_MARK = "<!-- gitos-sprint-guard -->"
 GUARD_FILE = "sprint-guard.json"         # the repo's optional guard command, relative to the home
-GUARD_KEYS = ("command", "timeout_s")
+GUARD_KEYS = ("command", "timeout_s", "settle_s", "busy_max_s")
 GUARD_TIMEOUT_DEFAULT, GUARD_TIMEOUT_MAX = 120, 900
+GUARD_NUMBER_KEYS = (("settle_s", 0, 600), ("busy_max_s", 1, 3600))     # (key, least, most) in seconds, both optional
+BUSY_FILE = "BUSY"                       # the repo's own lease file, in `<home>/sprint/`
+SETTLE_STEP = 1.0                        # the settle wait sleeps in steps this long, so Ctrl-C is heard
 GUARD_TAIL_LINES, GUARD_TAIL_CHARS = 5, 300
 CARD_ID_RE = re.compile(r"card (\d{8}-\d{6}-\d{6}-[0-9a-f]{4}) added")
 WO_RE = re.compile(r"WO-\d+(?:/S\d+)?")
@@ -253,7 +258,8 @@ def home_file(home: Path, rel: str) -> str:
 
 def guard_config(home: Path) -> "tuple[dict | None, str]":
     """The repo's guard command, `<home>/sprint-guard.json`: `{"command": ["argv", ...], "timeout_s": N}` (`timeout_s` optional,
-    default 120, at most 900; no other key). -> (config, "") for a sound file, (None, "") when there is no file, and
+    default 120, at most 900; `settle_s`, 0 to 600, and `busy_max_s`, 1 to 3600, optional and in the result only when present;
+    no other key). -> (config, "") for a sound file, (None, "") when there is no file, and
     (None, the problem) when it cannot be read, does not parse or has the wrong shape (a malformed input: `input_problems`
     refuses it). The command is an argv run with no shell; the engine ships no guard and gives it no meaning."""
     path = Path(home) / GUARD_FILE
@@ -271,14 +277,50 @@ def guard_config(home: Path) -> "tuple[dict | None, str]":
         return None, "is not a JSON object"
     extra = sorted(set(cfg) - set(GUARD_KEYS))
     if extra:
-        return None, f"has an unknown key `{extra[0]}` (only `command` and `timeout_s`)"
+        return None, f"has an unknown key `{extra[0]}` (only {', '.join(f'`{k}`' for k in GUARD_KEYS)})"
     cmd = cfg.get("command")
     if not isinstance(cmd, list) or not cmd or not all(isinstance(x, str) and x for x in cmd):
         return None, "`command` is a non-empty list of non-empty strings (the argv, run with no shell)"
     t = cfg.get("timeout_s", GUARD_TIMEOUT_DEFAULT)
     if isinstance(t, bool) or not isinstance(t, (int, float)) or not 0 < t <= GUARD_TIMEOUT_MAX:
         return None, f"`timeout_s` is a number above 0 and at most {GUARD_TIMEOUT_MAX}"
-    return {"command": list(cmd), "timeout_s": t}, ""
+    out = {"command": list(cmd), "timeout_s": t}
+    for key, least, most in GUARD_NUMBER_KEYS:
+        if key in cfg:
+            v = cfg[key]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not least <= v <= most:
+                return None, f"`{key}` is a number of seconds from {least} to {most}"
+            out[key] = v
+    return out, ""
+
+
+def read_busy(home: Path) -> "tuple[str, float, str]":
+    """The BUSY lease file `<home>/sprint/BUSY`, read fresh: one line, an ISO-8601 UTC deadline (a `Z` or an offset is read, a
+    bare time is taken as UTC). -> ("none", 0, "") when there is no file, ("lease", the deadline in epoch seconds, the line) for a
+    sound one and ("bad", 0, why) for one that cannot be read or does not parse: that is no lease."""
+    try:
+        raw = (Path(home) / "sprint" / BUSY_FILE).read_text(encoding="utf-8-sig", errors="replace")
+    except FileNotFoundError:
+        return "none", 0.0, ""
+    except OSError as e:
+        return "bad", 0.0, f"cannot be read ({e})"
+    line = (raw.strip().splitlines() or [""])[0].strip()
+    try:
+        when = datetime.fromisoformat(line[:-1] + "+00:00" if line.endswith(("Z", "z")) else line)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return "lease", when.timestamp(), line
+    except (ValueError, OverflowError, OSError):
+        return "bad", 0.0, f"is not an ISO-8601 deadline ({plain_line(line)[:40]!r})"
+
+
+def busy_identity(home: Path) -> "tuple[str, int] | None":
+    """What makes one BUSY file this lease and not another: its content and modification time; None when there is no readable file."""
+    path = Path(home) / "sprint" / BUSY_FILE
+    try:
+        return path.read_text(encoding="utf-8-sig", errors="replace"), path.stat().st_mtime_ns
+    except OSError:
+        return None
 
 
 def input_problems(home: Path, listed: tuple = ()) -> list:
@@ -874,11 +916,24 @@ def write_refused_note(home: Path, when: str, bad: list) -> "Path | None":
     return put_note(home, REFUSED_MARK, note, f"refused at {when}: {refusal_text(bad)}")
 
 
-def write_guard_note(home: Path, when: str, text: str) -> "Path | None":
-    """The guard-failure note, by `put_note`: the command, how it ended and the last lines of its output (`text`)."""
-    note = (f"{GUARD_MARK}\n- **Sprint guard failed {when}:** {plain_line(text)}. The sprint stopped (`guard-failed`) and "
-            f"launched nothing after it: look at what the guard guards before the next sprint.\n")
-    return put_note(home, GUARD_MARK, note, f"guard failed at {when}: {plain_line(text)}")
+def survivors_text(left: dict) -> str:
+    """The processes that outlived a close (and the kill), as one plain sentence; "" for none."""
+    if not left:
+        return ""
+    return plain_line(f"{len(left)} process(es) survived the close: {', '.join(f'{p} {n}' for p, n in left.items())}.")
+
+
+def write_guard_note(home: Path, when: str, text: str, survivors: str = "") -> "Path | None":
+    """The guard note, by `put_note`: the command, how it ended and the last lines of its output (`text`), and the processes that
+    survived the same close (`survivors`, a sentence). An empty `text` is a guard that passed on a close that left survivors."""
+    if text:
+        note = (f"{GUARD_MARK}\n- **Sprint guard failed {when}:** {plain_line(text)}. The sprint stopped (`guard-failed`) and "
+                f"launched nothing after it: look at what the guard guards before the next sprint." +
+                (f" {survivors}" if survivors else "") + "\n")
+        return put_note(home, GUARD_MARK, note, f"guard failed at {when}: {plain_line(text)} {survivors}".rstrip())
+    note = (f"{GUARD_MARK}\n- **Sprint closed with processes left {when}:** {survivors} The guard after the close passed. The "
+            f"sprint ended as an error: look at those processes before the next sprint.\n")
+    return put_note(home, GUARD_MARK, note, f"closed with processes left at {when}: {survivors}")
 
 
 def report_refusal(home: Path, bad: list, when: "str | None" = None) -> str:
@@ -952,6 +1007,10 @@ class Sprint:
         self.stop_file, self.rotate_file = self.sprint_dir / "STOP", self.sprint_dir / "ROTATE"
         self.card_id = ""
         self.guard = None                        # the repo's guard command (`guard_config`), read once at the start
+        self.settle_s, self.busy_max_s = 0, None  # from the guard file: the wait after a close; the BUSY lease's longest hold
+        self.spent = set()                       # BUSY leases (content, mtime) that ended by deadline or busy_max_s: never deferred on again
+        self.defer_since = None                  # when the close now being held back by a live lease was first held back
+        self.settle_interrupted = False          # Ctrl-C was pressed during a settle wait (the sprint ends after that close)
         self.sessions: list = []
         self.rotations = 0
         self._last_rendered = None
@@ -1041,29 +1100,141 @@ class Sprint:
     def transcript(self, sid: str) -> Path:
         return project_log_dir(self.root, self.env) / f"{sid}.jsonl"
 
+    def live_lease(self, proc) -> "tuple[bool, str]":
+        """Whether the repo's BUSY lease holds a close now. It is off unless the guard file sets `busy_max_s` (a stray BUSY file
+        is then ignored). A lease is live while the file parses, its deadline is ahead and the close has been held back for less
+        than `busy_max_s`; it is over once the file is gone, the deadline passed, `busy_max_s` reached or the session exited. A BUSY
+        file that does not parse is not a lease. -> (live, the deadline text when live, else why it is not or no longer live)."""
+        if self.busy_max_s is None:
+            return False, ""
+        if proc.poll() is not None:
+            return False, "the session exited"
+        kind, deadline, text = read_busy(self.home)
+        if kind == "none":
+            return False, "BUSY was removed"
+        if kind == "bad":
+            return False, f"BUSY is not a lease ({text})"
+        ident = busy_identity(self.home)
+        if ident in self.spent:
+            return False, "this BUSY lease is spent"
+        now = self.ops.now()
+        if deadline <= now:
+            self.spend(ident, "its deadline")
+            return False, "the BUSY deadline passed"
+        if self.defer_since is not None and now - self.defer_since >= self.busy_max_s:
+            self.spend(ident, "busy_max_s")
+            return False, f"busy_max_s {self.busy_max_s:g} s reached"
+        return True, plain_line(text)[:40]
+
+    def spend(self, ident, by: str) -> None:
+        """A lease that ended by its deadline or by `busy_max_s` is spent: remembered by its identity for the rest of the sprint
+        (never deferred on again; a BUSY rewritten with new content or time is a new lease) and reported once in STATE.md."""
+        if ident is None or ident in self.spent:
+            return
+        self.spent.add(ident)
+        mark = f"<!-- gitos-sprint-busy-{len(self.spent)} -->"
+        note = (f"{mark}\n- A BUSY lease was left behind and ended by {by}; the repo's tooling should remove it when its action "
+                f"settles.\n")
+        put_note(self.home, mark, note, f"a BUSY lease was left behind and ended by {by}")
+
+    def tidy_busy(self) -> None:
+        """Before a launch (no session is running): a BUSY file that is spent, or whose deadline has passed, is moved to
+        `<home>/sprint/archive/BUSY-<timestamp>` with a sprint-log note, so a stale lease never reaches the next session. A live
+        lease, a file that does not parse and any BUSY file without `busy_max_s` are left alone."""
+        if self.busy_max_s is None:
+            return
+        kind, deadline, _ = read_busy(self.home)
+        ident = busy_identity(self.home)
+        if kind != "lease" or ident is None:
+            return
+        if ident not in self.spent:
+            if deadline > self.ops.now():
+                return
+            self.spend(ident, "its deadline")
+        arch = self.sprint_dir / "archive"
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        dest, n = arch / f"{BUSY_FILE}-{stamp}", 1
+        try:
+            arch.mkdir(parents=True, exist_ok=True)
+            while dest.exists():
+                n += 1
+                dest = arch / f"{BUSY_FILE}-{stamp}-{n}"
+            os.replace(self.sprint_dir / BUSY_FILE, dest)
+        except OSError as e:
+            self.log("note", f"a spent BUSY lease could not be archived ({e})")
+            return
+        self.log("note", f"a spent BUSY lease was archived to sprint/archive/{dest.name} before the launch")
+
+    def defer_close(self, proc) -> bool:
+        """Called when a ROTATE or STOP file asks for a close: True while a live lease holds it back (one `note` when it starts,
+        one when it ends). Ctrl-C, the driver's own stops and a session that has exited never come here."""
+        live, text = self.live_lease(proc)
+        if live:
+            if self.defer_since is None:
+                self.defer_since = self.ops.now()
+                self.log("note", f"close deferred: BUSY until {text}")
+            return True
+        if self.defer_since is not None:
+            self.log("note", f"BUSY lease over ({text}); closing")
+        elif text.startswith("BUSY is not a lease"):
+            self.log("note", f"{text}; closing as usual")
+        return False
+
+    def wait_settle(self) -> str:
+        """The wait after a close, before the after-close guard: `settle_s` seconds (none when 0), logged. A Ctrl-C during it
+        does not cut it short: the wait is finished and the guard runs, and the sprint ends after that close. A second Ctrl-C
+        stops at once. -> "" normally, else the guard-failed text saying the guard did not run."""
+        wait = self.settle_s
+        if not wait:
+            return ""
+        self.log("note", f"settling {wait:g} s before the after-close guard")
+        end, presses = self.ops.now() + wait, 0
+        while end - self.ops.now() > 0:
+            try:
+                self.ops.sleep(min(end - self.ops.now(), SETTLE_STEP))
+            except KeyboardInterrupt:
+                presses += 1
+                self.settle_interrupted = True
+                if presses >= 2:
+                    return plain_line(f"after close: the guard did not run (Ctrl-C twice during the {wait:g} s settle wait)")
+                self.ops.say("Ctrl-C: finishing the settle wait, then the guard runs and the sprint ends (Ctrl-C again skips the guard)")
+        return ""
+
     def close(self, proc, why: str, sid: str = "") -> dict:
+        self.defer_since = None
         info = close_session(proc, self.ops, transcript=self.transcript(sid) if sid else None)
         left = info["survivors"]
         self.log("error" if left else "note",
                  f"closed ({why}) by {info['method']} in {info['seconds']} s; " +
                  (f"{len(left)} process(es) survived: {', '.join(map(str, left))}" if left else "no process left"))
-        info["guard"] = self.run_guard("after close")      # after every close, a force-kill included
+        skipped = self.wait_settle() if self.guard is not None else ""
+        # after every close, a force-kill included, once the repo's outside state has had its settle time
+        info["guard"] = self.fail_guard(skipped, left) if skipped else self.run_guard("after close", left)
+        if self.settle_interrupted and why not in ("Ctrl-C", "driver error"):
+            raise KeyboardInterrupt
         return info
 
-    def run_guard(self, when: str) -> str:
+    def fail_guard(self, text: str, survivors: "dict | None" = None) -> str:
+        """A guard that did not pass (`text`): a `stop` record `guard-failed: ...` and the STATE.md note, with the processes
+        that survived the same close when there were any. -> `text`."""
+        self.log("stop", f"guard-failed: {text}")
+        write_guard_note(self.home, datetime.now().astimezone().isoformat(timespec="seconds"), text, survivors_text(survivors or {}))
+        return text
+
+    def run_guard(self, when: str, survivors: "dict | None" = None) -> str:
         """Run the repo's guard command (none declared: nothing happens). -> "" when it passed, else one line saying which
         command failed and how (also logged as a `stop` record `guard-failed: ...` and put in STATE.md as a note). The caller
-        launches nothing after a failure."""
+        launches nothing after a failure. `survivors` (processes that outlived the close this run follows) are named in the same
+        STATE.md note, whatever the guard said."""
         if self.guard is None:
             return ""
         cmd, limit = self.guard["command"], self.guard["timeout_s"]
         passed, what, tail = self.ops.guard(cmd, limit, child_env(self.env, self.home))
         if passed:
+            if survivors:
+                write_guard_note(self.home, datetime.now().astimezone().isoformat(timespec="seconds"), "", survivors_text(survivors))
             return ""
-        text = plain_line(f"{when}: `{' '.join(cmd)}` {what}" + (f"; last output: {tail}" if tail else ""))
-        self.log("stop", f"guard-failed: {text}")
-        write_guard_note(self.home, datetime.now().astimezone().isoformat(timespec="seconds"), text)
-        return text
+        return self.fail_guard(plain_line(f"{when}: `{' '.join(cmd)}` {what}" + (f"; last output: {tail}" if tail else "")), survivors)
 
     def end_guard_failed(self, text: str) -> int:
         """The sprint ends because the guard did not pass: no launch follows. A STOP file is left for the operator unless one is
@@ -1126,6 +1297,7 @@ class Sprint:
             failed = self.run_guard("before launch")
             if failed:
                 return self.end_guard_failed(failed)
+            self.tidy_busy()
             proc, sid = self.launch()
             allow = f" orders={','.join(a.orders)}" if a.orders else ""
             self.log("start", f"model={a.model} effort={a.effort} window={a.autocompact}{allow} session={sid}", session=sid)
@@ -1133,6 +1305,8 @@ class Sprint:
             while True:
                 self.ops.sleep(POLL_SECONDS)
                 self.render()
+                if (self.stop_file.exists() or self.rotate_file.exists()) and self.defer_close(proc):
+                    continue
                 if self.stop_file.exists():
                     self.settle(sid, proc)
                     ident, reason = parse_signal(self.stop_file.read_text(encoding="utf-8-sig", errors="replace"))
@@ -1182,10 +1356,11 @@ class Sprint:
                 failed = self.run_guard("before relaunch")
                 if failed:
                     return self.end_guard_failed(failed)
+                self.tidy_busy()
                 proc, sid = self.launch()
                 self.log("note", f"relaunched after rotation {self.rotations}: session {sid}", session=sid)
         except KeyboardInterrupt:
-            if proc is not None:
+            if proc is not None and not self.settle_interrupted:       # else the close that was interrupted is done
                 self.close(proc, "Ctrl-C", self.sessions[-1])
             return self.end_error("stop", "Ctrl-C in the terminal", True, "Ctrl-C in the terminal")
         except Exception as e:                       # never leave a session running behind a driver that fell over
@@ -1200,6 +1375,8 @@ class Sprint:
         self.guard, problem = guard_config(self.home)
         if problem:
             raise ValueError(f"{home_file(self.home, GUARD_FILE)}: {problem}")
+        if self.guard:
+            self.settle_s, self.busy_max_s = self.guard.get("settle_s", 0), self.guard.get("busy_max_s")
         self.sprint_dir.mkdir(parents=True, exist_ok=True)
         slog.archive_previous(self.home)
         try:
