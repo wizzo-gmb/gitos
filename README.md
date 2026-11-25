@@ -203,10 +203,28 @@ python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --autocompact 500k 
   anything but exit 0 stops the sprint. Its tooling can also hold a `sprint/BUSY` lease while an action with outside
   effects is in flight: the driver then defers a rotation or stop until it settles, and waits a settle time before
   the guard looks.
-- **Several at once.** `--id NAME --orders 12,14` starts a named sprint in its own worktree and branch; other named
-  sprints run beside it on other orders. Each order is claimed by one sprint, each sprint has its own Stop card, and
-  a sprint lands through `worktree.py land`, which merges and runs the gate (the canary plus an optional
-  `<home>/sprint-gate.json` read from main) one sprint at a time. A sprint without `--id` still runs alone.
+
+### Several sprints at once
+
+Give each sprint a name and its own orders, one terminal each:
+
+```bash
+python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --id a --orders 12,14
+python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --id b --orders 15,16
+```
+
+- **Its own worktree.** A named sprint works in `<repo>.worktrees/sprint-<id>` on branch `sprint-<id>`, with its
+  implementers' worktrees nested under it. Your main checkout stays yours, and a sprint's edits outside its own
+  tree are refused.
+- **One owner per order.** Each order is claimed by exactly one sprint; a second sprint asking for it is refused and
+  told who holds it. A claim whose sprint has died holds nothing.
+- **One landing at a time.** A sprint lands through `worktree.py land`: under one merge lock it merges main in,
+  runs the gate (the canary, plus your own command in `<home>/sprint-gate.json` if you name one; it is read from
+  main, so a sprint cannot change it), then fast-forwards main. A refused land stops that sprint with a board card.
+  Your own merges while sprints run take the same lock (`worktree.py lock acquire` / `release`).
+- **Its own Stop card.** Each sprint has its own card on the board and its own log; stopping one leaves the others
+  running. Each sprint's stuck check counts only its own commits.
+- **A sprint without `--id`** is the exclusive sprint: it still runs alone, and no named sprint starts beside it.
 
 Operator guide: [sprint mode](references/sprint.md).
 
