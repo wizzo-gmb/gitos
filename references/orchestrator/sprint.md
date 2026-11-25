@@ -38,6 +38,37 @@ here, only while no session is running). It is local and git-ignored, like the l
 window folds it into RESUME at its first action and moves it to `<home>/sprint/archive/` (`first-action.md`), and the driver
 refuses a new sprint while one is left unfolded. Within one sprint a rotation keeps it: the next session reads it.
 
+## In a named sprint
+
+Your start prompt says so when the sprint has an id (`--id`). Several named sprints may run in this home at once, each in its
+own terminal, on disjoint orders. Differences from the above:
+
+- **Your session runs in your own worktree**, `<repo>.worktrees/sprint-<id>` on branch `sprint-<id>` (`GITOS_SPRINT_WORKTREE`).
+  Your workers branch from it, and an order's merge lands on it, never on the main branch. Tracked ledger edits (orders, brain,
+  `INDEX.md`) are yours and are committed there.
+- **Your state is in the main checkout's home.** The driver gives it as `GITOS_SPRINT_HOME` (absolute) and your id as
+  `GITOS_SPRINT_ID`, with `GITOS_SPRINT_PID` (the driver's pid). Write `STATE.md`, `STOP` and `ROTATE` under
+  `$GITOS_SPRINT_HOME/sprint/<id>/`, never `sprint/` itself and never your worktree. Your signals are `sprint/<id>/STOP` and
+  `sprint/<id>/ROTATE`; where this page says `sprint/STOP` or `sprint/ROTATE`, read that path. The Stop card is yours alone: it
+  stops only this sprint. Act only on it: read it with
+  `board.py answer-for $(cat $GITOS_SPRINT_HOME/sprint/<id>/stop-card.id) --tab sprint` (the driver writes that id file). Never act
+  on the tab's other cards, and never run a plain `board.py list`, which would read another sprint's answers and lock them. Your board commands (`board.py`, from your worktree's copy) and approvals use `$GITOS_SPRINT_HOME`'s board
+  automatically.
+- **You cannot edit the repo's other trees.** Edit and Write are refused in the main checkout, other worktrees and the main home
+  outside your `sprint/<id>/`. Your own worktree, your workers' area and `sprint/<id>/` are open. Do not edit those trees through
+  Bash either: it is not guarded, and `land`'s clean-main check is the only backstop.
+- **Only your orders.** Each `--orders` entry is claimed by this sprint (`<home>/sprint/claims/WO-NNN.json`) while the driver runs.
+  Take no other order.
+- **Landing is a tool.** After you resolve an order on your branch, run `python <skill>/scripts/worktree.py land --wait 600` from
+  the sprint worktree. It first refuses if the main checkout is dirty or off the main branch, then reaps your own merged, clean
+  workers, then takes the per-home merge lock (`--wait` waits for another sprint's land), merges the main branch into
+  yours, regenerates the indexes, runs the gate (the canary, then the repo's `<home>/sprint-gate.json` command if it has one)
+  and fast-forwards the main branch. **A refusal is a Stop card and a stop** (a conflict outside the generated files, a failed
+  gate, a lock that stays held, a main checkout that is dirty or not on the main branch): never retry blindly, never merge by
+  hand, never force.
+- **The stuck cap is yours.** The driver ends a sprint that rotates twice with none of its own orders, branches or workers moving
+  (`stuck`); another sprint's progress does not count for it.
+
 ## Self-acceptance (step 4)
 
 Accept an order only when **all four** hold, each checked by you, not read from the worker's report: (1) the diff matches the
@@ -88,7 +119,7 @@ A trigger is one of the ids below. Each stops the sprint after the exit sequence
 | `stop-card` | the sprint Stop card is answered, or `<home>/sprint/STOP` exists |
 | `guard-failed` | the repo's guard command (`<home>/sprint-guard.json`) did not exit 0 before a launch or after a close: written by the driver only, with a STATE.md note; you never write it |
 
-Check for the last at first action and at every step 8 (`board.py list --open`; the file). It ends the sprint **after the current
+Check for the last at first action and at every step 8 (`board.py list --open`; the file; in a named sprint, the `answer-for` command in *In a named sprint*). It ends the sprint **after the current
 order is resolved or left open with its finding written**: do not start another order, and do not abandon a landing half verified.
 A `STOP` file you find at your very start: end the session at once and write nothing.
 

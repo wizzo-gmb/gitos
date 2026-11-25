@@ -40,6 +40,13 @@ Bootstrap your state before doing anything:
    lines, the last order, the stop or rotation reason, the driver's and the session's notes for the operator, the next steps),
    and move the file to `<home>/sprint/archive/STATE-<YYYYMMDD-HHMMSS>.md` (create the folder if missing; the move is what marks
    it folded, and the driver refuses a new sprint until it is done). Say in the summary that you folded it and what it carried.
+   **Several named sprints may have left state:** fold every unfolded one, `<home>/sprint/STATE.md` (the exclusive sprint) and
+   each `<home>/sprint/<id>/STATE.md`, with one archive each (`<home>/sprint/<id>/archive/STATE-<timestamp>.md` for a named
+   one), into **one** RESUME entry that says which sprint each part came from. A sprint still running owns its state: leave
+   it. Name any sprint worktree left behind (`worktree.py status`, the canary's `sprint-worktree-left` and
+   `sprint-workers-left`): its path, its branch, whether it holds unlanded commits. A leftover is never removed here without
+   reading it. A dead claim, merge lock or exclusive marker (`sprint-claim-stale`, `merge-lock-stale`,
+   `sprint-exclusive-stale`) is named too; the next sprint or lock takes it over.
    Then read RESUME as below.
 
    **Read `<home>/RESUME.md`** — where the last window left off (what is serving, what is in
@@ -83,7 +90,8 @@ nothing means say nothing); none of these blocks starting work, except where a l
    repo's operator.
 10. **Assessment** (below), only if the canary's `assessment-unanswered` advisory names a report: one line, the report's
     path. It does not block starting work.
-11. **RESUME** (step 9): a sprint state you folded, what you verified, and any claim found dead.
+11. **RESUME** (step 9): every sprint state you folded (one line each), any sprint worktree left behind, what you verified, and
+    any claim found dead.
 
 ## Assessments
 

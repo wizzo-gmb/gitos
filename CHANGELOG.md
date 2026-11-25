@@ -18,6 +18,13 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v73 — 2026-11-24
+breaking: no
+
+- Parallel sprints in one home: named sprints (`--id`) in their own worktrees, order claims, `worktree.py land` under one merge lock with the gate read from main, one exclusive sprint at a time, per-sprint Stop card, stuck cap and board routing, an edit guard on other trees (WO-150)
+
+---
+
 ## v72 — 2026-11-22
 breaking: no
 

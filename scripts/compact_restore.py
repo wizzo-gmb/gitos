@@ -6,7 +6,8 @@ is behind the ledger (see `stop_output`). The text below describes the restore h
 
 A sprint session (GITOS_SPRINT=1) keeps its state in `<home>/sprint/STATE.md` and never writes RESUME.md: its restore also
 prints STATE.md, its rotation line says to checkpoint there, its `Stop` entry never calls RESUME behind and prints nothing
-once `<home>/sprint/STOP` or `ROTATE` exists. The client documents that a `Stop` hook which prints nothing and exits 0 lets the
+once `<home>/sprint/STOP` or `ROTATE` exists. A named sprint (the driver also sets GITOS_SPRINT_ID) keeps all of these under
+`<home>/sprint/<id>/` of the main checkout (GITOS_SPRINT_HOME; the session itself runs in its own worktree) instead. The client documents that a `Stop` hook which prints nothing and exits 0 lets the
 turn end, and that `hookSpecificOutput.additionalContext` from a `Stop` hook continues the conversation
 (https://code.claude.com/docs/en/hooks, Stop).
 
@@ -68,6 +69,12 @@ ROTATE_AT = 2
 SPRINT_ENV = "GITOS_SPRINT"     # set to 1 by the sprint driver for the session it starts (references/sprint.md)
 STATE_REL = Path("sprint") / "STATE.md"     # a sprint's own state, in place of RESUME.md (references/orchestrator/sprint.md)
 SPRINT_SIGNALS = ("STOP", "ROTATE")         # the files under <home>/sprint/ that mean the session is ending
+SPRINT_ID_ENV = "GITOS_SPRINT_ID"           # set by the driver for a named sprint's session: `[a-z0-9-]{1,32}`
+SPRINT_PID_ENV = "GITOS_SPRINT_PID"         # the named sprint's driver pid, set beside the id
+SPRINT_ID_RE = re.compile(r"[a-z0-9-]{1,32}")
+SPRINT_RESERVED_IDS = ("claims", "archive")  # folders under <home>/sprint/ that are not a sprint
+SPRINT_HOME_ENV = "GITOS_SPRINT_HOME"       # a named sprint's session: the main checkout's home, where `sprint/<id>/` lives
+SPRINT_WORKTREE_ENV = "GITOS_SPRINT_WORKTREE"   # a named sprint's session: its own worktree (the one place a linked worktree speaks)
 # The engine's detection order (model_optimization.HOMES).
 HOMES = (".gitos", "outputs/debug", ".pipeline", "docs/agents")
 
@@ -297,6 +304,121 @@ def in_sprint():
     return os.environ.get(SPRINT_ENV) == "1"
 
 
+def sprint_id():
+    """The named sprint this session belongs to (GITOS_SPRINT_ID), "" for the exclusive sprint, for no sprint and for a
+    value that is not a sprint id (it would otherwise reach a path)."""
+    sid = os.environ.get(SPRINT_ID_ENV, "") if in_sprint() else ""
+    return sid if SPRINT_ID_RE.fullmatch(sid) and sid not in SPRINT_RESERVED_IDS else ""
+
+
+def sprint_dir(home, sid=""):
+    """A sprint's own folder under the home: `<home>/sprint/<id>/` when named, `<home>/sprint/` for the exclusive sprint."""
+    return Path(home) / "sprint" / sid if sid else Path(home) / "sprint"
+
+
+def sprint_home(home):
+    """The home that holds this session's `sprint/` folder. A named sprint's session runs in its own worktree (the `home` the hook
+    finds is that worktree's copy of the ledger) while its claims, state, signals and log are in the main checkout's home, which
+    the driver gives as GITOS_SPRINT_HOME; a session with no id, or no such folder, keeps the home it was found in."""
+    if sprint_id():
+        env = os.environ.get(SPRINT_HOME_ENV, "")
+        if env and Path(env).is_dir():
+            return Path(env)
+    return home
+
+
+def own_sprint_worktree(root):
+    """True when `root` is the worktree the driver made for this named sprint (GITOS_SPRINT_WORKTREE): the one linked worktree whose
+    session is a sprint's orchestrator and not an implementer's window."""
+    env = os.environ.get(SPRINT_WORKTREE_ENV, "")
+    if not env or not sprint_id():
+        return False
+    try:
+        return os.path.normcase(os.path.realpath(root)) == os.path.normcase(os.path.realpath(env))
+    except OSError:
+        return False
+
+
+def pid_alive(pid) -> bool:
+    """Whether a process with this pid is running now. (`os.kill(pid, 0)` would terminate it on Windows, so it is not used there.)"""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        h = k32.OpenProcess(0x1000, False, pid)          # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return ctypes.get_last_error() == 5          # access denied: it exists
+        try:
+            code = wintypes.DWORD(0)
+            return bool(k32.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259     # STILL_ACTIVE
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def process_start(pid) -> str:
+    """When the process with this pid started, as an opaque string that is the same for as long as that process runs and differs
+    for the next process that gets the pid: the creation time (`GetProcessTimes`) on Windows, field 22 of `/proc/<pid>/stat`, else
+    `ps -o lstart=`. "" when it cannot be read (no such process, no access, no tool): a record then falls back to the pid alone."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return ""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.GetProcessTimes.restype = wintypes.BOOL
+        k32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        h = k32.OpenProcess(0x1000, False, pid)          # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return ""
+        try:
+            created, left, kernel, user = (wintypes.FILETIME() for _ in range(4))
+            if not k32.GetProcessTimes(h, ctypes.byref(created), ctypes.byref(left), ctypes.byref(kernel), ctypes.byref(user)):
+                return ""
+            return str((created.dwHighDateTime << 32) | created.dwLowDateTime)
+        finally:
+            k32.CloseHandle(h)
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        return stat[stat.rindex(")") + 2:].split()[19]   # field 22 (the fields after `comm` start at field 3)
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return " ".join(out.split())
+
+
+def record_alive(rec) -> bool:
+    """Whether the process a record names (`{"pid": N, "start": ...}`: a claim, the exclusive marker, a lock) is still that process:
+    the pid is running and, when the record carries a `start`, the process now has that start time (a reused pid is another
+    process, so the record is dead). A record without a readable `start`, or a start that cannot be read now, is judged by the pid."""
+    pid = rec.get("pid") if isinstance(rec, dict) else None
+    if not pid_alive(pid):
+        return False
+    start = rec.get("start")
+    if not isinstance(start, str) or not start:
+        return True
+    now = process_start(pid)
+    return not now or now == start
+
+
 def clip_section(name, body, budget, path):
     """`--- name ---` section holding `body` cut to `budget` characters (the cut is stated, with the file's path)."""
     body = body.strip()
@@ -338,7 +460,8 @@ def build_output(payload):
         resume_text = resume.read_text(encoding="utf-8-sig")
     except OSError:
         resume_text = None
-    state = home / STATE_REL
+    sid = sprint_id()
+    state = sprint_dir(sprint_home(home), sid) / STATE_REL.name
     state_text = None
     if sprint:
         try:
@@ -365,7 +488,7 @@ def build_output(payload):
         if os.environ.get(SPRINT_ENV) == "1":
             tail.append("This is the second compaction or later in this window, which is a rotation "
                         f"trigger in sprint mode: checkpoint {state} (never RESUME.md; the reattach line of any "
-                        f"worker in flight included), write {home / 'sprint' / 'ROTATE'} (one line, the "
+                        f"worker in flight included), write {sprint_dir(sprint_home(home), sid) / 'ROTATE'} (one line, the "
                         "reason: second compaction) and end the session. Do not tell the operator a "
                         "fresh window is ready: the sprint driver starts the next one "
                         "(references/orchestrator/sprint.md, Rotation).")
@@ -397,7 +520,9 @@ def locate(payload):
     """(home, repo root) for a payload's cwd, or None when the hook must stay silent.
 
     Silent with no home and in a linked worktree: an implementer's window is not the orchestrator's,
-    and the worktree holds its own copy of the ledger that would only mislead.
+    and the worktree holds its own copy of the ledger that would only mislead. The one exception is a named
+    sprint's own worktree (GITOS_SPRINT_WORKTREE): that session is the sprint's orchestrator, its ledger is the
+    worktree's, and its sprint files are in the main home (`sprint_home`).
     """
     home = find_home(payload.get("cwd"))
     if home is None:
@@ -407,7 +532,7 @@ def locate(payload):
         root = home.parent.parent
     elif home.name == "agents" and home.parent.name == "docs":
         root = home.parent.parent
-    if is_linked_worktree(root):
+    if is_linked_worktree(root) and not own_sprint_worktree(root):
         return None
     return home, root
 
@@ -457,11 +582,11 @@ def has_open_slice(home, rel):
                for d in wdir.iterdir())
 
 
-def stop_state(home, canary, sprint=False):
+def stop_state(home, canary, sprint=False, sid=""):
     """The unresolved-state findings for a home. -> (state key, instruction) or None. Four sources: an order landed
     and still open, RESUME.md behind the ledger, notes waiting for adjudication, a reapable worktree. In a sprint
     (`sprint` true) RESUME.md is not the sprint's file: it is never called behind and never asked to be rewritten, and
-    the state to update is `<home>/sprint/STATE.md`."""
+    the state to update is `<home>/sprint/STATE.md` (`<home>/sprint/<id>/STATE.md` for a named sprint, `sid`)."""
     keys, asks = [], []
     for item in canary.landed_unresolved(home):
         keys.append(f"landed:{item['wo']}")
@@ -498,7 +623,7 @@ def stop_state(home, canary, sprint=False):
     tail = []
     if resolve_asks and sprint:
         tail.append("finish the resolution now: move the order to work-orders/resolved/, update its "
-                    f"INDEX row, record the state in {home / STATE_REL} (never RESUME.md), then run canary.py")
+                    f"INDEX row, record the state in {sprint_dir(sprint_home(home), sid) / STATE_REL.name} (never RESUME.md), then run canary.py")
     elif resolve_asks:
         tail.append("finish the resolution now: move the order to work-orders/resolved/, update its "
                     "INDEX row, replace RESUME.md wholesale, then run canary.py")
@@ -545,14 +670,17 @@ def stop_output(payload):
         return None
     home, root = found
     sprint = in_sprint()
-    if sprint and any((home / "sprint" / name).exists() for name in SPRINT_SIGNALS):
+    sid = sprint_id()
+    if sid and any((sprint_dir(sprint_home(home), sid) / name).exists() for name in SPRINT_SIGNALS):
+        return None         # a named sprint's own STOP or ROTATE (the exclusive sprint's files below are not this session's)
+    if sprint and not sid and any((home / "sprint" / name).exists() for name in SPRINT_SIGNALS):
         return None         # the sprint session wrote STOP or ROTATE: it is ending, and nothing here may hold it one more turn
-    if not (home / RESUME_FILENAME).is_file() and not (sprint and (home / STATE_REL).is_file()):
+    if not (home / RESUME_FILENAME).is_file() and not (sprint and (sprint_dir(sprint_home(home), sid) / STATE_REL.name).is_file()):
         return None
     canary = _canary()
     if canary is None:
         return None
-    state = stop_state(home, canary, sprint)
+    state = stop_state(home, canary, sprint, sid)
     if state is None:
         return None
     key, text = state

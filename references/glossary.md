@@ -230,6 +230,26 @@ routing grammar of `loose_ends.py drop --to` and `drain decline --route` (`close
 The implementer's own git checkout, `<parent>/<repo>.worktrees/wo-NNN` on branch `wo-NNN` (`wo-NNN-sN` for a slice), reaped once merged and
 clean. A **slice marker** in a slice worktree's git dir arms the `slice_guard` hook.
 
+**Named sprint**
+A sprint started with `--id NAME` and `--orders`. Several run in one home at once, each in its own terminal, state folder
+(`<home>/sprint/<id>/`) and *sprint worktree*, on disjoint orders. A sprint without an id is the exclusive sprint and runs alone.
+
+**Sprint worktree**
+A named sprint's own checkout, `<repo>.worktrees/sprint-<id>` on branch `sprint-<id>`. Its session runs there, its workers go to
+`sprint-<id>.worktrees/` beside it, and its orders land on its branch before *land* takes them to the main branch.
+
+**Order claim**
+`<home>/sprint/claims/WO-NNN.json`: the one sprint working an order, with its pid and process start time. Dead process, stale
+claim: the next sprint takes it over.
+
+**Merge lock**
+`<home>/sprint/merge.lock`: one holder per home at a time for a merge into the main branch and the gate after it
+(`worktree.py lock acquire|release|status`). A dead holder's lock is taken over.
+
+**Land**
+`worktree.py land`: under the *merge lock*, merge the main branch into the sprint branch, regenerate the indexes, run the gate
+(the canary, then `<home>/sprint-gate.json`) and fast-forward the main branch. A refusal is a Stop card.
+
 **Scope bound**
 What the implementer may edit is what its order specifies, never what it designs; an approved plan of its own is not
 a substitute.

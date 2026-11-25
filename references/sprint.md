@@ -29,6 +29,55 @@ The flags set the **orchestrator session only**. Workers keep the model and effo
 the repo's model-optimization mapping. There is no config file. Permission mode is never passed: your own Claude setting
 applies, and the driver never passes a permission-bypass flag.
 
+## Several sprints at once
+
+`--id NAME` (`[a-z0-9-]{1,32}`, with `--orders`) makes a **named sprint**. Open one terminal per sprint, give each its own
+`--id` and disjoint `--orders`, and run them together:
+
+```
+python <skill>/scripts/gitos-sprint.py --id a --orders 253,254
+python <skill>/scripts/gitos-sprint.py --id b --orders 260
+```
+
+Start them a few seconds apart. This is advice only; the engine does not depend on it.
+
+- **Its own state.** A named sprint keeps `STATE.md`, `log.jsonl`, `STOP`, `ROTATE`, `BUSY` and `archive/` under
+  `<home>/sprint/<id>/`, and has its own page (`board/local/sprint-<id>.html`) and Stop card. A card names its sprint and stops
+  only that one. The session reads only its own card (`board.py answer-for <its stop-card.id> --tab sprint`), never the tab's
+  other cards, and its signals are `<home>/sprint/<id>/STOP` and `ROTATE`. The stuck cap counts only that sprint's own orders and branches.
+- **Its own worktree.** The driver makes `<repo>.worktrees/sprint-<id>` on branch `sprint-<id>` from the main branch's tip and
+  starts the session there. Its workers go to `<repo>.worktrees/sprint-<id>.worktrees/`. The session gets `GITOS_SPRINT_ID`,
+  `GITOS_SPRINT_PID` (the driver's pid), `GITOS_SPRINT_WORKTREE` and `GITOS_SPRINT_HOME`. At the end the worktree and branch are
+  removed only when the branch is in the main branch and the tree is clean; otherwise both stay and `STATE.md` says so.
+- **The main home is the meeting point.** Claims, each sprint's folder, `EXCLUSIVE`, the merge lock and the board live in the main
+  checkout's home, whichever worktree a session runs in. `GITOS_SPRINT_HOME` must name a real home. The session's board commands
+  and approvals use that home's board, so an answer you give on your real board is the one the sprint sees.
+- **What a named session may edit.** Its Edit and Write tools are refused in the repo's other trees: the main checkout, other
+  worktrees, the main home outside its own `sprint/<id>/`, and other sprints' worktrees. Its own worktree, its workers' area and
+  its own `sprint/<id>/` are open, and so are files outside the repo. Edits made through Bash are not guarded, so the check
+  `land` makes on the main checkout is the backstop.
+- **Order claims.** Each `--orders` entry is claimed in `<home>/sprint/claims/WO-NNN.json` while the driver runs. A sprint is
+  refused when another live sprint holds one of its orders, or when its own `STATE.md` is unfolded. Another sprint's unfolded
+  state does not block it. A claim whose process is gone (or whose pid now belongs to another process) is stale: a new sprint
+  takes it over and says so in its `STATE.md`, and the canary reports it (`sprint-claim-stale`).
+- **Landing.** The session lands each resolved order with `worktree.py land --wait S`. First `land` checks that the main checkout
+  is clean and on the main branch, and refuses at once if not (before the lock and the gate). It then reaps the sprint's own
+  merged, clean workers, so the canary does not meet them. Under the per-home merge lock
+  (`<home>/sprint/merge.lock`, one holder at a time; `worktree.py lock acquire|release|status`) it merges the main branch into the
+  sprint branch, regenerates the indexes, runs the gate and fast-forwards the main branch. The gate is the canary, then the
+  command in `<home>/sprint-gate.json` (`{"command": ["argv", ...], "timeout_s": N}`) if the repo has one. A refusal (a
+  conflict, a failed gate, a dirty or off-branch main checkout, a lock that stays held) is a Stop card, never a guess. Keep
+  your own checkout on the main branch and clean while sprints run.
+- **Your own merges.** The interactive orchestrator wraps its merge in `worktree.py lock acquire` and `lock release`. The lock is
+  held by its Claude session. On Windows a session hosted by `node.exe` is not recognised: pass `--pid N` of a process that
+  lives through the merge, or the command refuses.
+- **The exclusive sprint.** A sprint without `--id` keeps today's paths and runs in the main checkout. It is refused while any
+  named sprint runs, and every named sprint is refused while it runs (`<home>/sprint/EXCLUSIVE`).
+
+Leftovers after a crash are reported, never removed: the canary's `sprint-claim-stale`, `merge-lock-stale`,
+`sprint-exclusive-stale`, `sprint-state-unfolded`, `sprint-worktree-left` and `sprint-workers-left` (the last one is cleared with
+`worktree.py reap --merged` in the main checkout). The first action of the next interactive window folds every unfolded state.
+
 ## What it refuses
 
 Each refusal is one sentence on the screen, nothing is launched, and the exit status is 2:
@@ -37,8 +86,9 @@ Each refusal is one sentence on the screen, nothing is launched, and the exit st
 - a hub-routed repo (`board-route.json` says mode `hub`) or a `board-route.json` that does not parse: sprint mode does not
   support them yet (mode `local` is a repo with its own board and is fine);
 - no owner board in the home (the Stop card needs it);
-- the repo is not trusted in your `~/.claude.json`: open Claude in the repo once and accept the trust dialog (a prompt would
-  otherwise wait behind it with no one there). The driver only reads that file;
+- the repo root is not trusted in your `~/.claude.json`: open Claude in the repo once and accept the trust dialog (a prompt would
+  otherwise wait behind it with no one there). Claude Code does not inherit trust from a parent folder, so a trusted parent is
+  not enough. This holds for every sprint, the exclusive one too. The driver only reads that file;
 - a `STOP` file from an earlier sprint: read `<home>/sprint/STOP`, then delete it;
 - a `<home>/sprint/STATE.md` left by an earlier sprint (*State*): fold it in a normal orchestrator window first;
 - `--autocompact` below 200k, or above the model's context window (a window that small makes the session compact again and
@@ -47,6 +97,11 @@ Each refusal is one sentence on the screen, nothing is launched, and the exit st
 - an `--orders` entry that is not an open work-order (resolved, parked or missing), named in the sentence;
 - an `--orders` entry marked `sprint: no`, named in the sentence; and, with no `--orders`, a repo with no open order marked
   `sprint: ready` (prepare orders in a normal orchestrator window, or pass `--orders`);
+- a `--model` and `--effort` that leave the lead no worker below it under the repo's dispatch rule (a worker on the lead's
+  model runs at lower effort, a lower model at up to `high`), for example haiku at low: the lead could dispatch nothing. Raise
+  `--effort` or use a higher model;
+- a `GITOS_SPRINT_HOME` that is not a gitos home (no `INDEX.md` beside `work-orders/` or `sprint/`), so a log is never written
+  into a repo root;
 - an `--add-dir` that is not a folder, a platform other than Windows, or no `claude.exe` on `PATH`.
 
 A file the driver reads that is malformed is refused the same way, before anything is launched: `worktrees.json`, `board/board.json`,

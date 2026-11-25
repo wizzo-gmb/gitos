@@ -67,6 +67,9 @@ A repo's own boards: every <board dir>/local/<name>.html (name `a-z 0-9 -`, 1-32
 a sandboxed iframe (scripts run; no board API, no network fetch) from GET /local/<name>.html. Upgrades never touch
 local/. A local board named like a card tab shows above that tab's cards.
 
+A named sprint's session (GITOS_SPRINT=1, GITOS_SPRINT_ID, GITOS_SPRINT_HOME) runs in its own worktree: every command there uses the
+board of GITOS_SPRINT_HOME (that home's hub, when its board-route.json names one), never the worktree's own copy and data/.
+
 The honest limit: on a single-user machine the agent runs as the owner, so it could forge a browser request or write
 these files itself. The board guards against accidents and against other local pages and programs, not against a
 deliberately hostile agent.
@@ -95,7 +98,7 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-BOARD_VERSION = 5
+BOARD_VERSION = 6
 DEFAULT_HOST = "127.0.0.1"
 PORT_LO, PORT_HI = 8800, 8999
 BASE_TABS = ("decisions",)
@@ -124,7 +127,7 @@ class BoardError(Exception):
 
 
 def set_dir(board_dir) -> None:
-    """Point this module at one board directory (default: the one this file sits in)."""
+    """Point this module at one board directory (default: the one this file sits in, or a named sprint's board: follow_sprint())."""
     global HERE, DATA, CARDS, CONFIG
     HERE = Path(board_dir).resolve()
     DATA = HERE / "data"
@@ -133,6 +136,30 @@ def set_dir(board_dir) -> None:
 
 
 set_dir(Path(__file__).resolve().parent)
+
+# A named sprint's session (WO-150) runs in its own worktree, whose copy of this board has its own data/. The driver gives the
+# main checkout's home as GITOS_SPRINT_HOME: the sprint's cards and page belong to that home's board. The id rule and the
+# reserved ids are scripts/compact_restore.py's (this file is copied into every home alone, so it cannot import them).
+SPRINT_ID_RE = re.compile(r"[a-z0-9-]{1,32}")
+SPRINT_RESERVED_IDS = ("claims", "archive")
+
+
+def sprint_board_dir() -> "Path | None":
+    """The board directory a named sprint's session must use, or None (no such session, or nothing to route to): GITOS_SPRINT=1, a
+    GITOS_SPRINT_ID that is a sprint id and a GITOS_SPRINT_HOME that holds a board. That home's own routing applies: a hub route
+    in its board-route.json leads to the hub's board directory, else it is `<home>/board`. An unreadable route leaves this board."""
+    if os.environ.get("GITOS_SPRINT") != "1":
+        return None
+    sid = os.environ.get("GITOS_SPRINT_ID", "")
+    home = os.environ.get("GITOS_SPRINT_HOME", "")
+    if not SPRINT_ID_RE.fullmatch(sid) or sid in SPRINT_RESERVED_IDS or not home or not Path(home).is_dir():
+        return None
+    try:
+        r = route(home)
+    except BoardError:
+        return None
+    target = Path(r["board"]) if r else Path(home) / "board"
+    return target if (target / "board.json").is_file() else None
 
 
 def _os_lock(fd: int, deadline: float) -> None:
@@ -1595,6 +1622,17 @@ def main(argv: "list | None" = None) -> int:
     print(__doc__)
     return 2
 
+
+def follow_sprint() -> None:
+    """Resolve the board directory the way a named sprint's session needs it (see sprint_board_dir): called once when the module is
+    loaded, so the CLI and a tool that loads this file by path and calls approved() / claim() reach the same board. An explicit
+    set_dir() afterwards still wins."""
+    target = sprint_board_dir()
+    if target is not None and not same_path(target, HERE):
+        set_dir(target)
+
+
+follow_sprint()
 
 if __name__ == "__main__":
     raise SystemExit(main())

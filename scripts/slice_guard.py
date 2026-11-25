@@ -12,6 +12,16 @@ runs before Edit, Write, MultiEdit and NotebookEdit:
     the implementer's own slice to `landed` or `dropped`. Everything else is allowed: code, tests, docs, and the
     implementer's own slice notes and its status move in-progress -> implemented.
 
+A NAMED SPRINT'S SESSION (WO-150: GITOS_SPRINT=1, a GITOS_SPRINT_ID that is a sprint id and GITOS_SPRINT_WORKTREE, all set by the
+sprint driver) is bound first, marker or not, to its own place inside the repository: an edit is REFUSED, with the path named, when the file
+lies in the main checkout, in any other worktree of the same repository (`git worktree list`, run in the sprint worktree), under
+`<main checkout>.worktrees/`, or in the main home (`$GITOS_SPRINT_HOME`), unless it is in the session's own worktree, its workers' area
+(`<worktree>.worktrees/`, where the slice rules above still apply) or `$GITOS_SPRINT_HOME/sprint/<id>/`. Files outside the repository
+(temp and scratch files, `~/.claude`) are not this guard's business. If git cannot list the worktrees the main checkout and
+`<main checkout>.worktrees/` are still refused, by the paths the environment gives (the home's parent, the worktree's parent); the git
+list only adds to them. Paths are compared by realpath and, on Windows, case-folded, as whole path components. Outside a named sprint
+nothing here applies.
+
 The marker is looked up from the edited file's worktree and from the session's cwd, either one binds the
 edit, so an implementer cannot step around it by an absolute path into another checkout, and a subagent whose
 cwd is its parent's still binds when its files are in the worktree.
@@ -28,6 +38,7 @@ import argparse
 import copy
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -40,6 +51,10 @@ MARKER_RE = re.compile(r"^WO-(\d{3})/S(\d+)$")
 FOLDER_PATH_RE = re.compile(r"(?:^|/)work-orders/(?:resolved/)?([^/]+)/(order\.md|slices/([^/]+\.md))$")
 NNN_RE = re.compile(r"(\d{3})(?!\d)")
 TERMINAL = ("landed", "dropped")
+# A named sprint's session. The id rule and reserved ids are compact_restore.py's, copied here: this hook is loaded alone by path
+# and must not depend on a sibling that could fail to import (it would then silently stop guarding); a selftest gate pins the copy.
+SPRINT_ID_RE = re.compile(r"[a-z0-9-]{1,32}")
+SPRINT_RESERVED_IDS = ("claims", "archive")
 
 
 def _git_dir(path: Path) -> "Path | None":
@@ -99,6 +114,86 @@ def _after(text: str, tool: str, inp: dict) -> "str | None":
     return text
 
 
+def _norm(path) -> str:
+    return os.path.normcase(os.path.realpath(str(path)))
+
+
+def _within(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("\\/") + os.sep)
+
+
+def named_sprint() -> "tuple[str, str, str, str] | None":
+    """(sprint id, its worktree, its folder `<GITOS_SPRINT_HOME>/sprint/<id>`, the home) normalised, for a named sprint's session; the
+    last two are "" when no home is named. None in any other session (no GITOS_SPRINT=1, no valid id, or no worktree to name: the guard
+    then leaves the edit to the other rules)."""
+    if os.environ.get("GITOS_SPRINT") != "1":
+        return None
+    sid = os.environ.get("GITOS_SPRINT_ID", "")
+    wt = os.environ.get("GITOS_SPRINT_WORKTREE", "")
+    if not SPRINT_ID_RE.fullmatch(sid) or sid in SPRINT_RESERVED_IDS or not wt:
+        return None
+    home = os.environ.get("GITOS_SPRINT_HOME", "")
+    return (sid, _norm(wt), _norm(Path(home) / "sprint" / sid) if home else "", _norm(home) if home else "")
+
+
+def _git_worktrees(wt: str) -> "list[str] | None":
+    """The paths `git worktree list` gives, run in the sprint worktree (the first is the main checkout); None when git cannot say."""
+    d = Path(wt)
+    while not d.is_dir():
+        if d.parent == d:
+            return None
+        d = d.parent
+    for args in (["--porcelain", "-z"], ["--porcelain"]):
+        try:
+            cp = subprocess.run(["git", "-C", str(d), "worktree", "list", *args], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=10)
+        except Exception:
+            return None
+        if cp.returncode == 0:
+            paths = [ln[len("worktree "):] for ln in cp.stdout.replace("\0", "\n").splitlines() if ln.startswith("worktree ")]
+            return paths or None
+    return None
+
+
+def _env_trees(wt: str, home: str) -> "list[str]":
+    """What the environment alone says is inside the repository and not the session's: the main home, its parent when the home is a
+    `.gitos` folder (the main checkout), the worktree's parent when that is a `<repo>.worktrees` folder, and that repo."""
+    out: list = []
+    if home:
+        out.append(home)
+        if os.path.basename(home) == os.path.normcase(".gitos"):
+            out.append(os.path.dirname(home))
+    area = os.path.dirname(wt)
+    if os.path.basename(area).endswith(os.path.normcase(".worktrees")):
+        out += [area, area[:-len(".worktrees")]]
+    return out
+
+
+def protected_trees(wt: str, home: str) -> "list[str]":
+    """The trees of this repository a named session must not edit (before the exceptions): what the environment names, always, plus
+    every worktree of the repository git lists. A git that cannot answer only takes the second part away."""
+    out = _env_trees(wt, home)
+    out += [_norm(p) for p in _git_worktrees(wt) or []]
+    return [t for t in dict.fromkeys(out) if t]
+
+
+def sprint_refused(path: str, sprint) -> bool:
+    """True when `path` (normalised) is inside the repository and not the named session's own: see the module docstring."""
+    _sid, wt, sdir, home = sprint
+    if _within(path, wt) or _within(path, wt + ".worktrees") or (sdir and _within(path, sdir)):
+        return False
+    return any(_within(path, t) for t in protected_trees(wt, home))
+
+
+def sprint_refusal(path: str, sid: str) -> dict:
+    reason = (f"gitos slice_guard: sprint {sid} edits only inside its own worktree, its workers' area and its sprint/{sid}/ folder "
+              f"when the file is in this repository, and {path} is in the main checkout, another worktree or the main home. Edit the "
+              f"same file in your sprint worktree ($GITOS_SPRINT_WORKTREE); the main branch gets it through `worktree.py land`, never "
+              f"by an edit in the main checkout.")
+    return {"hookSpecificOutput": {"hookEventName": EVENT, "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
+
+
 def refusal(path: str, why: str, marker) -> dict:
     sid = f"WO-{marker[0]}/S{marker[1]}"
     reason = (f"gitos slice_guard: this worktree is bound to slice {sid}; {why} ({path}). An implementer edits only its own slice "
@@ -123,6 +218,10 @@ def decide(payload) -> "dict | None":
     p = Path(raw)
     if not p.is_absolute() and cwd:
         p = Path(cwd) / raw
+    sprint = named_sprint()
+    if sprint is not None:
+        if sprint_refused(_norm(p), sprint):
+            return sprint_refusal(p.as_posix(), sprint[0])
     marker = marker_for(p) or (marker_for(cwd) if cwd else None)
     if marker is None:
         return None

@@ -203,6 +203,10 @@ python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --autocompact 500k 
   anything but exit 0 stops the sprint. Its tooling can also hold a `sprint/BUSY` lease while an action with outside
   effects is in flight: the driver then defers a rotation or stop until it settles, and waits a settle time before
   the guard looks.
+- **Several at once.** `--id NAME --orders 12,14` starts a named sprint in its own worktree and branch; other named
+  sprints run beside it on other orders. Each order is claimed by one sprint, each sprint has its own Stop card, and
+  a sprint lands through `worktree.py land`, which merges and runs the gate (the canary plus an optional
+  `<home>/sprint-gate.json` read from main) one sprint at a time. A sprint without `--id` still runs alone.
 
 Operator guide: [sprint mode](references/sprint.md).
 

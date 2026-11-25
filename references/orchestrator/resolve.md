@@ -78,6 +78,12 @@ Read this when a landing is verified and you adjudicate its notes (work-loop ste
    sees no leftover. Never stage a worktree path.
    *Gate:* **nothing is committed before steps 4–5 pass** — no commit of an unverified or
    un-adjudicated landing — and **the staged set matches this work-order's scope.**
+   **Landing on the main branch.** In a named sprint (`GITOS_SPRINT_ID` is set) you work in your own worktree on branch
+   `sprint-<id>`: merge and resolve there, then land with `worktree.py land` (`--wait S` when another sprint holds the lock). It
+   takes the home's merge lock, merges the main branch into yours, regenerates the indexes, runs the canary and
+   `<home>/sprint-gate.json`, fast-forwards the main branch and releases the lock. A refusal (a conflict, a red gate, a main
+   checkout that is dirty or off its branch) is a stop with a card, never something to settle by hand. The interactive
+   orchestrator takes the same lock around its own merge and gate: `worktree.py lock acquire`, merge, gate, `lock release`.
 
 ## Resolve + maintain the brain (work-loop step 7)
 

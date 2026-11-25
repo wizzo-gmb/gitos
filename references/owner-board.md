@@ -81,6 +81,10 @@ output. <!-- rule:guide-ensure-line -->
 Tabs come from `"tabs": ["..."]` in `board.json`; the default is `decisions` alone, and `decisions` is always
 there. A send card goes to an `email` tab when the repo has one, else to `decisions`.
 
+In a named sprint's session (`GITOS_SPRINT=1`, `GITOS_SPRINT_ID` set), every command and the module API use the board of
+`GITOS_SPRINT_HOME`, not the worktree's copy of the data, so cards and approvals are the operator's real ones. With no
+board in that home, the copy's own board is used.
+
 ### A repo's own boards
 
 `board.py` is the engine's and an upgrade replaces it, so it is never edited downstream. A repo that wants a view of

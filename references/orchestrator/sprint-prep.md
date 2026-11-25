@@ -33,5 +33,16 @@ the operator to run in a terminal. An unmarked order is never taken by a sprint 
 6. **Hand over.** End with one line per open order, `WO-N ready` or `WO-N excluded: <why>`, then the exact command for the
    operator to run in a terminal from the repo root, not here:
    `python <SKILL_DIR>/scripts/gitos-sprint.py [--orders 253,254] --effort <e> --max-rotations <n>`. Without `--orders` it takes
-   exactly the orders marked ready. A repo never opened in Claude needs its trust dialog accepted once first (open Claude there
-   and accept it), or the script refuses. A sprint commits and merges locally and never pushes; the push stays the operator's.
+   exactly the orders marked ready. The repo root itself must be trusted: open Claude Code once in it and accept the trust
+   dialog (a trusted parent folder is not enough), or the script refuses. Choose a model and effort that leave the lead a lower
+   worker pair (haiku at low is refused). A sprint commits and merges locally and never pushes; the push stays the operator's.
+
+**Several sprints at once.** To run more than one, split the ready orders into disjoint sets (no order in two sets) and give each
+set its own command and terminal, started a few seconds apart (advice; the engine does not depend on it): `gitos-sprint.py --id <name> --orders <set>` (`<name>` is `[a-z0-9-]{1,32}`; `--orders` is
+required). Each named sprint works in its own worktree and branch, `sprint-<name>`, and lands on the main branch one at a time
+through `worktree.py land`. The main checkout must be clean and on the main branch for a land to go through. A sprint started
+without `--id` is the exclusive sprint: it runs alone, and no named sprint starts while it runs. If this repo's gate is more than
+the canary, put it in `<home>/sprint-gate.json` (`{"command": ["argv", ...], "timeout_s": N}`): `land` runs it in the sprint
+worktree before every land. The gate is read from the main branch only; a sprint's own copy of the file is ignored. Your own merges while sprints run take the same lock: `worktree.py lock acquire`, merge and gate,
+then `lock release`. The lock belongs to your Claude session; on Windows a session hosted by `node.exe` is not recognised, so
+pass `--pid` of a process that lives through the merge (it fails closed without one).

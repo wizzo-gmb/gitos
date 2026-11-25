@@ -30,7 +30,9 @@ cover:
                              a parked order with no restart trigger, an item a second store also
                              holds, a resolved work-order with implementer notes never
                              adjudicated, an adjudication pointing at nothing. Report-only; also the advisory
-                             `assessment-unanswered`: an assessor's report with no orchestrator response)
+                             `assessment-unanswered`: an assessor's report with no orchestrator response;
+                             the parallel-sprint advisories under `<home>/sprint/`: `sprint-claim-stale`, `merge-lock-stale`,
+                             `sprint-exclusive-stale`, `sprint-state-unfolded`, `sprint-worktree-left`, `sprint-workers-left`)
   - owner board (optional)  (<home>/board/ files vs the CLAUDE.md block line and the RESUME section that
                              point at them: a pointer with no board, or a board nothing points at; a repo
                              routed to a hub (<home>/board-route.json): the route, the hub's files, its tab and
@@ -1612,6 +1614,28 @@ def resume_rules_section_lines(text: str) -> list[tuple[int, str]]:
     return out
 
 
+def _in_sprint_worktree(home: Path) -> bool:
+    """True when `home` sits in a linked worktree on a `sprint-<id>` branch. Any git failure -> False (today's behaviour)."""
+    root = home.parent
+    try:
+        out = []
+        for args in (["rev-parse", "--abbrev-ref", "HEAD"], ["rev-parse", "--git-dir", "--git-common-dir"]):
+            cp = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=10)
+            if cp.returncode != 0:
+                return False
+            out.append(cp.stdout.strip().splitlines())
+    except (OSError, subprocess.SubprocessError):
+        return False
+    branch, dirs = out
+    if len(branch) != 1 or not branch[0].startswith("sprint-") or len(dirs) != 2:
+        return False
+    try:
+        return (root / dirs[0]).resolve() != (root / dirs[1]).resolve()
+    except OSError:
+        return False
+
+
 def resume_stale_item(home: Path) -> dict | None:
     """The `resume-stale` finding for a home, or None. ONE definition, shared with the `Stop` hook.
 
@@ -1625,12 +1649,27 @@ def resume_stale_item(home: Path) -> dict | None:
         resume_mtime = path.stat().st_mtime
     except OSError:
         return None
+    # In a sprint worktree the RESUME is the interactive orchestrator's (read from main) and a sprint never writes it: not judged.
+    if _in_sprint_worktree(home):
+        return None
+    # A named sprint's session: that sprint's STATE.md, in the main checkout's home, is the live pointer.
+    sid, shome = os.environ.get("GITOS_SPRINT_ID", ""), os.environ.get("GITOS_SPRINT_HOME", "")
+    if shome and re.fullmatch(r"[a-z0-9-]{1,32}", sid) and (Path(shome) / RESUME_FILENAME).is_file():
+        try:
+            resume_mtime = max(resume_mtime, (Path(shome) / "sprint" / sid / "STATE.md").stat().st_mtime)
+        except OSError:
+            pass
     # A sprint keeps its checkpoints in `sprint/STATE.md` and never writes RESUME (references/orchestrator/sprint.md): while that
     # file exists it is the live pointer, so the RESUME is behind only when the newer of the two is.
     try:
         resume_mtime = max(resume_mtime, (home / "sprint" / "STATE.md").stat().st_mtime)
     except OSError:
         pass
+    for named in sorted((home / "sprint").glob("*/STATE.md")):
+        try:
+            resume_mtime = max(resume_mtime, named.stat().st_mtime)
+        except OSError:
+            pass
     newest_name, newest_mtime = None, 0.0
     candidates = [home / n for n in RESUME_STATE_FILES]
     wo_dir = home / "work-orders"
@@ -1777,6 +1816,124 @@ def check_worktrees(home: Path, skill_dir: "Path | None") -> tuple[list[dict], s
     if inv is None:
         return [], "git could not be read here (no repository, or git failed)"
     return mod.findings(inv), None
+
+
+_COMPACT_MODULE: list = []
+SPRINT_FOLDER = "sprint"
+
+
+def compact_module(skill_dir: "Path | None" = None):
+    """The sibling compact_restore.py (or the skill's), loaded by path once, or None. Never raises. Its `record_alive` is the one
+    liveness test for a claim, the exclusive marker and the merge lock."""
+    if _COMPACT_MODULE:
+        return _COMPACT_MODULE[0]
+    candidates = [Path(__file__).resolve().parent / "compact_restore.py"]
+    if skill_dir is not None:
+        candidates.append(Path(skill_dir) / TOOL_SRC_DIR / "compact_restore.py")
+    for cand in candidates:
+        if cand.is_file():
+            try:
+                mod = _load_module("_gitos_compact_restore_live", cand)
+            except Exception:
+                continue
+            _COMPACT_MODULE.append(mod)
+            return mod
+    return None
+
+
+def _sprint_record(path: Path) -> "dict | None":
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _who(rec: dict) -> str:
+    name = rec.get("sprint") or rec.get("holder") or "a sprint"
+    return f'"{name}" (pid {rec.get("pid")}, since {rec.get("since", "?")})'
+
+
+def sprint_items(home: Path, skill_dir: "Path | None" = None) -> list[dict]:
+    """Advisories on the parallel-sprint leftovers under `<home>/sprint/` (WO-150). Report-only, never counted: a hard-killed driver
+    leaves them by design and the next sprint or `worktree.py lock` takes them over.
+
+    `sprint-claim-stale` (a `claims/WO-NNN.json` whose process is gone or reused), `merge-lock-stale` (a dead `merge.lock`),
+    `sprint-exclusive-stale` (a dead `EXCLUSIVE`), `sprint-state-unfolded` (a `STATE.md`, exclusive or `<id>/`, with no live sprint
+    behind it), `sprint-worktree-left` (a `sprint-<id>` worktree with no live sprint), `sprint-workers-left` (a
+    `sprint-<id>.worktrees` folder whose sprint worktree is gone). Nothing is said when `sprint/` is absent."""
+    out: list[dict] = []
+    cr = compact_module(skill_dir)
+    base = home / SPRINT_FOLDER
+    if cr is None or not base.is_dir():
+        return out
+    live_ids: set[str] = set()
+    claims = base / "claims"
+    for f in sorted(claims.glob("WO-*.json")) if claims.is_dir() else []:
+        rec = _sprint_record(f)
+        if rec is None:
+            continue
+        if cr.record_alive(rec):
+            live_ids.add(str(rec.get("sprint", "")))
+            continue
+        rel = f.relative_to(home).as_posix()
+        out.append({"kind": "sprint-claim-stale", "advisory": True, "file": rel,
+                    "finding": f"{rel}: the claim of sprint {_who(rec)} is dead (its process is gone or reused) -> the next sprint "
+                               "on this order takes it over; or delete the file"})
+    lock = _sprint_record(base / "merge.lock")
+    if lock is not None and not cr.record_alive(lock):
+        out.append({"kind": "merge-lock-stale", "advisory": True, "file": f"{SPRINT_FOLDER}/merge.lock",
+                    "finding": f"{SPRINT_FOLDER}/merge.lock: held by {_who(lock)}, a process that is gone -> the next `worktree.py "
+                               "lock acquire` takes it over; or run `worktree.py lock release`"})
+    excl = _sprint_record(base / "EXCLUSIVE")
+    exclusive_live = False
+    if excl is not None:
+        exclusive_live = cr.record_alive(excl)
+        if not exclusive_live:
+            out.append({"kind": "sprint-exclusive-stale", "advisory": True, "file": f"{SPRINT_FOLDER}/EXCLUSIVE",
+                        "finding": f"{SPRINT_FOLDER}/EXCLUSIVE: the exclusive sprint {_who(excl)} is gone, and while the file "
+                                   "stays no named sprint starts -> delete it"})
+    states = [("", base / "STATE.md")] + [(d.name, d / "STATE.md") for d in sorted(base.iterdir())
+                                          if d.is_dir() and d.name not in ("claims", "archive")]
+    for sid, f in states:
+        if not f.is_file() or (exclusive_live if not sid else sid in live_ids):
+            continue
+        rel = f.relative_to(home).as_posix()
+        out.append({"kind": "sprint-state-unfolded", "advisory": True, "file": rel,
+                    "finding": f"{rel} is a sprint's state that no live sprint owns -> fold it into RESUME at first action "
+                               "(`references/orchestrator/first-action.md`, step 9)"})
+    mod = worktree_module(skill_dir)
+    if mod is None:
+        return out
+    try:
+        root = mod.root_for_home(home)
+        entries = mod._entries(root) or []
+        wroot = mod.layout_root(root, mod.load_layout(home))
+    except Exception:
+        return out
+    seen: set[str] = set()
+    for e in entries[1:]:
+        m = mod.SPRINT_BRANCH_RE.fullmatch(e["branch"] or Path(e["path"]).name)
+        if not m:
+            continue
+        seen.add(Path(e["path"]).name)
+        if m.group(1) not in live_ids:
+            out.append({"kind": "sprint-worktree-left", "advisory": True, "file": Path(e["path"]).name,
+                        "finding": f"worktree {e['path']} (branch {e['branch'] or 'detached'}) belongs to sprint {m.group(1)}, "
+                                   "which is not running -> if its branch is in the main branch and the tree is clean, `git worktree "
+                                   "remove` it and delete the branch; else its commits or edits are unlanded work: read STATE.md "
+                                   f"under {SPRINT_FOLDER}/{m.group(1)}/, then land or park it"})
+    try:
+        names = sorted(p.name for p in wroot.iterdir() if p.is_dir() and p.name.endswith(".worktrees"))
+    except OSError:
+        names = []
+    for name in names:
+        sprint_name = name[: -len(".worktrees")]
+        if mod.SPRINT_BRANCH_RE.fullmatch(sprint_name) and sprint_name not in seen and not (wroot / sprint_name).exists():
+            out.append({"kind": "sprint-workers-left", "advisory": True, "file": name,
+                        "finding": f"{wroot / name} holds worker worktrees of sprint worktree {sprint_name}, which is gone -> "
+                                   "`worktree.py reap --merged` in the main checkout, and read what it leaves"})
+    return out
 
 
 def check_resume(home: Path) -> tuple[list[dict], str | None]:
@@ -3214,6 +3371,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,
     # visible skip.
     w_items, w_reason = check_worktrees(home, skill_dir)
     r["worktree"].extend(w_items)
+    r["worktree"].extend(sprint_items(home, skill_dir))
     if w_reason is None:
         checked.add("worktree")
     else:
