@@ -32,7 +32,8 @@ cover:
                              adjudicated, an adjudication pointing at nothing. Report-only; also the advisory
                              `assessment-unanswered`: an assessor's report with no orchestrator response;
                              the parallel-sprint advisories under `<home>/sprint/`: `sprint-claim-stale`, `merge-lock-stale`,
-                             `sprint-exclusive-stale`, `sprint-state-unfolded`, `sprint-worktree-left`, `sprint-workers-left`)
+                             `sprint-exclusive-stale`, `sprint-state-unfolded`, `sprint-worktree-left`, `sprint-workers-left`,
+                             `sprint-file-unreadable`)
   - owner board (optional)  (<home>/board/ files vs the CLAUDE.md block line and the RESUME section that
                              point at them: a pointer with no board, or a board nothing points at; a repo
                              routed to a hub (<home>/board-route.json): the route, the hub's files, its tab and
@@ -1589,6 +1590,33 @@ def resume_rule_lines(text: str) -> list[tuple[int, str]]:
 RESUME_LINE_LIMIT = 150         # the size target orchestrator.md and the template state in prose
 RESUME_RULES_HEADING_RE = re.compile(r"^#{1,6}\s+.*\brules?\b", re.IGNORECASE)
 RESUME_BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+RESUME_NOTES_HEADING_RE = re.compile(r"^#{1,6}\s+Notes\s*\(short-term\)", re.IGNORECASE)
+RESUME_NOTES_CAP = 10           # the short-term notes a RESUME may carry (assets/RESUME.md.tmpl)
+
+
+def resume_note_count(text: str) -> int:
+    """Bullets under the `## Notes (short-term)` heading (to the next heading; fences and comments skipped). Shared with the selftest."""
+    n = 0
+    in_fence = in_comment = in_notes = False
+    for raw in text.splitlines():
+        if FENCE.match(raw):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        line = raw.strip()
+        if in_comment:
+            in_comment = "-->" not in line
+            continue
+        if line.startswith("<!--"):
+            in_comment = "-->" not in line
+            continue
+        if line.startswith("#"):
+            in_notes = bool(RESUME_NOTES_HEADING_RE.match(line))
+            continue
+        if in_notes and RESUME_BULLET_RE.match(raw):
+            n += 1
+    return n
 
 
 def resume_rules_section_lines(text: str) -> list[tuple[int, str]]:
@@ -1854,6 +1882,13 @@ def _who(rec: dict) -> str:
     return f'"{name}" (pid {rec.get("pid")}, since {rec.get("since", "?")})'
 
 
+def _unreadable(f: Path, home: Path, what: str) -> dict:
+    rel = f.relative_to(home).as_posix()
+    return {"kind": "sprint-file-unreadable", "advisory": True, "file": rel,
+            "finding": f"{rel}: {what} that cannot be read, so it is not judged -> open it by hand; delete it if no sprint "
+                       "uses it, or restore it from the sprint's worktree"}
+
+
 def sprint_items(home: Path, skill_dir: "Path | None" = None) -> list[dict]:
     """Advisories on the parallel-sprint leftovers under `<home>/sprint/` (WO-150). Report-only, never counted: a hard-killed driver
     leaves them by design and the next sprint or `worktree.py lock` takes them over.
@@ -1861,7 +1896,8 @@ def sprint_items(home: Path, skill_dir: "Path | None" = None) -> list[dict]:
     `sprint-claim-stale` (a `claims/WO-NNN.json` whose process is gone or reused), `merge-lock-stale` (a dead `merge.lock`),
     `sprint-exclusive-stale` (a dead `EXCLUSIVE`), `sprint-state-unfolded` (a `STATE.md`, exclusive or `<id>/`, with no live sprint
     behind it), `sprint-worktree-left` (a `sprint-<id>` worktree with no live sprint), `sprint-workers-left` (a
-    `sprint-<id>.worktrees` folder whose sprint worktree is gone). Nothing is said when `sprint/` is absent."""
+    `sprint-<id>.worktrees` folder whose sprint worktree is gone), `sprint-file-unreadable` (a claim or a `STATE.md` that
+    cannot be read: it is named instead of skipped). Nothing is said when `sprint/` is absent."""
     out: list[dict] = []
     cr = compact_module(skill_dir)
     base = home / SPRINT_FOLDER
@@ -1872,6 +1908,8 @@ def sprint_items(home: Path, skill_dir: "Path | None" = None) -> list[dict]:
     for f in sorted(claims.glob("WO-*.json")) if claims.is_dir() else []:
         rec = _sprint_record(f)
         if rec is None:
+            if f.exists():
+                out.append(_unreadable(f, home, "a claim"))
             continue
         if cr.record_alive(rec):
             live_ids.add(str(rec.get("sprint", "")))
@@ -1894,9 +1932,16 @@ def sprint_items(home: Path, skill_dir: "Path | None" = None) -> list[dict]:
                         "finding": f"{SPRINT_FOLDER}/EXCLUSIVE: the exclusive sprint {_who(excl)} is gone, and while the file "
                                    "stays no named sprint starts -> delete it"})
     states = [("", base / "STATE.md")] + [(d.name, d / "STATE.md") for d in sorted(base.iterdir())
-                                          if d.is_dir() and d.name not in ("claims", "archive")]
+                                          if d.is_dir() and d.name not in cr.SPRINT_RESERVED_IDS]
     for sid, f in states:
-        if not f.is_file() or (exclusive_live if not sid else sid in live_ids):
+        if not f.is_file():
+            continue
+        try:
+            f.read_text(encoding="utf-8-sig")
+        except (OSError, ValueError):
+            out.append(_unreadable(f, home, "a sprint's state"))
+            continue
+        if exclusive_live if not sid else sid in live_ids:
             continue
         rel = f.relative_to(home).as_posix()
         out.append({"kind": "sprint-state-unfolded", "advisory": True, "file": rel,
@@ -1975,6 +2020,14 @@ def check_resume(home: Path) -> tuple[list[dict], str | None]:
                                  f"{RESUME_LINE_LIMIT}-line limit -> it is replaced wholesale at "
                                  f"every checkpoint, so keep volatile state and pointers only and "
                                  f"move anything durable to the brain or the ledger"})
+
+    # 1c. the short-term notes — a cap, so the restore hook's reprint stays small
+    n_notes = resume_note_count(text)
+    if n_notes > RESUME_NOTES_CAP:
+        items.append({"kind": "resume-notes-over-cap", "notes": n_notes,
+                      "finding": f"{RESUME_FILENAME} carries {n_notes} short-term notes, over the "
+                                 f"cap of {RESUME_NOTES_CAP} -> flush at the checkpoint: delete what "
+                                 f"is met, promote what lasts, make work of what is work"})
 
     # 2. the division — a STANDING RULE stated here rather than pointed at. Worth more than
     #    freshness: a stale resume costs a reader some confusion, but a rule written here is
@@ -3195,8 +3248,36 @@ def check_board_copy(home: Path, skill_dir: "Path | None") -> list[dict]:
              "finding": f"<home>/{BOARD_DIRNAME}/board.py differs from the engine's copy at the same or a later "
                         f"BOARD_VERSION ({int(mh.group(1))}), so it is a local edit that forked from BOARD_VERSION "
                         f"{int(mh.group(1))} -> `scaffold.py` leaves it as it is, and a later engine BOARD_VERSION "
-                        f"replaces it: move the local view into <home>/{BOARD_DIRNAME}/local/<name>.html (the board "
-                        f"loads it as a tab, upgrades leave it alone) and restore board.py"}]
+                        f"replaces it: move the local view into <home>/{BOARD_DIRNAME}/views/<name>.js (the board "
+                        f"lists it in its sidebar, upgrades leave it alone) and restore board.py"}]
+
+
+def board_legacy_pages(home: Path) -> list[dict]:
+    """Advisory `board-legacy-page`, one per `<home>/board/local/*.html` (WO-153/S6): the board no longer serves a repo's own
+    page in a sandboxed frame, so a leftover page shows nowhere. The repo moves it to a native view; its page is still there to
+    read from. The sprint driver's own pages (`sprint.html`, `sprint-<id>.html`) are not a repo's and are
+    left out."""
+    try:
+        found = sorted(p for p in (home / BOARD_DIRNAME / "local").iterdir() if p.suffix == ".html" and p.is_file()
+                       and p.stem != "sprint" and not p.stem.startswith("sprint-"))
+    except OSError:
+        return []
+    return [{"kind": "board-legacy-page", "advisory": True, "page": p.name,
+             "finding": f"<home>/{BOARD_DIRNAME}/local/{p.name} is a page of the old sandboxed form; the board no longer shows it "
+                        f"-> migrate it to a native view, <home>/{BOARD_DIRNAME}/views/{p.stem}.js (and a provider for its data), "
+                        f"by `references/owner-board.md` -> Migrating a page, then delete the old file"} for p in found]
+
+
+def board_ui_missing(home: Path) -> list[dict]:
+    """`board-ui-missing`: a `board.py` that serves its page from a `ui/` folder beside it (it names `HERE / "ui"`) and a home
+    with no `ui/index.html`. The board then answers 503 for its page; the upgrade copies `ui/` next to `board.py`."""
+    text = _read(home / BOARD_DIRNAME / "board.py")
+    if text is None or not re.search(r'HERE\s*/\s*"ui"', text) or (home / BOARD_DIRNAME / "ui" / "index.html").is_file():
+        return []
+    return [{"kind": "board-ui-missing",
+             "finding": f"<home>/{BOARD_DIRNAME}/board.py expects its page in <home>/{BOARD_DIRNAME}/ui/ and there is no "
+                        f"ui/index.html -> re-run `scaffold.py <root> --git skip` (the upgrade step); it copies ui/ and leaves "
+                        f"views/, providers/ and data/ alone"}]
 
 
 def check_board(home: Path) -> tuple[list[dict], bool]:
@@ -3229,7 +3310,7 @@ def check_board(home: Path) -> tuple[list[dict], bool]:
                           "finding": f"the owner board exists but {' and '.join(absent)} does not point at it -> "
                                      f"re-run `scaffold.py <root> --git skip` to write the pointers, so a fresh "
                                      f"window finds the board"})
-        items += board_exposed(home)
+        items += board_exposed(home) + board_legacy_pages(home) + board_ui_missing(home)
     return items, True
 
 def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,
@@ -3446,8 +3527,8 @@ def dispatch_distribution(home: Path, skill_dir: Path | None) -> str | None:
     records, no mapping, or anything unreadable -> None and no line. Garbage lines in the record
     are skipped. The count is stated so a thin sample reads as thin. Each (model, effort) pair is
     mapped to a tier through the repo's own model-optimization.json; `inherit` is a dispatch that
-    named no pair, `unmapped` one that names a pair no tier uses. A pair several tiers share is
-    reported under all of them.
+    named no pair, `unmapped` one that names a pair no tier uses. A tier may list several choices; a pair matches
+    the tier when it matches any of them. A pair several tiers share is reported under all of them.
     """
     try:
         candidates = [p for p in ((skill_dir / "scripts" / "dispatch_guard.py") if skill_dir else None,
@@ -3482,12 +3563,15 @@ def dispatch_distribution(home: Path, skill_dir: Path | None) -> str | None:
                 continue
             hit = []
             for tier in ("light", "standard", "deep"):
-                c = choices.get(tiers.get(tier))
-                if not isinstance(c, dict) or not isinstance(c.get("model"), str):
-                    continue
-                want = c.get("effort")
-                if model != "inherit" and guard.same_model(model, c["model"]) and (effort == want or (effort == "inherit" and want == "default")):
-                    hit.append(tier)
+                listed = tiers.get(tier)
+                for name in ([listed] if isinstance(listed, str) else listed if isinstance(listed, list) else []):
+                    c = choices.get(name)
+                    if not isinstance(c, dict) or not isinstance(c.get("model"), str):
+                        continue
+                    want = c.get("effort")
+                    if model != "inherit" and guard.same_model(model, c["model"]) and (effort == want or (effort == "inherit" and want == "default")):
+                        hit.append(tier)
+                        break
             counts["/".join(hit) if hit else "unmapped"] += 1
         body = ", ".join(f"{k} {n}" for k, n in sorted(counts.items()))
         return (f"[info] Dispatch tiers over the last {len(records)} recorded allowed "
@@ -3574,7 +3658,7 @@ def print_report(r: dict) -> None:
     # Same rule, same reason: an unscaffolded repo never had the dispatch gate laid, so it gets
     # no line rather than a "skipped (not applicable)" one.
     if "system-one" in r:
-        sections.append(("System One (local decision model: endpoint, registry, overrides)",
+        sections.append(("System One (optional local model: endpoint, registry, overrides)",
                          "system-one"))
     if "dispatch" in r:
         sections.append(("Dispatch tier gate (repo .claude/settings.json)", "dispatch"))

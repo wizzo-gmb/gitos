@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="board-token" content="__TOKEN__">
+<title>__TITLE__</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='19' width='5' height='9' rx='1.6' fill='%230b8a5d'/%3E%3Crect x='11' y='14' width='5' height='14' rx='1.6' fill='%230a76a0'/%3E%3Crect x='18' y='9' width='5' height='19' rx='1.6' fill='%235a3cef'/%3E%3Crect x='25' y='4' width='5' height='24' rx='1.6' fill='%23c9cfdd'/%3E%3C/svg%3E">
+<script nonce="__NONCE__" src="/ui/boot.js"></script>
+<link rel="stylesheet" href="/ui/ui.css">
+<link rel="stylesheet" href="/ui/app.css">
+<script type="module" nonce="__NONCE__" src="/ui/app.js"></script>
+</head>
+<body>
+<button class="skip" type="button" id="skip">Skip to content</button>
+<div class="shell" id="shell">
+  <aside class="sidebar" id="sidebar" aria-label="Primary">
+    <a class="brand" href="#/decisions" aria-label="gitos board, home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="18" width="5.5" height="10" rx="1.8" fill="var(--c-landed)"/><rect x="10.5" y="13" width="5.5" height="15" rx="1.8" fill="var(--c-implemented)"/><rect x="18" y="8" width="5.5" height="20" rx="1.8" fill="var(--accent)"/><rect x="25.5" y="3" width="5.5" height="25" rx="1.8" fill="var(--line-strong)"/></svg>
+      <div><b>gitos</b><span>Owner board</span></div>
+    </a>
+    <nav id="nav" aria-label="Views"></nav>
+    <div class="side-foot" id="side-foot"></div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+  <div class="main-col">
+    <header class="topbar">
+      <button class="btn icon ghost menu-btn" type="button" id="menu-btn" aria-label="Open navigation" aria-controls="sidebar"></button>
+      <div class="crumbs" id="crumbs"></div>
+      <div class="top-spacer"></div>
+      <button class="palette-btn" type="button" id="palette-btn" aria-label="Open command palette"></button>
+      <gb-conn id="conn" state="reconnecting"></gb-conn>
+      <button class="btn icon ghost" type="button" id="theme-btn" aria-label="Switch to dark theme"></button>
+    </header>
+    <main id="main" tabindex="-1"><div id="view"></div></main>
+  </div>
+  <gb-drawer id="drawer"></gb-drawer>
+</div>
+<gb-palette id="palette"></gb-palette>
+<gb-toasts></gb-toasts>
+<noscript><p class="noscript">The owner board is a JavaScript app. Turn scripts on for this address to use it.</p></noscript>
+</body>
+</html>

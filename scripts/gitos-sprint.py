@@ -31,7 +31,7 @@ close, before the after-close guard) and `busy_max_s` (turns on the BUSY lease: 
 live, a ROTATE or a STOP file does not close the session; `live_lease`, `defer_close`).
 --id NAME (`[a-z0-9-]{1,32}`, with --orders) makes a named sprint: several named sprints run in one home at once, each in its
 own terminal, on disjoint orders. A named sprint keeps its state under `<home>/sprint/<id>/` (STATE.md, log.jsonl, STOP, ROTATE,
-BUSY, archive/), has its own page (`board/local/sprint-<id>.html`) and Stop card, and claims each of its orders in
+BUSY, archive/), has its own Stop card (the board's Sprints view shows it), and claims each of its orders in
 `<home>/sprint/claims/WO-NNN.json` (`{"sprint", "pid", "since", "start"}`) for as long as its driver runs. It is refused when another live
 sprint holds one of its orders, when its own STATE.md is unfolded, or while an exclusive sprint runs. A sprint without --id is the
 exclusive sprint: today's paths, refused while any named sprint runs (it keeps `<home>/sprint/EXCLUSIVE` while it runs, so a named
@@ -42,6 +42,12 @@ A named sprint runs in its own git worktree, `<repo>.worktrees/sprint-<id>` on b
 claims, `sprint/<id>/`, the log, the page and the board stay in the main checkout's home (the session gets it as GITOS_SPRINT_HOME).
 When the sprint ends the worktree and branch are removed if the branch is in the main branch and the worktree is clean, else both are
 left and STATE.md says so. The exclusive sprint runs in the main checkout, as always.
+A driver that exits on any path it controls (a signal, an error, a Ctrl-C) ends its session's process tree first; one killed hard cannot,
+so the session's own hooks (`compact_restore.py`, `slice_guard.py`) notice the driver pid is gone and end the session at their next run.
+A named sprint's clean end (STOP id `no-open-order` or `stop-card`, the guard passed, nothing left over, no driver note in STATE.md) moves
+its STATE.md and STOP into `sprint/<id>/archive/` so the same id can start again; any other end leaves them for the operator to read.
+The exclusive sprint's STATE.md is always left: an interactive window folds it into RESUME.md first. An emptied
+`<repo>.worktrees/sprint-<id>.worktrees` folder, and an emptied `<repo>.worktrees`, are removed when the sprint ends.
 Exit status: 0 the sprint ended on a stop signal, 1 it ended on an error, an interruption, a cap or a failed guard, 2 nothing
 was launched.
 """
@@ -56,6 +62,7 @@ import os
 import random
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -121,6 +128,9 @@ WORKTREE_PREFIX = "sprint-"              # a named sprint's worktree folder and 
 GIT_LONG = 120                           # seconds a worktree add or remove may take (a big checkout)
 WORKTREE_MARK = "<!-- gitos-sprint-worktree -->"            # STATE.md: an earlier run's worktree was reused
 WORKTREE_LEFT_MARK = "<!-- gitos-sprint-worktree-left -->"   # STATE.md: the worktree and branch were left in place
+NOTE_MARK_PREFIX = "<!-- gitos-sprint-"      # every note the driver writes into STATE.md starts its mark with this
+CLEAN_STOPS = ("no-open-order", "stop-card")  # the STOP ids of a sprint that finished or was stopped by the operator: nothing waits on a reader
+EXIT_SIGNALS = ("SIGTERM", "SIGBREAK", "SIGHUP")   # a driver ended by one of these still ends its session (a hard kill cannot be caught)
 
 
 # ------------------------------------------------------------------------------------------------ flags
@@ -162,6 +172,7 @@ PARSE_TRIES = 5     # attempts to read a shared JSON file that does not parse (a
 EDIT_TRIES = 5      # attempts to make a read-modify-write of a shared file stick against a writer that does not take the lock
 LOCK_WAIT_S = 10.0  # seconds a driver waits for the short lock of a shared file's read-modify-write before going on without it
 GIT_TRIES = 10      # attempts at a git command that meets another git process at work (its lock file, or a file it is rewriting)
+WORKTREE_ARCHIVE = "worktree-archive"  # worktree.py's archive folder under a home: a worker's kept files
 LOCK_SUFFIX = ".gitos-lock"     # `<shared file><suffix>`: the short lock of that file's read-modify-write
 # What git says while another git process of the same repo is at work: a lock file it holds (`.lock ... File exists`, `could not lock`),
 # the config file it is replacing (`unable to access '.git/config': Permission denied`), a worktree it is still making
@@ -352,10 +363,44 @@ def load_json(path: Path):
             pause(attempt)
 
 
+def lock_record(lock: Path) -> "dict | None":
+    """The record in a `file_guard` lock, or None when the lock is gone or cannot be read as one."""
+    try:
+        rec = json.loads(lock.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    return rec if isinstance(rec, dict) else None
+
+
+def retire_lock(lock: Path, holder: dict) -> bool:
+    """Remove the stale lock `lock` that `holder` (the record just read) made, once, for one taker at a time: the removal is done under
+    `<lock>.retire` (made exclusively), and only while the lock still holds `holder`'s record, so a taker that read the same dead record
+    later cannot remove the lock another taker has made in between. -> True when the stale lock is gone and the caller makes its own;
+    False when someone else is at it or the lock is no longer `holder`'s: the caller decides again from what is there now. A `.retire`
+    left by a taker that died is cleared by the next one."""
+    gate = lock.with_name(lock.name + ".retire")
+    try:
+        put_json_file(gate, {"pid": os.getpid(), "since": utc_stamp(), **own_start()}, True)
+    except FileExistsError:
+        other = lock_record(gate)
+        if other is not None and isinstance(other.get("pid"), int) and not record_alive(other):
+            remove_file(gate)
+        return False
+    except OSError:
+        return False
+    try:
+        if lock_record(lock) != holder:
+            return False
+        return not remove_file(lock)
+    finally:
+        remove_file(gate)
+
+
 @contextlib.contextmanager
 def file_guard(target: Path, wait: "float | None" = None):
     """A short exclusive lock on a read-modify-write of the shared file `target`: `<target>.gitos-lock`, made whole and exclusively
-    (as a claim is) with this process's pid and start. A lock whose process is gone (`record_alive`) is a leftover and is taken over.
+    (as a claim is) with this process's pid and start. A lock whose process is gone (`record_alive`) is a leftover and is taken over,
+    under `retire_lock`, which re-reads it so a taker never removes the lock another taker has just made.
     A holder that stays past `wait` seconds is not waited for (a stuck process must not stop a start): the edit goes on unlocked and the
     callers verify what they wrote. Yields whether the lock is held; it never outlives the block."""
     lock = target.with_name(target.name + LOCK_SUFFIX)
@@ -376,7 +421,7 @@ def file_guard(target: Path, wait: "float | None" = None):
             continue
         except (OSError, ValueError):                      # being made or removed right now: not a leftover
             gone = False
-        if gone and not remove_file(lock):
+        if gone and not retire_lock(lock, holder):
             continue
         if time.monotonic() >= end:
             break
@@ -389,48 +434,55 @@ def file_guard(target: Path, wait: "float | None" = None):
             remove_file(lock)
 
 
+def claim_one(home: Path, path: Path, ref: str, sid: str, mine: dict):
+    """Claim one order's file for `mine` -> "claimed" (the file was free) or the claim it replaced (a dead one's, or this very process's
+    own). A claim held by a live process of another sprint is RuntimeError. A dead claim is taken over under `file_guard`, after a
+    re-read that must still show the very record this taker judged dead: two takers that read the same dead claim cannot both replace
+    it, the second finds the first's claim there and decides again from it."""
+    where = home_file(home, f"sprint/{CLAIMS_DIR}/{path.name}")
+    for attempt in range(CLAIM_TRIES):
+        try:
+            put_json_file(path, mine, True)
+            return "claimed"
+        except FileExistsError:
+            pass
+        old, why = read_claim(path)
+        if old is None:
+            if not path.exists():                     # its holder rolled back between the link and the read: the order is free
+                time.sleep(random.uniform(0.01, 0.05))
+                continue
+            raise RuntimeError(f"{where} {why}: remove it, then rerun")
+        if record_alive(old) and not (old["sprint"] == sid and old["pid"] == mine["pid"]):
+            raise RuntimeError(f"--orders {claim_text(ref, old)}: another sprint is working it")
+        with file_guard(path):
+            if read_claim(path)[0] != old:            # replaced or removed since we read it: decide again from what is there now
+                continue
+            try:
+                put_json_file(path, mine, False)
+            except Exception as e:                    # e.g. a Windows sharing violation while a reader holds the file
+                raise RuntimeError(f"--orders {claim_text(ref, old)}: its stale claim {where} could not be taken over "
+                                   f"({type(e).__name__}: {plain_line(str(e))}): rerun, or remove the file")
+        now, _ = read_claim(path)
+        if now is None or now["sprint"] != sid or now["pid"] != mine["pid"]:
+            raise RuntimeError(f"--orders {ref} was claimed by another sprint a moment ago")
+        return old
+    raise RuntimeError(f"--orders {ref} was contended: its claim kept vanishing under {CLAIM_TRIES} attempts "
+                       "(other sprints claiming and rolling back): rerun")
+
+
 def claim_orders(home: Path, sid: str, orders: tuple) -> list:
     """Write `<home>/sprint/claims/WO-NNN.json` for each order of named sprint `sid`, this process as the holder. A claim held by
     a live process of another sprint (or by this id elsewhere) is RuntimeError naming the order and the holder, and nothing of
     this sprint's stays written (a claim the rollback cannot remove is removed again, and said, by `Sprint.run`); a claim whose pid
-    is dead is replaced. -> [(order, the stale claim it replaced)]."""
+    is dead is replaced (`claim_one`). -> [(order, the stale claim it replaced)]."""
     cdir = claims_dir(home)
     cdir.mkdir(parents=True, exist_ok=True)
     mine = {"sprint": sid, "pid": os.getpid(), "since": utc_stamp(), **own_start()}
     taken = []
     try:
         for ref in orders:
-            path = cdir / f"{ref}.json"
-            for attempt in range(CLAIM_TRIES):
-                try:
-                    put_json_file(path, mine, True)
-                    old = "claimed"
-                    break
-                except FileExistsError:
-                    pass
-                old, why = read_claim(path)
-                if old is None and not path.exists():     # its holder rolled back between the link and the read: the order is free
-                    time.sleep(random.uniform(0.01, 0.05))
-                    continue
-                break
-            else:
-                raise RuntimeError(f"--orders {ref} was contended: its claim kept vanishing under {CLAIM_TRIES} attempts "
-                                   "(other sprints claiming and rolling back): rerun")
-            if old == "claimed":
-                continue
-            if old is None:
-                raise RuntimeError(f"{home_file(home, f'sprint/{CLAIMS_DIR}/{path.name}')} {why}: remove it, then rerun")
-            if record_alive(old) and not (old["sprint"] == sid and old["pid"] == mine["pid"]):
-                raise RuntimeError(f"--orders {claim_text(ref, old)}: another sprint is working it")
-            try:
-                put_json_file(path, mine, False)
-            except Exception as e:                # e.g. a Windows sharing violation while a reader holds the file
-                raise RuntimeError(f"--orders {claim_text(ref, old)}: its stale claim {home_file(home, f'sprint/{CLAIMS_DIR}/{path.name}')} "
-                                   f"could not be taken over ({type(e).__name__}: {plain_line(str(e))}): rerun, or remove the file")
-            now, _ = read_claim(path)
-            if now is None or now["sprint"] != sid or now["pid"] != mine["pid"]:
-                raise RuntimeError(f"--orders {ref} was claimed by another sprint a moment ago")
-            if not (old["sprint"] == sid and old["pid"] == mine["pid"]):
+            old = claim_one(home, cdir / f"{ref}.json", ref, sid, mine)
+            if old != "claimed" and not (old["sprint"] == sid and old["pid"] == mine["pid"]):
                 taken.append((ref, old))
     except BaseException:
         release_claims(home, sid)
@@ -611,9 +663,39 @@ def discard_worktree(root: Path, path: Path, branch: str) -> None:
     run_git(root, "branch", "-D", branch)
 
 
-def remove_worktree(root: Path, path: Path, branch: str) -> str:
+def keep_worktree_archive(root: Path, path: Path, home: Path) -> str:
+    """Before a sprint worktree goes: copy what its own `<home>/worktree-archive/` holds (git-ignored, so the clean-tree check does
+    not see it) into the main home's `worktree-archive/`. An entry already there is never overwritten: the copy gets the next free
+    name (`<name>-2`). -> "" when nothing was lost, else why the worktree must stay."""
+    try:
+        rel = Path(home).resolve().relative_to(Path(root).resolve())
+    except ValueError:
+        return ""
+    src, dest = Path(path) / rel / WORKTREE_ARCHIVE, Path(home) / WORKTREE_ARCHIVE
+    if not src.is_dir():
+        return ""
+    try:
+        entries = sorted(src.iterdir())
+        if entries:
+            dest.mkdir(parents=True, exist_ok=True)
+        for e in entries:
+            target, n = dest / e.name, 1
+            while os.path.lexists(target):
+                n += 1
+                target = dest / f"{e.name}-{n}"
+            if e.is_dir() and not e.is_symlink():
+                shutil.copytree(e, target, symlinks=True)
+            else:
+                shutil.copy2(e, target, follow_symlinks=False)
+    except (OSError, shutil.Error) as e:
+        return f"its {WORKTREE_ARCHIVE} folder could not be copied to {plain_line(dest)} ({plain_line(str(e))[:160]})"
+    return ""
+
+
+def remove_worktree(root: Path, path: Path, branch: str, home: "Path | None" = None) -> str:
     """Remove a finished sprint's worktree and branch when that loses nothing: the branch is in the main branch (landed, or never
-    moved) and the worktree has no uncommitted or untracked file. -> "" when both are gone, else why they were left."""
+    moved), the worktree has no uncommitted or untracked file and its own `worktree-archive/` (given the main `home`) is copied to
+    the main home first. -> "" when both are gone, else why they were left."""
     base = main_branch(root)
     if not base:
         return "there is no main branch to compare the sprint branch with"
@@ -627,11 +709,28 @@ def remove_worktree(root: Path, path: Path, branch: str) -> str:
         return f"git could not compare {branch} with {base}"
     if out.strip() != "0":
         return f"{branch} has {out.strip()} commit(s) that {base} does not (they have not landed)"
+    if home is not None:
+        why = keep_worktree_archive(root, path, home)
+        if why:
+            return why
     rc, _, err = run_git(root, "worktree", "remove", str(path), timeout=GIT_LONG)
     if rc != 0:
         return f"git worktree remove failed ({plain_line(err)[:160] or 'no output'})"
     rc, _, err = run_git(root, "branch", "-D", branch)
     return "" if rc == 0 else f"the worktree is gone but the branch could not be deleted ({plain_line(err)[:160]})"
+
+
+def prune_empty_folders(root: Path, path: Path) -> None:
+    """After a sprint's worktree is gone (or left): remove its emptied workers' folder `<path>.worktrees` and then the emptied
+    `<repo>.worktrees` that held it. Only a default-named `<repo>.worktrees` is removed (a layout root the repo chose is its own), and
+    only while it is empty: `rmdir` refuses a folder that holds anything. Never raises."""
+    for folder in (Path(str(path) + ".worktrees"), Path(path).parent):
+        if folder == Path(path).parent and folder.name != f"{Path(root).name}.worktrees":
+            continue
+        try:
+            folder.rmdir()
+        except OSError:
+            pass
 
 
 def candidate_orders(orders: tuple, home: Path) -> tuple:
@@ -658,11 +757,12 @@ def parse_orders(text: str) -> tuple:
 
 
 def parse_id(text: str) -> str:
-    """A sprint id: `[a-z0-9-]{1,32}`, and not a folder that already lives under `<home>/sprint/` (claims, archive)."""
+    """A sprint id: `[a-z0-9-]{1,32}`, and not a name that already lives under `<home>/sprint/` (`SPRINT_RESERVED_IDS`)."""
     if not compact_restore.SPRINT_ID_RE.fullmatch(str(text)):
         raise argparse.ArgumentTypeError(f"{text!r} is not a sprint id (1 to 32 characters of a-z, 0-9 and -)")
     if text in compact_restore.SPRINT_RESERVED_IDS:
-        raise argparse.ArgumentTypeError(f"{text!r} is a folder of the sprint directory, not a sprint id")
+        raise argparse.ArgumentTypeError(f"{text!r} is a reserved name (the sprint directory already has a folder or file called that): "
+                                         f"pick another --id. Reserved ids: {', '.join(compact_restore.SPRINT_RESERVED_IDS)}")
     return str(text)
 
 
@@ -1026,15 +1126,18 @@ def strip_env(env) -> dict:
             if k.upper() in KEEP_ENV or not k.upper().startswith(HARNESS_PREFIXES)}
 
 
-def child_env(env, home: Path, sid: str = "", worktree: "Path | None" = None) -> dict:
+def child_env(env, home: Path, sid: str = "", worktree: "Path | None" = None, orders: tuple = ()) -> dict:
     out = strip_env(env)
     out["GITOS_SPRINT"] = "1"                    # set after the strip: compact_restore.py reads it
     out["GITOS_SPRINT_HOME"] = str(home)         # the main checkout's home: sprint_log.py and the hooks find `sprint/` there
-    for k in (compact_restore.SPRINT_ID_ENV, compact_restore.SPRINT_PID_ENV, compact_restore.SPRINT_WORKTREE_ENV):
+    for k in (compact_restore.SPRINT_ID_ENV, compact_restore.SPRINT_PID_ENV, compact_restore.SPRINT_WORKTREE_ENV,
+              compact_restore.SPRINT_ORDERS_ENV):
         out.pop(k, None)                         # the exclusive sprint never inherits a named one's id
-    if sid:                                      # a named sprint: its id and its driver's pid (the hooks and the merge lock read them)
+    out[compact_restore.SPRINT_PID_ENV] = str(os.getpid())   # every sprint session: its driver's pid, the hooks end the session when it is gone
+    if orders:                                   # the orders this sprint works: its Stop hook asks about no other
+        out[compact_restore.SPRINT_ORDERS_ENV] = ",".join(orders)
+    if sid:                                      # a named sprint: its id (the hooks and the merge lock read it with the pid)
         out[compact_restore.SPRINT_ID_ENV] = sid
-        out[compact_restore.SPRINT_PID_ENV] = str(os.getpid())
         if worktree is not None:                 # and the worktree it runs in (the hooks speak there, in a linked worktree)
             out[compact_restore.SPRINT_WORKTREE_ENV] = str(worktree)
     return out
@@ -1062,7 +1165,8 @@ def start_prompt(skill_dir: Path = SKILL_DIR, orders: tuple = (), sid: str = "",
             f"The gitos skill is at {s}; read {s}/references/orchestrator/sprint.md and follow it. "
             f"Reply with the marker line only (orchestrator/sprint.md, Output). "
             f"Log progress with: python {s}/scripts/sprint_log.py add KIND MESSAGE --ref WO-N, where KIND is start "
-            f"when you begin an order, done when you resolve it, or note, and MESSAGE is one short line.{allow}")
+            f"when you begin an order (log it after the Stop card and STOP file check for that order, never before), done when you "
+            f"resolve it, or note, and MESSAGE is one short line.{allow}")
 
 
 def build_command(claude: str, args, session_id: str, prompt: "str | None" = None, worktree: "Path | None" = None,
@@ -1077,9 +1181,31 @@ def build_command(claude: str, args, session_id: str, prompt: "str | None" = Non
     return cmd
 
 
+LOG_NAME_MAX = 200      # the CLI's longest project folder name before it shortens it (observed, `claude` 2.1.332)
+
+
+def log_name_hash(text: str) -> str:
+    """The CLI's short hash of a path: a 32-bit string hash over UTF-16 code units (h = 31*h + unit), absolute value, base 36."""
+    raw, h = text.encode("utf-16-le"), 0
+    for i in range(0, len(raw), 2):
+        h = (h * 31 + int.from_bytes(raw[i:i + 2], "little")) & 0xFFFFFFFF
+    h = h - (1 << 32) if h >= 1 << 31 else h
+    n, digits = abs(h), ""
+    while n:
+        n, r = divmod(n, 36)
+        digits = "0123456789abcdefghijklmnopqrstuvwxyz"[r] + digits
+    return digits or "0"
+
+
 def project_log_dir(root: Path, env) -> Path:
+    """The folder the CLI keeps a repo's session logs in: every character that is not a letter or digit becomes `-`; a name
+    longer than LOG_NAME_MAX is cut there and `-` plus `log_name_hash` of the whole path is added (probed, not documented)."""
     base = Path(env.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
-    return base / re.sub(r"[^A-Za-z0-9]", "-", str(Path(root).resolve()))
+    path = str(Path(root).resolve())
+    name = re.sub(r"[^A-Za-z0-9]", "-", path)
+    if len(name) > LOG_NAME_MAX:
+        name = f"{name[:LOG_NAME_MAX]}-{log_name_hash(path)}"
+    return base / name
 
 
 # ------------------------------------------------------------------------------------------------ windows plumbing
@@ -1683,50 +1809,13 @@ class Sprint:
         self.defer_since = None                  # when the close now being held back by a live lease was first held back
         self.settle_interrupted = False          # Ctrl-C was pressed during a settle wait (the sprint ends after that close)
         self.sessions: list = []
+        self.live = None                         # the session process while one runs: the driver ends it on any way out
+        self.clean_end = False                   # the sprint ended on a stop that leaves nothing for the operator to read
         self.rotations = 0
-        self._last_rendered = None
-        self._render_error = ""
-        self._cost = ("", -1e9)
 
-    # -- the log and its page
+    # -- the log
     def log(self, kind: str, msg: str, ref: str = "", session: str = "") -> None:
         slog.add_record(self.home, kind, msg, ref, session, sid=self.sid)
-        self.render()
-
-    def render(self, force: bool = False) -> None:
-        """Write the page. A page that cannot be written (a locked or full disk, a folder in the way) is one `note` in the
-        log, once per distinct failure, and the sprint carries on: the page is a view, not the sprint."""
-        try:
-            if self.render_page(force):
-                self._render_error = ""
-        except OSError as e:
-            if str(e) != self._render_error:
-                self._render_error = str(e)
-                try:
-                    slog.add_record(self.home, "note", f"the sprint page could not be written ({e})", sid=self.sid)
-                except OSError:
-                    pass
-                self._last_rendered = self.log_signature()    # the note is not a reason to try the page again
-
-    def log_signature(self):
-        log = self.log_path
-        try:
-            return (log.stat().st_mtime_ns, log.stat().st_size)
-        except OSError:
-            return None
-
-    def render_page(self, force: bool) -> bool:
-        """-> True when the page was written, False when the log had not changed."""
-        sig = self.log_signature()
-        if sig == self._last_rendered and not force:
-            return False
-        self._last_rendered = sig
-        text, at = self._cost
-        if self.ops.now() - at >= COST_EVERY:
-            text, at = self.ops.cost(self.sessions), self.ops.now()
-            self._cost = (text, at)
-        slog.render(self.home, self.root, cost=text, **({"sid": self.sid, "ledger": self.work_home} if self.sid else {}))
-        return True
 
     # -- the Stop card
     def post_card(self) -> None:
@@ -1768,13 +1857,14 @@ class Sprint:
         self.sessions.append(sid)
         cmd = build_command(self.claude, self.args, sid, worktree=self.worktree, home=self.home)
         proc = self.ops.launch(cmd, self.session_env())
+        self.live = proc
         return proc, sid
 
     def session_env(self) -> dict:
         """The environment of the session and of the guard: a named sprint's id, driver pid, main home and worktree; the exclusive one's as before."""
         if self.sid:
-            return child_env(self.env, self.home, self.sid, self.worktree)
-        return child_env(self.env, self.home)
+            return child_env(self.env, self.home, self.sid, self.worktree, tuple(self.args.orders))
+        return child_env(self.env, self.home, orders=tuple(self.args.orders))
 
     def transcript(self, sid: str) -> Path:
         return project_log_dir(self.work_root, self.env) / f"{sid}.jsonl"
@@ -1933,6 +2023,7 @@ class Sprint:
         msg = f"{ident}: {reason}" if ident else (reason or "STOP file with no text")
         found = WO_RE.search(reason)
         self.log("stop", msg, ref or (found.group(0) if found else ""))
+        self.clean_end = ident in CLEAN_STOPS
         self.close_card(f"sprint ended: {ident or reason or 'stop'}")
         self.ops.say(f"\nsprint ended: {msg}. Log: {self.log_path}")
         return 0
@@ -1967,11 +2058,61 @@ class Sprint:
             return self.run_sprint()
         finally:
             SPRINT_ID = before
+            self.end_session()
             if self.sid:
                 self.finish_worktree()
                 self.note_unreleased(release_claims(self.home, self.sid))
             else:
                 self.note_unreleased(unmark_exclusive(self.home))
+            self.archive_clean_end()
+
+    def end_session(self) -> None:
+        """On every way out of the driver: a session still running (the driver is leaving by a path that did not close it) has its
+        process tree killed, so it never runs on with no driver and no claim. Never raises."""
+        proc, self.live = self.live, None
+        try:
+            if proc is None or proc.poll() is not None:
+                return
+            self.ops.kill_tree(proc.pid)
+            msg = "the driver left with its session still running: the session's process tree was ended"
+            slog.add_record(self.home, "error", msg, sid=self.sid)
+            self.ops.say(f"sprint: {msg}")
+        except Exception:
+            pass
+
+    def archive_clean_end(self) -> None:
+        """After a named sprint's clean end (`clean_end`), move STATE.md and STOP to `sprint/<id>/archive/<name>-<stamp>` so the same id can
+        start again (the exclusive sprint's STATE.md is the interactive window's to fold, and stays). A STATE.md that carries a note of the
+        driver's (a left worktree, a takeover, a guard failure) is for the operator to read first: both files stay, and the log says so.
+        Never raises."""
+        if not self.clean_end or not self.sid:
+            return
+        try:
+            state = self.sprint_dir / STATE_REL.name
+            try:
+                held = NOTE_MARK_PREFIX in state.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                held = False
+            if held:
+                self.log("note", "STATE.md carries a note for the operator: it and STOP stay in place; read them before the next start")
+                return
+            arch = self.sprint_dir / "archive"
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            for f in (state, self.stop_file):
+                if not f.exists():
+                    continue
+                arch.mkdir(parents=True, exist_ok=True)
+                dest, n = arch / f"{f.stem}-{stamp}{f.suffix}", 1
+                while dest.exists():
+                    n += 1
+                    dest = arch / f"{f.stem}-{stamp}-{n}{f.suffix}"
+                retry_denied(lambda: os.replace(f, dest))
+            self.ops.say(f"sprint: clean end, STATE.md and STOP moved to {arch.relative_to(self.home).as_posix()}/ so sprint {self.sid} can start again")
+        except Exception as e:
+            try:
+                slog.add_record(self.home, "note", f"the clean end's STATE.md and STOP could not be archived ({e})", sid=self.sid)
+            except OSError:
+                pass
 
     def run_sprint(self) -> int:
         a = self.args
@@ -1999,7 +2140,6 @@ class Sprint:
             prev, streak = self.ops.snapshot(), 0
             while True:
                 self.ops.sleep(POLL_SECONDS)
-                self.render()
                 if (self.stop_file.exists() or self.rotate_file.exists()) and self.defer_close(proc):
                     continue
                 if self.stop_file.exists():
@@ -2009,6 +2149,7 @@ class Sprint:
                     if info["survivors"]:
                         return self.end_error("error", "stopped with processes left", False)
                     ended = self.end_stop(ident, reason)
+                    self.clean_end = self.clean_end and not info["guard"]
                     return 1 if info["guard"] else ended
                 signalled = self.rotate_file.exists()
                 if signalled:
@@ -2079,6 +2220,7 @@ class Sprint:
         slog.archive_previous(self.home, sid=self.sid)
         self.note_takeovers()
         self.note_leftover()
+        self.say_archived_state()
         try:
             self.rotate_file.unlink()                # a ROTATE left by an earlier run is the driver's to clear
         except OSError:
@@ -2137,6 +2279,21 @@ class Sprint:
             except OSError:
                 pass
 
+    def say_archived_state(self) -> None:
+        """A named sprint whose last end was a Stop card moved its STATE.md aside (`archive_clean_end`): the start says where it is, so
+        the next run can read where the last one stopped. Says nothing for any other earlier end. Never raises."""
+        if not self.sid:
+            return
+        try:
+            arch = self.sprint_dir / "archive"
+            stops, states = sorted(arch.glob("STOP-*")), sorted(arch.glob("STATE-*.md"))
+            if not stops or not states or not stops[-1].read_text(encoding="utf-8-sig", errors="replace").startswith("stop-card"):
+                return
+            self.ops.say(f"sprint: sprint {self.sid} was last ended by a Stop card; its STATE.md is archived at "
+                         f"{states[-1].relative_to(self.home).as_posix()}. Read it if this run should pick up where that one stopped.")
+        except Exception:
+            pass
+
     def finish_worktree(self) -> None:
         """At the end of a named sprint, on every way out: remove its worktree and branch when the branch is in the main branch and the
         worktree is clean; else leave both and say so in the log and in STATE.md. Never raises."""
@@ -2144,9 +2301,10 @@ class Sprint:
             return
         path, branch = self.worktree, sprint_branch(self.sid)
         try:
-            why = remove_worktree(self.root, path, branch)
+            why = remove_worktree(self.root, path, branch, self.home)
         except Exception as e:                          # a cleanup that fails is a worktree left, not a sprint that crashes
             why = f"cleanup failed ({type(e).__name__}: {e})"
+        prune_empty_folders(self.root, path)
         if why:
             msg = f"worktree {path} and branch {branch} left in place: {plain_line(why)}"
             try:
@@ -2194,7 +2352,10 @@ class Sprint:
         """A signal file means the session is writing its last reply: wait until its log is quiet, then close (a session
         still not quiet at the cap is then killed, not typed into)."""
         if proc.poll() is None:
-            wait_quiet(self.transcript(sid), self.ops)
+            log = self.transcript(sid)
+            if self.ops.mtime(log) is None:
+                self.ops.say(f"sprint: no session log at {log}; the quiet wait before the close is a plain pause")
+            wait_quiet(log, self.ops)
 
 
 def resolve_target(repo_arg: "str | None") -> "tuple[Path, Path | None, Path | None]":
@@ -2229,7 +2390,34 @@ def run_main(args, env, ops_factory) -> int:
         print(f"sprint: nothing was launched{where}", file=sys.stderr)
         return 2
     ops = (ops_factory or Ops)(root, home, env, claude)
-    return Sprint(args, root, home, env, ops, claude).run()
+    with exit_signals():
+        return Sprint(args, root, home, env, ops, claude).run()
+
+
+@contextlib.contextmanager
+def exit_signals():
+    """A driver ended by SIGTERM, SIGBREAK or SIGHUP leaves as `SystemExit`, so `Sprint.run` ends its session on the way out. Handlers
+    are put back afterwards; where signals cannot be set (not the main thread) nothing is changed."""
+    old = {}
+
+    def leave(number, _frame):
+        raise SystemExit(f"sprint: the driver was ended by signal {number}")
+
+    for name in EXIT_SIGNALS:
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            try:
+                old[sig] = signal.signal(sig, leave)
+            except (ValueError, OSError):
+                pass
+    try:
+        yield
+    finally:
+        for sig, handler in old.items():
+            try:
+                signal.signal(sig, handler)
+            except (ValueError, OSError):
+                pass
 
 
 if __name__ == "__main__":

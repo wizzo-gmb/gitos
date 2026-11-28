@@ -62,7 +62,7 @@ Bootstrap your state before doing anything:
 steps, report once, in this order. A line with nothing to say is left out (a command that prints
 nothing means say nothing); none of these blocks starting work, except where a line says so.
 
-0. **Owner board** (step 0): its one line, then what the new answers and notes say. <!-- rule:board-summary-line -->
+0. **Owner board** (step 0): its one line, then what the new answers and notes say, then the owner's new actions (`board.py actions`: apply each to the ledger, commit, close it with `action-done ID` or `action-done ID --rejected "<reason>"`; on a hub repo, both take `--tab <tab>` (`actions --tab <tab>`, `action-done ID --tab <tab>`), and refuse without it; `references/owner-board.md` -> *Owner actions*). <!-- rule:board-summary-line -->
 1. **Engine drift** (step 4), only if the skill is ahead: *"engine vN available, this repo on vM — run the
    `upgrade` command (or this product's engine-sync bridge, if it has one) to adopt the latest
    directives"*. Do not auto-upgrade; let the operator decide.
@@ -73,8 +73,8 @@ nothing means say nothing); none of these blocks starting work, except where a l
    resolving any work-order (work-loop step 7).
 5. **System One**: run `python ~/.claude/skills/gitos/scripts/system_one.py status --brief` and report its line if
    it prints one (with no machine config it prints nothing: say nothing). **System One drains the loose-ends
-   list and does nothing else. Down is a normal state (the GPU is in use); the drain waits, or a dispatched
-   helper drains it. The orchestrator never drains by hand. Never raise it to the operator as a problem.** Its line is reported once,
+   list and does nothing else. A dispatched helper drains it; a local model, where a repo runs one, may be down
+   (the GPU is in use), and the drain waits or the helper drains. The orchestrator never drains by hand. Never raise it to the operator as a problem.** Its line is reported once,
    plain: no colour, no follow-up.
 6. **Drain**: run `python ~/.claude/skills/gitos/scripts/system_one.py drain status <repo-root>` and report its line
    (`drain: N pending (J join, B new-order, Q ask, P park, C close, R read)`) the way the intake count is

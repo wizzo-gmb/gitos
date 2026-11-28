@@ -176,8 +176,8 @@ Direct the running orchestrator to:
   **Never silently skip; never silently overwrite** — the two are the same failure wearing
   different clothes. The rule this replaced copied a tool only when it was *absent*, which made
   an upgrade whose entire value was a `canary.py` fix a **no-op for exactly the repos that had
-  `canary.py`**. To make a tool behave differently, **descope** the category for the repo
-  (SKILL.md → *Canary*) or file a work-order upstream — a forked home copy is not a supported
+  `canary.py`**. To make a tool behave differently, file a work-order upstream
+  (the canary has no per-repo descoping: `references/canary.md`) — a forked home copy is not a supported
   surface and will be refreshed.
 
   *Delivery is not seeding:* `scaffold.py` deliberately **skips** an existing tool copy, so
@@ -390,13 +390,13 @@ hub and writes the two pointers), then `python <hub>/board.py ensure --tab <tab>
 board and moves to a hub: run `python <home>/board/board.py list --open` first and re-ask each open or answered-not-acted card on
 the hub (`add-decision ... --tab <tab>`); then `git rm` its `board/board.py` and `board/board.json`, delete its `board/data/` and
 ask the operator to stop its server (never stop it yourself). The canary's `board-unrouted` stays until `<home>/board/` is gone.
-For an own board, first run `git log --oneline -- <home>/board/board.py`: a commit that is not an engine upgrade is a local edit; read its diff and carry its view into `<home>/board/local/<name>.html` (the board loads each such file as a tab and no upgrade touches the folder). Run `python
+For an own board, first run `git log --oneline -- <home>/board/board.py`: a commit that is not an engine upgrade is a local edit; read its diff and carry its view into `<home>/board/views/<name>.js` (a native view, `references/owner-board.md` -> *Repo views*; no upgrade touches `views/`, `providers/` or `local/`). Run `python
 <SKILL_DIR>/scripts/scaffold.py <root> --git skip`: it builds `<home>/board/` when absent (`board.py` from the engine's
 `assets/board/board.py`, and `board.json` with the port derived from the home's path, bind-tested once), refreshes
 `board.py` when its `BOARD_VERSION` is older than the engine's (a copy that differs at the same version is reported and
 left), adds `<home>/board/data/` to `.gitignore`, writes the CLAUDE.md block line and inserts the `## Owner board`
 section into `RESUME.md` when it lacks one. It never touches an existing `board.json` or anything under `data/`, so
-the port and the answers survive every upgrade. Then run `python <home>/board/board.py ensure`, report its line, and when you carried a local view confirm its tab shows.
+the port and the answers survive every upgrade. Then run `python <home>/board/board.py ensure`, report its line, and when you carried a view confirm it shows in the sidebar. The engine's page code is `<home>/board/ui/`, copied with `board.py` (a missing one is the canary's `board-ui-missing`). **A leftover `<home>/board/local/*.html` no longer shows anywhere**, because the sandboxed pages are retired: the canary reports each as `board-legacy-page` (advisory). List them in the upgrade report and have the repo carry out `references/owner-board.md` -> *Migrating a page* for them as a work-order of its own. The engine converts nothing.
 The canary's `board` category reports a pointer with no board (`board-missing`) and a board nothing points at
 (`board-pointer-missing`). The Artifact owner board is retired: if RESUME still names one under `## Waiting on whom`,
 remove that line.

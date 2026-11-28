@@ -49,7 +49,7 @@ driver makes it); its claims, state, signals and the merge lock live in the MAIN
   * `reap` also runs inside a sprint worktree, and then takes only the worktrees under that sprint's `.worktrees/` (HEAD,
     the sprint branch, is what they are merged into).
 
-THE MERGE LOCK. `<main home>/sprint/merge.lock` is `{"holder", "pid", "start", "since"}`. The main home is `GITOS_SPRINT_HOME`
+THE MERGE LOCK. `<main home>/sprint/merge.lock` is `{"holder", "pid", "start", "since"}`, and during a `land` also `"step"` (merge, index, canary, gate or fast-forward; `lock status` shows it). The main home is `GITOS_SPRINT_HOME`
 (when it names a home of this repository), else the main checkout's own home. `holder` is `GITOS_SPRINT_ID`, else
 `interactive`. `pid` is what keeps the lock alive: `GITOS_SPRINT_PID` (the sprint's driver), else `--pid N`, else the nearest ancestor
 process of this command that is the Claude Code session (the shell that ran the command is gone before the merge is, so it is
@@ -580,7 +580,7 @@ def live_claims(mhome, own=""):
         if not m:
             continue
         try:
-            rec = json.loads(f.read_text(encoding="utf-8-sig"))
+            rec = _cr().load_json(f)               # the hooks reach this through the inventory: a claim being rewritten is read again
         except (OSError, ValueError):
             out[m.group(1)] = "a claim file that cannot be read"
             continue
@@ -821,7 +821,7 @@ def write_slice_marker(wt_path, nnn, sid):
 def _own_claim(mhome, nnn, sid):
     """True when `<home>/sprint/claims/WO-<nnn>.json` is a claim of sprint `sid`."""
     try:
-        rec = json.loads((Path(mhome) / "sprint" / "claims" / f"WO-{nnn}.json").read_text(encoding="utf-8-sig"))
+        rec = _cr().load_json(Path(mhome) / "sprint" / "claims" / f"WO-{nnn}.json")
     except (OSError, ValueError):
         return False
     return isinstance(rec, dict) and rec.get("sprint") == sid
@@ -1035,15 +1035,16 @@ def link_guard(worktree):
     return done, failed
 
 
-def _archive(root, home, it):
+def _archive(root, home, it, archive_home=None):
     """Copy each `archive` directory that exists in the worktree to
-    `<home>/worktree-archive/<name>/<dir>`. -> (copied rel dirs, error text or None). Links inside are
+    `<archive_home or home>/worktree-archive/<name>/<dir>`. -> (copied rel dirs, error text or None). Links inside are
     skipped, never followed."""
     layout = load_layout(home)
     if not layout["archive"]:
         return [], None
-    dest_base = Path(home) / ARCHIVE_DIR / re.sub(r"[^\w.-]+", "-", it["name"])
-    ignore_rel = _under(Path(home) / ARCHIVE_DIR, root)
+    dest_base = Path(archive_home or home) / ARCHIVE_DIR / re.sub(r"[^\w.-]+", "-", it["name"])
+    # an archive kept outside this worktree (land step 0) must not edit this worktree's .gitignore: land refuses a dirty tree
+    ignore_rel = None if archive_home else _under(Path(home) / ARCHIVE_DIR, root)
     copied = []
 
     def skip_links(d, names):
@@ -1147,7 +1148,7 @@ def _is_slice(it):
     return it["kind"] == "wo" and it["name"] != f"wo-{it['nnn']}"
 
 
-def _reap_one(root, it, current, home=None, by_order=False):
+def _reap_one(root, it, current, home=None, by_order=False, archive_home=None):
     """Reap one inventory item. -> (ok, [message lines]). Refuses on anything git or we object to. `by_order`: the operator named
     the order (`reap NNN`), not this worktree: a slice that has had no commit yet is then a worker about to start, not a leftover."""
     name = it["name"]
@@ -1176,11 +1177,11 @@ def _reap_one(root, it, current, home=None, by_order=False):
         if not it["dirty"] and not it["locked"]:
             # before the removal; a dirty or locked tree is left to git's own refusal, untouched
             if home is not None:
-                copied, bad = _archive(root, home, it)
+                copied, bad = _archive(root, home, it, archive_home)
                 if bad:
                     return False, [f"worktree: {name} NOT reaped: {bad}"]
                 if copied:
-                    msgs.append(f"archived {', '.join(copied)} to {posix(Path(home) / ARCHIVE_DIR)}")
+                    msgs.append(f"archived {', '.join(copied)} to {posix(Path(archive_home or home) / ARCHIVE_DIR)}")
             try:
                 gone, stuck = link_guard(it["path"])
             except UnreadableDir as e:
@@ -1498,7 +1499,32 @@ def _takeover_guard(path, wait=10.0):
 
 
 def _who(rec):
-    return f'"{rec.get("holder")}" (pid {rec.get("pid")}, since {rec.get("since", "?")})'
+    step = f", at {rec['step']}" if rec.get("step") else ""
+    return f'"{rec.get("holder")}" (pid {rec.get("pid")}, since {rec.get("since", "?")}{step})'
+
+
+def _lock_step(mhome, holder, pid, step):
+    """Name the `land` step that is running in the lock record this process holds (`status` and the refusals to others show it).
+    The record is replaced whole; one that is not this holder's, or cannot be read, is left alone. A failure here never stops a land."""
+    path = lock_path(mhome)
+    cur, state = _read_lock(path)
+    if state != "held" or cur.get("holder") != holder or cur.get("pid") != pid:
+        return
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.step")
+    try:
+        tmp.write_text(json.dumps({**cur, "step": step}) + "\n", encoding="utf-8")
+        for _ in range(20):
+            try:
+                os.replace(tmp, path)
+                return
+            except OSError:                  # a reader has the file open (Windows)
+                time.sleep(0.05)
+    except OSError:
+        pass
+    try:
+        tmp.unlink()
+    except OSError:
+        pass
 
 
 def lock_acquire(mhome, holder, pid, wait=0.0, say=None):
@@ -1658,8 +1684,9 @@ def read_gate(main_root, mbranch, home_rel):
     return cmd, float(t), ""
 
 
-def _gate(root, home, main_root, mbranch):
+def _gate(root, home, main_root, mbranch, step=lambda name: None):
     """Step 3: the canary, then the declared gate command (from the main branch), in the sprint worktree. -> "" or why nothing may land."""
+    step("canary")
     rc, out = _run([sys.executable, str(SCRIPTS / "canary.py"), str(home)], root, CANARY_TIMEOUT_S)
     if rc != 0:
         return f"the canary is not clean ({'exit ' + str(rc) if rc is not None else out}):\n{_tail(out)}"
@@ -1667,6 +1694,7 @@ def _gate(root, home, main_root, mbranch):
     if problem:
         return problem
     if cmd:
+        step("gate")
         rc, out = _run(cmd, root, timeout)
         if rc != 0:
             return f"the gate command {cmd} failed ({'exit ' + str(rc) if rc is not None else out}):\n{_tail(out)}"
@@ -1697,9 +1725,10 @@ def _is_gitos_home(path):
     return p.is_dir() and (p / "INDEX.md").is_file() and ((p / "work-orders").is_dir() or (p / "sprint").is_dir())
 
 
-def _reap_own_workers(root, home):
+def _reap_own_workers(root, home, archive_home=None):
     """Land step 0: reap the sprint's own merged, clean worker worktrees under `<sprint worktree>.worktrees/` (the reapable test and
-    `_reap_one`'s refusals are `reap --merged`'s; nothing outside that folder is looked at). -> (lines reaped, lines skipped)."""
+    `_reap_one`'s refusals are `reap --merged`'s; nothing outside that folder is looked at). A worker's `archive` folders are copied
+    to `archive_home` (the main home: the sprint worktree's own folder goes with that worktree). -> (lines reaped, lines skipped)."""
     try:
         load_layout(home)
     except LayoutError as e:
@@ -1712,17 +1741,19 @@ def _reap_own_workers(root, home):
     for it in inv["items"]:
         if not it["path"] or _under(it["path"], scope) is None or it["class"] != "reapable":
             continue
-        ok, msgs = _reap_one(root, it, inv["branch"], home)
+        ok, msgs = _reap_one(root, it, inv["branch"], home, archive_home=archive_home)
         (done if ok else skipped).extend(msgs)
     return done, skipped
 
 
 def _land_locked(root, home, sid, main_root, mbranch, mhome):
-    """Steps 1-4 of `land`, with the lock held. -> exit code."""
+    """Steps 1-4 of `land`, with the lock held; the lock record names the step that runs (merge, index, canary, gate, fast-forward).
+    -> exit code."""
+    step = lambda name: _lock_step(mhome, sid, os.getpid(), name)        # noqa: E731
     br = f"sprint-{sid}"
     err = lambda m: print(f"worktree: land: {m}", file=sys.stderr)       # noqa: E731
     # 0. the sprint's own finished worker worktrees go first, so the canary does not meet them
-    done, skipped = _reap_own_workers(root, home)
+    done, skipped = _reap_own_workers(root, home, mhome)
     for m in skipped:
         print(f"worktree: land 0/4: {m}", file=sys.stderr)
     if done:
@@ -1740,6 +1771,7 @@ def _land_locked(root, home, sid, main_root, mbranch, mhome):
             f"{_tail(dirty)}")
         return 1
     # 1. the main branch into the sprint branch
+    step("merge")
     rel = _under(home, root) or "."
     generated = {f"{rel}/INDEX.md".removeprefix("./"), f"{rel}/brain/wiki/index.md".removeprefix("./")}
     rc, out, e = git(root, "merge", "--no-edit", mbranch, timeout=MERGE_TIMEOUT)
@@ -1761,6 +1793,7 @@ def _land_locked(root, home, sid, main_root, mbranch, mhome):
     merging = git(root, "rev-parse", "-q", "--verify", "MERGE_HEAD")[0] == 0
     print(f"worktree: land 1/4: merged {mbranch} into {br}" + (" (a conflict in a generated file is regenerated next)" if merging else ""))
     # 2. regenerate the indexes
+    step("index")
     paths = []
     if (home / "INDEX.md").is_file():
         rc, out = _run([sys.executable, str(SCRIPTS / "ledger_index.py"), str(home)], root, 120)
@@ -1799,12 +1832,13 @@ def _land_locked(root, home, sid, main_root, mbranch, mhome):
         print(f"worktree: land: nothing to land: {mbranch} already has everything on {br}")
         return 0
     # 3. the gate
-    why = _gate(root, home, main_root, mbranch)
+    why = _gate(root, home, main_root, mbranch, step)
     if why:
         err(f"the gate refused; nothing landed on {mbranch}: {why}")
         return 1
     print("worktree: land 3/4: the canary and the gate command passed")
     # 4. the fast-forward, in the main checkout (checked again: it can change while the gate runs)
+    step("fast-forward")
     why = _main_blocker(main_root, mbranch)
     if why:
         err(why)

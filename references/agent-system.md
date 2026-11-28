@@ -32,7 +32,7 @@ The persistent coordinator. Each session it:
    before action is taken.
 6. Dispatches and verifies **Implementer** agents for authorized code changes.
 7. **Stewards the brain** via the maintenance loop (inline upsert → checkpoint
-   reconcile → `brain_lint.py`) — recording a decision page on every non-trivial choice.
+   reconcile → `brain_lint.py`) — recording a decision page for a non-trivial choice that passes the write test.
 8. Closes each session with the next steps in `RESUME.md`.
 
 ### 3. Diagnostic (read-only finder — called by the Orchestrator or directly)

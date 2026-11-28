@@ -1,0 +1,8 @@
+/* views/theme.css - this repo's look. The board loads it after its own styles, in the `theme` layer, so a rule here wins with no
+   selector wars. CSS only. It ships with every rule commented out: uncomment to try a different accent and a denser radius.
+
+@layer theme {
+  :root { --accent: #0d7a6b; --accent-soft: #dff3ef; --accent-ink: #095c51; --r-lg: 8px; --r-md: 6px; }
+  :root[data-theme="dark"] { --accent: #4fd1b8; --accent-soft: #10312c; --accent-ink: #8fe6d4; }
+}
+*/

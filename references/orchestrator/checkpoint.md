@@ -36,6 +36,10 @@ RESUME), the next three steps, pointers to the standing rules. Short (target und
 pointer-only; the template is the engine's `assets/RESUME.md.tmpl`, laid by the scaffold. The
 canary reports a RESUME over 150 lines (`resume-oversized`) and a bullet under a rules heading that
 points at nothing (`resume-rules-section`).
+**Flush the short-term notes** (`## Notes (short-term)`, at most 10, each ending `until: <event or date>`) as you write: *until*
+met or no longer true → delete; still live → keep; proved durable → promote through the write test (brain, standing rules or a code
+comment); turned out to be work → a loose end or work-order. A note survives only by being carried forward on purpose, and its
+*until* must be checkable here ("until: later" is not). The canary reports more than 10 (`resume-notes-over-cap`).
 RESUME carries state only. If a line in it differs from the standing rules or the tier mapping, remove the line: the
 rules and the mapping win. List, as links, only the topic pages the work ahead touches (`references/brain-schema.md`,
 *Core rules and topic pages*), not every page.

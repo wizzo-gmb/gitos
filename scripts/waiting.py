@@ -230,6 +230,9 @@ def src_board(home: Path) -> dict:
     if c["new_answers"]:
         items.append({"ref": "answers", "text": f"{int(c['new_answers'])} new answer(s) not read yet: "
                                                 f"`board.py list --open{scope}`"})
+    if c.get("new_actions"):
+        items.append({"ref": "actions", "text": f"{int(c['new_actions'])} new owner action(s) on orders not read yet: "
+                                                f"`board.py actions{scope}` (apply each to the ledger, then `action-done{scope}`)"})
     if c["new_notes"]:
         items.append({"ref": "notes", "text": f"{int(c['new_notes'])} new note(s) not read yet: `board.py notes{scope}`"})
     if c["problems"]:

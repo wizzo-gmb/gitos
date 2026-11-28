@@ -164,9 +164,10 @@ def check_system_one(root, home, **_) -> list:
         yes.insert(0, _cmd("system_one.py", "setup", "--write"))
     return [_entry(
         "system-one",
-        _q("Use System One in this repo? A small local model drains the loose-ends list (routine yes/no judgments "
-           "for scripts, nothing else); the repo's text goes to the configured endpoint.", "System One",
-           [("No (default)", "Records off; nothing is sent."),
+        _q("Use the local model for System One in this repo? System One drains the loose-ends list (routine "
+           "yes/no judgments for scripts, nothing else). By default a dispatched helper does this; with the local "
+           "model, the repo's text goes to the configured endpoint.", "System One",
+           [("No (default)", "Records off; a helper drains the list and nothing is sent."),
             ("Yes", "Records on" + ("" if configured else " after setting up the server that answered") + ".")]),
         {"No (default)": [_cmd("system_one.py", "repo", "off", root)], "Yes": yes})]
 

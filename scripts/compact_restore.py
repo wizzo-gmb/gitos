@@ -45,10 +45,12 @@ import io
 import json
 import os
 from pathlib import Path
+import random
 import re
 import subprocess
 import sys
 import tempfile
+import time
 
 EVENT = "SessionStart"
 STOP_EVENT = "Stop"
@@ -70,9 +72,13 @@ SPRINT_ENV = "GITOS_SPRINT"     # set to 1 by the sprint driver for the session 
 STATE_REL = Path("sprint") / "STATE.md"     # a sprint's own state, in place of RESUME.md (references/orchestrator/sprint.md)
 SPRINT_SIGNALS = ("STOP", "ROTATE")         # the files under <home>/sprint/ that mean the session is ending
 SPRINT_ID_ENV = "GITOS_SPRINT_ID"           # set by the driver for a named sprint's session: `[a-z0-9-]{1,32}`
-SPRINT_PID_ENV = "GITOS_SPRINT_PID"         # the named sprint's driver pid, set beside the id
+SPRINT_PID_ENV = "GITOS_SPRINT_PID"         # the sprint driver's pid (named or exclusive), set in every sprint session
+SPRINT_ORDERS_ENV = "GITOS_SPRINT_ORDERS"   # the sprint's orders, `WO-NNN,WO-NNN`: the only orders its `Stop` hook asks about
+PARSE_TRIES = 5                             # attempts at a shared JSON file that does not parse yet (another process is writing it)
+DENIED_TRIES = 10                           # attempts at a shared file another process holds open (a Windows sharing violation)
+ANCESTOR_CAP = 8                            # most levels a hook walks up from itself to find its session's root (hook, shell, client, a node host)
 SPRINT_ID_RE = re.compile(r"[a-z0-9-]{1,32}")
-SPRINT_RESERVED_IDS = ("claims", "archive")  # folders under <home>/sprint/ that are not a sprint
+SPRINT_RESERVED_IDS = ("claims", "archive", "stop", "rotate", "busy", "exclusive")  # names under <home>/sprint/ that are not a sprint (the signal files fold to these on a case-insensitive disk)
 SPRINT_HOME_ENV = "GITOS_SPRINT_HOME"       # a named sprint's session: the main checkout's home, where `sprint/<id>/` lives
 SPRINT_WORKTREE_ENV = "GITOS_SPRINT_WORKTREE"   # a named sprint's session: its own worktree (the one place a linked worktree speaks)
 # The engine's detection order (model_optimization.HOMES).
@@ -419,6 +425,140 @@ def record_alive(rec) -> bool:
     return not now or now == start
 
 
+def load_json(path):
+    """The JSON in `path` (UTF-8, a BOM allowed) of a file another process may be writing or holding open, read again (bounded, a short
+    jittered pause) while the read is denied (a Windows sharing violation) or the text does not parse yet. FileNotFoundError at once; the
+    last PermissionError or ValueError when it stays so. The one reader the hooks use for the sprints' shared files (claims, markers)."""
+    denied = parsed = 0
+    while True:
+        try:
+            return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        except PermissionError:
+            denied += 1
+            if denied >= DENIED_TRIES:
+                raise
+        except ValueError:
+            parsed += 1
+            if parsed >= PARSE_TRIES:
+                raise
+        time.sleep(min(0.02 * (denied + parsed), 0.15) + random.uniform(0, 0.02))
+
+
+def sprint_orders():
+    """The orders the driver gave this sprint's session (`GITOS_SPRINT_ORDERS`), as a set of numbers; empty when none are named."""
+    out = set()
+    for ref in os.environ.get(SPRINT_ORDERS_ENV, "").split(","):
+        m = re.fullmatch(r"\s*WO-(\d+)\s*", ref)
+        if m:
+            out.add(int(m.group(1)))
+    return out
+
+
+def process_table():
+    """{pid: (parent pid, image name)} of every process now (empty when it cannot be read)."""
+    try:
+        if sys.platform != "win32":
+            out = subprocess.run(["ps", "-e", "-o", "pid=,ppid=,comm="], capture_output=True, text=True, timeout=10).stdout
+            table = {}
+            for line in out.splitlines():
+                p = line.split(None, 2)
+                if len(p) == 3 and p[0].isdigit() and p[1].isdigit():
+                    table[int(p[0])] = (int(p[1]), p[2].strip())
+            return table
+        import ctypes
+        from ctypes import wintypes
+
+        class Entry(ctypes.Structure):
+            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                        ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                        ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                        ("pcPriClassBase", wintypes.LONG), ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260)]
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        k32.Process32FirstW.argtypes = k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        snap = k32.CreateToolhelp32Snapshot(0x2, 0)
+        table = {}
+        try:
+            e = Entry()
+            e.dwSize = ctypes.sizeof(Entry)
+            ok = k32.Process32FirstW(snap, ctypes.byref(e))
+            while ok:
+                table[e.th32ProcessID] = (e.th32ParentProcessID, e.szExeFile)
+                ok = k32.Process32NextW(snap, ctypes.byref(e))
+        finally:
+            k32.CloseHandle(snap)
+        return table
+    except Exception:
+        return {}
+
+
+def driver_gone():
+    """True when this is a sprint's session (`GITOS_SPRINT=1`, named or exclusive) whose driver's pid (`GITOS_SPRINT_PID`) is set and that
+    driver process no longer runs: a driver killed hard leaves its session behind, holding no claim."""
+    if not in_sprint():
+        return False
+    raw = os.environ.get(SPRINT_PID_ENV, "")
+    return raw.isdigit() and int(raw) > 0 and not pid_alive(int(raw))
+
+
+def session_tree(table, driver_pid, me):
+    """(the session's root pid, [every pid to end]) found from this hook process `me` by walking up the parents. The root is the process
+    whose recorded parent IS `driver_pid` (a dead driver's children keep its pid as their parent, the driver itself is no longer in the
+    table). Any other ending of the walk is no session of this driver and ends nothing: (None, []): a parent that is gone but is not the
+    driver, a parent that is a system pid (`<= 4`), a loop, or more than `ANCESTOR_CAP` levels. A live parent that is not the driver is
+    walked through (the shell and the client sit between the hook and the root)."""
+    if not isinstance(driver_pid, int) or driver_pid <= 4:
+        return None, []
+    root, seen = me, {me}
+    for _ in range(ANCESTOR_CAP + 1):
+        parent = table.get(root, (0, ""))[0]
+        if parent == driver_pid:
+            break
+        if parent in seen or parent not in table or parent <= 4:
+            return None, []
+        seen.add(parent)
+        root = parent
+    else:
+        return None, []
+    below, todo = {root}, [root]
+    while todo:
+        cur = todo.pop()
+        for pid, (ppid, _) in table.items():
+            if ppid == cur and pid not in below:
+                below.add(pid)
+                todo.append(pid)
+    return root, sorted(below - {me})
+
+
+def end_orphan_session():
+    """A sprint's hook (named or exclusive) that finds its driver gone ends the whole session: the process tree from the session's root down is killed,
+    this hook's own process last (it is only a leaf). -> True when the session was found orphaned (a kill was tried). Never raises."""
+    try:
+        if not driver_gone():
+            return False
+        me, driver = os.getpid(), int(os.environ.get(SPRINT_PID_ENV, "0"))
+        table = process_table()
+        if me not in table:
+            return True
+        root, victims = session_tree(table, driver, me)
+        if root is None:
+            return True
+        if sys.platform == "win32" and victims:
+            subprocess.run(["taskkill", "/F", *[a for pid in victims for a in ("/PID", str(pid))]], capture_output=True, timeout=30)
+        else:
+            for pid in victims:
+                try:
+                    os.kill(pid, 9)
+                except OSError:
+                    pass
+        return True
+    except BaseException:
+        return False
+
+
 def clip_section(name, body, budget, path):
     """`--- name ---` section holding `body` cut to `budget` characters (the cut is stated, with the file's path)."""
     body = body.strip()
@@ -582,13 +722,24 @@ def has_open_slice(home, rel):
                for d in wdir.iterdir())
 
 
-def stop_state(home, canary, sprint=False, sid=""):
+def own_order(item, orders):
+    """Whether a canary finding is this sprint's to be asked about: no order list (not a sprint, or none named), a finding that names
+    no order, or one whose order number (`WO-NNN`, `WO-NNN/SN`) is in `orders`."""
+    if not orders:
+        return True
+    m = re.match(r"WO-(\d+)", str(item.get("wo") or ""))
+    return m is None or int(m.group(1)) in orders
+
+
+def stop_state(home, canary, sprint=False, sid="", orders=frozenset()):
     """The unresolved-state findings for a home. -> (state key, instruction) or None. Four sources: an order landed
     and still open, RESUME.md behind the ledger, notes waiting for adjudication, a reapable worktree. In a sprint
     (`sprint` true) RESUME.md is not the sprint's file: it is never called behind and never asked to be rewritten, and
-    the state to update is `<home>/sprint/STATE.md` (`<home>/sprint/<id>/STATE.md` for a named sprint, `sid`)."""
+    the state to update is `<home>/sprint/STATE.md` (`<home>/sprint/<id>/STATE.md` for a named sprint, `sid`). A sprint with named
+    `orders` (the numbers of `GITOS_SPRINT_ORDERS`) is asked only about those orders: another order's landing or notes are not its
+    business."""
     keys, asks = [], []
-    for item in canary.landed_unresolved(home):
+    for item in (i for i in canary.landed_unresolved(home) if own_order(i, orders)):
         keys.append(f"landed:{item['wo']}")
         asks.append(f"{item['wo']} has landed but is still open in work-orders/")
     stale = None if sprint else canary.resume_stale_item(home)
@@ -602,7 +753,7 @@ def stop_state(home, canary, sprint=False, sid=""):
     # An implementer's report that landed: Implementer notes filled, no adjudication yet (the canary's own test).
     # An advisory line only; a check that cannot look says nothing.
     try:
-        waiting = [f["wo"] for f in canary.open_notes_waiting(home)]
+        waiting = [f["wo"] for f in canary.open_notes_waiting(home) if own_order(f, orders)]
     except Exception:
         waiting = []
     if waiting:
@@ -614,7 +765,7 @@ def stop_state(home, canary, sprint=False, sid=""):
     reap = []
     try:
         reap = [f for f in canary.worktree_items(home) if f["kind"] == "worktree-reapable"
-                and f.get("has_worktree")]
+                and f.get("has_worktree") and own_order(f, orders)]
     except Exception:
         reap = []
     for f in reap:
@@ -680,7 +831,7 @@ def stop_output(payload):
     canary = _canary()
     if canary is None:
         return None
-    state = stop_state(home, canary, sprint, sid)
+    state = stop_state(home, canary, sprint, sid, sprint_orders() if sprint else frozenset())
     if state is None:
         return None
     key, text = state
@@ -727,6 +878,8 @@ def heartbeat_own(payload):
 def hook_command(stream):
     """The client-event entry point. ALWAYS returns 0; stdout carries the restore text or nothing."""
     try:
+        if end_orphan_session():              # a sprint whose driver is gone: the session ends here, before anything else runs
+            return 0
         # The client writes UTF-8; a Windows console stream decodes it with the locale codepage,
         # which garbles the role marker's separator. Read the bytes when the stream has them.
         raw = (stream.buffer.read().decode("utf-8-sig", errors="replace")

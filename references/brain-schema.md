@@ -22,14 +22,27 @@ shared vault.
 ## 1. The write test
 
 **The brain holds only what cannot be found in the code, git, CLAUDE.md or a work order:** why a decision was made,
-what was rejected and why, conventions that are not obvious, and traps. Before a page is written or extended, ask:
+what was rejected and why, conventions that are not obvious, and traps.
 
-1. Can this be found in a work order, the git log, the code or CLAUDE.md? If so, **do not write it** (a code comment
-   is the home of a fact about code; the order is the record of what an order decided).
-2. Is there already a page for it? If so, **update that page**; do not add a second.
+**Before writing a note anywhere: is it something to do?** Then it is a work-order (the open order that covers it,
+or a new one) or a loose end (`references/glossary.md` → *Loose end*), never a note.
 
-What fails the test: what was built (the code says), the history of events (git says), the order's own adjudication
-(the order says), a catalog of files or tools, a restatement of a reference doc. What passes: the reason a design won
+**Otherwise ask in order. The first "no" decides.**
+
+1. **Will it still be true and needed when this plan and this window are over?** No → a RESUME note (with its
+   *until*), or the order if it is that order's scope.
+2. **Is it missing from the code, git, CLAUDE.md and every work order?** No → do not write it (a code comment is the
+   home of a fact about code; the order is the record of what an order decided).
+3. **Would a future window get something wrong without it?** No → do not write it.
+
+All three yes → the brain; if a page already covers it, **update that page**, do not add a second. An owner
+instruction that holds from now on ("always", "never", a standing permission) → the brain's `standing-rules` page,
+never RESUME. **Unsure → a RESUME note with an *until***: it costs little to lose and is promoted at a checkpoint if
+it lasts.
+
+What fails the test: a temporary instruction (it governs this plan or window), what was built (the code says), the
+history of events (git says), the order's own adjudication (the order says), a catalog of files or tools, a
+restatement of a reference doc. What passes: the reason a design won
 over its rejected alternatives, the trap a later change would walk into, the operator's standing rule, a convention
 no single file shows.
 

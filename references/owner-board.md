@@ -1,7 +1,8 @@
 # Owner board
 
-Every gitos home carries a small local web page where the owner answers what the agent asks: the owner board,
-`<home>/board/`. A plan with several items, a send to an outside party, anything a tool takes with `claim()` and anything
+Every gitos home carries a small local web app where the owner sees the work and answers what the agent asks: the owner
+board, `<home>/board/`. It shows the ledger live (orders with their slices, sprints, decisions, loose ends), takes the
+owner's answers and actions, and a repo adds its own pages to it. A plan with several items, a send to an outside party, anything a tool takes with `claim()` and anything
 asked while the operator is away (a sprint stop, a question left for the next window) goes through it; a single question
 asked while the operator is in the window is answered in chat and recorded in the ledger the same turn. It is stdlib-only Python served on a loopback address (127.0.0.1 unless `board.json`
 says otherwise), its answers are files in the home, and any session finds it again after compaction, `/clear`, a new window or another account. A
@@ -15,7 +16,9 @@ workspace of several repos can share one board, the *Hub* below. The rules are s
 | `<home>/board/board.py` | the board: CLI, server and the module API (a copy of the engine's `assets/board/board.py`) | yes |
 | `<home>/board/board.json` | `port` and `board_id`, written once; optional `host`, `tabs`, and a hub's `routes` (`register-tab` adds a tab and its route) | yes |
 | `<home>/board-route.json` | a repo that uses a hub's board instead of its own (see *Hub*) | yes |
-| `<home>/board/local/<name>.html` | a repo's own board, one file per tab (optional; see *A repo's own boards*) | yes |
+| `<home>/board/ui/` | the engine's page code (`app.js`, `ui.js`, `store.js`, `ui.css` and the rest), copied from the engine's `assets/board/ui/`; an upgrade replaces it with `board.py` | yes |
+| `<home>/board/views/<name>.js`, `views/theme.css` | a repo's own views and look (optional; see *Repo views*) | yes |
+| `<home>/board/providers/<name>.py` | a repo's own data for its views (optional; see *Repo views*) | yes |
 | `<home>/board/data/` | cards, answers, notes, closes, the stored plan and draft bytes, the read mark | no (git-ignored) |
 | `<home>/board/inbox/`, `outbox/` | a hub's card requests from seats, and the answers mirrored back (see *Hub*) | no (git-ignored) |
 
@@ -24,7 +27,9 @@ built and walked to the first free one. Two pointers lead a fresh window to it: 
 block (`**Owner board:** python <home>/board/board.py ensure (http://127.0.0.1:<port>/); ...`) and the
 `## Owner board` section of `RESUME.md`. `scaffold.py` builds the board and both pointers; on an existing repo
 the same run is the upgrade step (`references/upgrade.md`). The canary's `board` category reports a pointer with
-no board (`board-missing`) and a board nothing points at (`board-pointer-missing`). <!-- rule:guide-canary-kinds --> <!-- rule:guide-pointers -->
+no board (`board-missing`), a board nothing points at (`board-pointer-missing`), a `board.py` with no `ui/` beside it
+(`board-ui-missing`, gating: re-run `scaffold.py`, which copies `ui/`) and a leftover `board/local/*.html` page
+(`board-legacy-page`, advisory: see *Migrating a page*). <!-- rule:guide-canary-kinds --> <!-- rule:guide-pointers -->
 
 ## The agent's side
 
@@ -39,6 +44,8 @@ python <home>/board/board.py answer-for ID [--tab T]  # the latest answer as JSO
 python <home>/board/board.py close ID OUTCOME [--tab T]
 python <home>/board/board.py notes [--tab T]          # the owner's notes; marks them read
 python <home>/board/board.py summary [--tab T]        # counts as JSON, read-only (the waiting view runs it)
+python <home>/board/board.py actions [--json]         # the owner's open actions on orders (see Owner actions); marks them read
+python <home>/board/board.py action-done ID [--rejected REASON]   # close one: applied to the ledger, or rejected with the reason the page shows
 python <home>/board/board.py register-tab TAB --repo PATH   # a hub: route a repo's tab here (see Hub)
 python <home>/board/board.py url | serve
 ```
@@ -85,16 +92,6 @@ In a named sprint's session (`GITOS_SPRINT=1`, `GITOS_SPRINT_ID` set), every com
 `GITOS_SPRINT_HOME`, not the worktree's copy of the data, so cards and approvals are the operator's real ones. With no
 board in that home, the copy's own board is used.
 
-### A repo's own boards
-
-`board.py` is the engine's and an upgrade replaces it, so it is never edited downstream. A repo that wants a view of
-its own (its plan page, a status page) puts one HTML file per board in `<home>/board/local/`: `local/<name>.html`,
-the name `a-z 0-9 -`, 1-32 characters. Each file is a tab named after it, after the card tabs; a file named like a card
-tab (`decisions.html`) shows above that tab's cards. Nothing is configured: the board lists the folder. Other files
-there are ignored. The page runs as written inside a sandboxed frame: its scripts run, but it has no access to the
-board's token or API and it makes no network fetches (inline code and `https:` scripts, styles, fonts and images load).
-The folder is committed to git and no upgrade or `scaffold.py` run reads or writes it.
-
 ### The module API, for a tool that acts on an approval
 
 Load `board.py` by its path (`importlib.util.spec_from_file_location`), never through `sys.path`, then:
@@ -129,7 +126,7 @@ An edit of the card voids its answer, so the owner can answer the new card. <!--
 
 ## The owner's side
 
-Tabs across the top; on each tab, Needs you / Answered / Closed. Each card shows what it asks in plain words, its
+Cards are answered on the **Decisions** view (*The page*), which has a tab for each card tab; on each tab, Needs you / Answered / Closed. Each card shows what it asks in plain words, its
 details, a folded Technical details, the options, and a note box. One "Anything else for Claude" note sits at the
 bottom. Pressing an option saves it at once, with the note in the box. **Save note** with no option is a note-only answer
 (`option: null`): it counts as answered and is never a go. Cards voided by an edit come first under Needs you. Copy
@@ -141,6 +138,153 @@ validation, a torn line) are listed at the top, never skipped silently. <!-- rul
 A card's hash is the full SHA-256 of its content, recomputed on every read. An answer binds the hash it was given
 against, so a card edited after its answer **voids** that answer: the card goes back under Needs you with "the card
 changed after your answer", `approved()` refuses it and Copy skips it.
+
+## The page
+
+The board page is an app under `<home>/board/ui/`: a sidebar (the engine's views, then the repo's own), the order detail
+as a drawer over the current view, a command palette (Ctrl or Cmd-K) and shortcuts (`?` lists them). Addresses are
+hashes, so a link and the back button work: `#/work/list`, `#/work/board`, `#/work/graph`, `#/sprints`, `#/decisions`,
+`#/loose-ends`, `#/order/153` (the drawer) and `#/repo/<name>` (a repo's view). It runs in light and dark, down to a phone
+width, and everything is reachable from the keyboard.
+
+- **Work**: the **list** (sort, filter by severity and status, search; slices done of total per order), the **board**
+  (columns in progress, awaiting accept, can start, waiting, held, parked; an order card shows its slices) and the
+  **graph** (every open and parked order with its slices and their `depends_on` edges; pan, zoom, focus an order to
+  light what it waits on and what waits on it). An order with `landed:` in its front matter, or with every slice landed, is
+  *awaiting accept*, never *can start*.
+- **Sprints**: each sprint's state, orders, last activity and its Stop card.
+- **Decisions**: open cards first, answerable in place; then answered cards with their answer and outcome; then the brain's
+  decision records (title, description, date, status, superseded-by, from the page's front matter, never its body).
+- **Loose ends**: the count and the rows.
+
+The page is current without a reload. Its connection indicator says live or reconnecting, and a change in the ledger, a
+slice landing, a sprint starting or a new card shows within a second or two, as a diff: the changed row or node animates,
+and scroll position, an open drawer and the filters stay (a filter is kept in the address).
+
+**Endpoints** (every GET answers only to the board's own `Host`, as in *Security*):
+
+| Request | What |
+|---|---|
+| `GET /` | the page (the token and a script nonce are put into it) |
+| `GET /ui/<file>` | the engine's page code and styles |
+| `GET /views/<file>` | a repo's own view (`<name>.js`) or `theme.css`, nothing else |
+| `GET /api/state` | the whole state as JSON |
+| `GET /api/events` | `text/event-stream`: a `state` event (the whole state, its version as the event id) when anything changes, a comment every 15 s of quiet. `EventSource` reconnects by itself and sends `Last-Event-ID`. At most 16 streams are open; the 17th gets 503 |
+| `GET /api/identity` | the `board_id` and home path, for `ensure` |
+| `POST /api/answer`, `/api/action`, `/api/note` | the owner's answer, action and note, with the checks in *Security* |
+
+**The state** is derived data only, built by the engine's own readers (`ledger_index.py`, `sprint_log.py`, `loose_ends.py`
+and the board's card code): orders (id, title, severity, status, parked trigger, `landed`, slices with state and
+`depends_on`, a `hash` of the entry), the links between orders, sprints, loose ends, cards and notes, the decision records'
+metadata, the canary's summary line, the owner's actions, and for a repo its `views`, `theme` and `ext` (provider output).
+Never a raw file, a brain page body or an intake body. A reader that fails is an entry in `errors`, and the rest of the state
+is still served. One watcher thread notices changes by file times and builds the state once per change for every connection.
+
+## Owner actions
+
+From an order's drawer, the menu or the palette the owner can: reprioritize (severity), park with a trigger, unpark, hold,
+release, approve for dispatch and add a note. Each opens the board's own confirm, which shows the action and the state the
+owner saw. **An action is a request.** `POST /api/action` records one line in `data/actions.jsonl` (id, order, kind, value,
+the state version and the order's `hash` the owner saw, the time); a record whose order hash no longer matches is marked
+`stale` and is still recorded, for the orchestrator to judge. **The board never edits a work-order file.** The order shows the
+action as pending until the orchestrator closes it; then the page says "applied" or shows the reason it was rejected.
+
+The orchestrator's side is one rule, three commands:
+
+1. `board.py ensure` and `summary` count new actions (`new_actions`: open and not yet read), and the waiting view lists them.
+2. `board.py actions [--json]` lists the open actions, each with the order, the kind, the value and whether it is stale, and
+   marks them read.
+3. Apply each to the ledger as the orchestrator does any ledger change (severity in the order's front matter, a parked
+   order's trigger, and so on), commit it, then close it: `board.py action-done ID` when applied, `board.py action-done ID
+   --rejected "<reason>"` when not (a stale one the order no longer fits, or one that contradicts the ledger). `hold`,
+   `release` and `approve` have no ledger field: the board reads them from the actions closed as applied (a later release or
+   park undoes a hold), so close those as applied once you will honour them.
+
+A closed action never reopens. A note is read before the next step on its order.
+
+## Repo views
+
+A repo adds pages to the board, with its own data and look, by putting files under `<home>/board/` (committed; an upgrade
+and `scaffold.py` never touch them). Nothing is configured: the board lists the folders.
+
+- **A view**: `views/<name>.js` (the name is `a-z 0-9 -`, 1-32 characters), a native ES module. It exports `meta` and
+  registers one custom element named `gb-repo-<name>`. The sidebar lists it under *This repo* and `#/repo/<name>` mounts it.
+  There is no frame: it runs in the page like an engine view.
+- **Data**: `providers/<name>.py`, a script for what the state does not hold. The board runs it in its own `python -I -B -X
+  utf8` process (argument 1 and the working directory are the home) whenever the home changes, at most once every 5 s, with a
+  10 s limit. It prints one JSON value (at most 256 KB, no NaN or Infinity) and exits 0; the value appears as
+  `state.ext.<name>`. A provider that crashes, hangs, exits non-zero or prints anything else is an entry in `errors` and the
+  board keeps serving, with that provider's last good output still in `ext`. A hung provider is killed with the processes it
+  started. The output goes into the state as it is: print nothing the owner should not see.
+- **Look**: `views/theme.css`, CSS only, loaded after the engine's styles in a `theme` layer, so a rule there wins without a
+  selector contest. It follows the file live. The engine's design tokens are CSS custom properties (`--accent`, the radii,
+  the colors; dark mode is `:root[data-theme="dark"]`).
+
+**The module.** A view imports only the engine's modules, `/ui/ui.js`, `/ui/store.js` and `/ui/actions.js` (and `/ui/graph.js`
+for `<gb-graph>`):
+
+```js
+import { h, setText, setAttr, reconcile } from "/ui/ui.js";
+import { store } from "/ui/store.js";
+import { requestAction } from "/ui/actions.js";
+
+export const meta = { title: "This week", icon: "calendar", position: 10 };   // title 1-40 chars; icon a kit icon name (else a dot); position orders the sidebar
+class RepoThisWeek extends HTMLElement { /* connectedCallback: build once, store.subscribe(() => this.render()) */ }
+customElements.define("gb-repo-this-week", RepoThisWeek);
+```
+
+- **The store.** `store.state` is the live state (`state.orders`, `state.sprints`, `state.cards`, `state.records`,
+  `state.looseEnds`, `state.ext.<provider>`, ...). `store.orders()` lists the open and parked orders as the views read them
+  (`id`, `title`, `sev`, `status` of `active`, `awaiting`, `ready`, `waiting`, `held` or `parked`, `slices` with their
+  `state` and `dependsOn`, `done`, `total`, `waitsOn`, `blocks`, `trigger`, `pending`); `store.order(id)` finds one.
+  `store.subscribe(fn)` calls `fn(store, changes)` on every new state; `changes.has("o:153")`, `"s:153/S2"`, `"p:<sprint>"`,
+  `"c:<card>"` and `"x:<provider>"` say what moved, so a view patches only that. It returns an unsubscribe function: call it
+  in `disconnectedCallback`. `state.ext.<name>` is undefined until the provider's first good run: handle that.
+- **The kit** (`/ui/ui.js`): the elements `<gb-badge state>`, `<gb-sev level>`, `<gb-strip>` (`set(states, text)`),
+  `<gb-stat label value hint>`, `<gb-empty icon title desc>`, `<gb-skeleton>`, `<gb-segmented>`, `<gb-order-card>` (set its
+  `order` property to a store order; clicking it opens the order's drawer) and `<gb-table>` (`setColumns`, `rows`, a
+  `row-open` event); `<gb-graph>` comes from `/ui/graph.js`. The helpers: `h(tag, props, ...kids)` builds elements,
+  `setText` and `setAttr` change a node only when the value differs, `reconcile(parent, items, {key, create, update, move})`
+  keeps keyed children in place and animates entering and leaving, and `toast`, `openMenu`, `confirmDialog` and
+  `viewTransition` are there too. Update in place; do not rebuild the view with `innerHTML` on each state, or it flashes and
+  loses scroll, focus and open menus. Write text with `textContent` or `h`, never `innerHTML`: titles come from files.
+- **Actions.** A view asks for an owner action only through `requestAction(kind, order)` of `/ui/actions.js`, with `kind` one
+  of `severity`, `park`, `unpark`, `hold`, `release`, `approve`, `note`: the board's own confirm opens and the owner decides.
+  **A view never posts an answer or an action itself.** The store's `post` is reachable from any same-origin code and the
+  kit does not stop a view from using it; the contract does, and a view that breaks it is a bug in the repo.
+- A view that throws or fails to load shows an error panel in its place; the shell keeps working. A view module is loaded once
+  per page load, so a changed `<name>.js` shows after a reload (the page says so); `theme.css` changes live.
+
+**The worked example** is `assets/board/examples/this-week/` in the engine: `views/this-week.js` (the open orders the ledger
+touched this week, with an *Add a note* action on each card), `providers/week.py` (the data it reads: the orders whose file
+or slices changed in the last 7 days) and `views/theme.css` (every rule commented out). Copy `views/this-week.js` and
+`views/theme.css` into `<home>/board/views/` and `providers/week.py` into `<home>/board/providers/`; "This week" appears in
+the sidebar, updates as orders change and sends a note through the confirm. A useful view is a few dozen lines like it: read
+the state or a provider's `ext`, show it with the kit, ask for an action through `requestAction`.
+
+## Migrating a page
+
+The engine no longer serves `<home>/board/local/<name>.html` (the sandboxed page of earlier versions): it shows nowhere, and
+the canary reports each leftover as `board-legacy-page`. The engine ships no converter; the repo's orchestrator rebuilds
+each page as a native view, as its own work-order, in these steps:
+
+1. **Read what the page shows and where its data comes from.** Open the old file. List each thing it displays and its
+   source: the ledger (work-orders, slices, sprints, cards: already in the state), a file the page embeds or reads, or
+   something an outside job (a scheduled task that rebuilds the page) computes.
+2. **Move the data source into a provider** when it is not in the state already: a `providers/<name>.py` that reads the file
+   or runs the computation and prints it as JSON. A job whose only purpose was to rebuild the static page goes away.
+3. **Rebuild the page as `views/<name>.js`** on the kit (*Repo views*): `meta`, one `gb-repo-<name>` element, `store` and
+   the provider's `state.ext.<name>`, kit components in place of hand-written markup, `requestAction` in place of any button
+   that answered or acted. Take the layout from the old page, the data from the state; move a style that mattered into
+   `views/theme.css`.
+4. **Open it on the board and check it against the old page**: each thing the old page showed is there, it changes when the
+   ledger changes (touch a work-order and watch it), and a provider that fails shows as an error with the page still up.
+5. **Delete the old page** `board/local/<name>.html` and any job or script that existed only to rebuild it.
+6. **Commit** the view, the provider, the theme and the deletions.
+
+Write this as one work-order in the repo, with the page list from `ls <home>/board/local/` as its scope; each page is a
+slice. The sprint driver's own `local/sprint*.html` are not a repo's pages: the board shows no sprint page at all, and the
+canary leaves them out.
 
 ## Hub
 
@@ -181,6 +325,21 @@ Creating a card never answers it. The seat reads answers from `outbox/<tab>/<car
 mirrors once a minute and only an answer at least a minute old, so the owner can still change a fresh answer; a changed
 or voided card loses its file. `list` and `answer-for` never lock a seat's card, and `approved()` never approves one.
 
+**The hub page.** The hub's own page has an *All repos* view: one row per routed repo with counts only (open, in progress,
+waiting, parked, running sprints, cards that need you). A repo whose home cannot be read is an error row with the reason, and
+a repo whose state is not built yet shows as "reading"; the other rows are unaffected. A row opens that repo's tab, at
+`#/r/<tab>/<view>`. A repo tab is built from that repo's home alone (its orders, sprints, loose ends, decision records and
+engine version): it carries none of the hub's own views, providers, theme or `ext`, and its state is read with `?tab=<tab>`
+(a tab that is not routed is refused). Cards and notes are board-wide, so a repo tab still lists every tab's cards; there is
+one owner and one board. The page keeps one stream per open tab view, and the 16-stream cap counts every stream of every
+tab. One slow or unreadable repo never holds up the hub or the other tabs.
+
+**Owner actions on a hub.** An action the owner takes in a repo's tab is recorded under that tab in the hub's `data/`, and
+only that repo's orchestrator reads it: `board.py actions --tab <tab>` and `board.py action-done ID --tab <tab>` (an id from
+another tab is "no action"). Run on a hub's home without `--tab`, both refuse with a usage error that names `--tab`; the hub's
+own base tab is named explicitly. An action's `stale` and `hash` are of the order in that repo's state, so the same order
+number in two repos is two orders.
+
 **Moving a repo that has a board to a hub:** `references/upgrade.md` step 4s.
 
 ## The loop
@@ -190,7 +349,7 @@ or voided card loses its file. `list` and `answer-for` never lock a seat's card,
 2. **One card per ask.** Re-read the ledger item before writing its card. Write it for the owner, not the code:
    no ids without words, name what each option does and where. No secrets (a card that needs a credential asks
    for names only), no foreign text (a federation proposal body is never put on a card).
-3. **Record before acting.** Write the answer into the ledger (the work-order, a loose-end row, a decision page)
+3. **Record before acting.** Write the answer into the ledger (the work-order, a loose-end row, or a decision page that passes the brain's write test)
    before acting on it. A standing rule goes to the brain the same turn.
 4. **Close with the outcome.** `close ID OUTCOME` when the card is acted on; a tool consumes its approval as it
    uses it. Record the same outcome in the ledger.
@@ -212,12 +371,21 @@ The server binds one loopback address (`host` in `board.json`: 127.0.0.1, or any
 else) and answers only to `Host: <host>:<port>` (and `localhost:<port>` when the host is 127.0.0.1). A POST needs
 the exact Origin (`http://<host>:<port>`), the page token minted when the server started, `Sec-Fetch-Site: same-origin` and
 `Sec-Fetch-Mode: cors` (what a browser's own fetch sends, and a script does not unless it forges them); each answer
-records the user agent and the Sec-Fetch values. Bodies are JSON objects under 64 KB; the handler times out; every
-field is escaped on the page, which runs under a CSP with a per-response script nonce. Card files are validated
+records the user agent and the Sec-Fetch values. Bodies are JSON objects under 64 KB; the handler times out (except the
+event stream, which is held open and capped at 16); every field is escaped on the page, which runs under a CSP with a
+per-response script nonce, and a request for `/api/events` is checked for `Host` like any other. Card files are validated
 (id equals the file name, no duplicates, ISO times) and so is every line of every `.jsonl` (a card id, a full
 SHA-256 hash); a bad line is reported, never raised. Writes go only under `data/`, as single ASCII appends under the
 lock, each after a newline when the file's last line was torn. The page posts the hash of the card it rendered, so an
 answer always names the content the owner saw. <!-- rule:guide-security-checks -->
+
+**What a repo view is.** A repo's view runs in the board's page, as repo code: trusted like the repo's providers and any
+tool in its home. What still holds: only committed files under `views/` run (the CSP allows scripts from the board's own
+origin and nothing inline or remote, and a request outside `views/` and `ui/` finds nothing), so another local page or
+program cannot inject a view; the contract forbids a view posting an answer or an action itself (*Repo views*), and a view
+could still reach the page token, since nothing in the browser stops it; every answer binds the hash of the card the owner
+saw and every action the hash of the order. A provider is repo code the board runs with the user's rights, with a time and
+size limit, and the board kills what it started. This is the honest limit below, not a stronger promise.
 
 **The waiting view runs the home's `board.py`** (`summary`) in its own `python -I` process with a timeout and reads
 its JSON, so a crash, a hang or forged output from that file stays out of the view. It is not a sandbox: that

@@ -109,6 +109,16 @@ def codex_catalog(payload):
     return validate_catalog({"source": "codex model/list; advertised, entitlement unverified", "models": models})
 
 
+def tier_choices(mapping, tier):
+    """The choice names a tier lists, the opener first. A tier is one name or a non-empty list of distinct names."""
+    value = mapping["tiers"][tier]
+    names = [value] if isinstance(value, str) else value
+    require(isinstance(names, list) and names and all(isinstance(n, str) and n for n in names)
+            and len(set(names)) == len(names),
+            f"{tier}: a tier names a choice or a non-empty list of distinct choices")
+    return list(names)
+
+
 def validate_mapping(mapping):
     require(isinstance(mapping, dict), "Harness mapping must be an object")
     validate_catalog(mapping.get("catalog"))
@@ -130,17 +140,24 @@ def validate_mapping(mapping):
     require(isinstance(ceiling, str) and ceiling in choices, "ceiling must name a choice")
     tiers = mapping.get("tiers")
     require(isinstance(tiers, dict) and set(tiers) == set(TIERS), "tiers must contain light, standard, deep")
-    for tier, name in tiers.items():
-        require(isinstance(name, str) and name in choices, f"{tier}: unknown choice")
-        # The rule, judged against the ceiling as the recorded lead pair. `select` judges the same
-        # rule again against the lead's ACTUAL effort, which may differ from the recorded one.
-        refusal = worker_refusal(choices[name], choices[ceiling]["model"], choices[ceiling]["effort"],
-                                 choices[ceiling],
-                                 has_no_effort_levels(mapping["catalog"]["models"][choices[name]["model"]]))
-        require(refusal is None, f"{tier}: {refusal}")
-        require(choices[name]["rank"] <= choices[ceiling]["rank"], f"{tier}: choice exceeds ceiling")
-    ranks = [choices[tiers[t]]["rank"] for t in TIERS]
-    require(ranks == sorted(ranks), "Tier ranks must be nondecreasing; equal ranks are allowed")
+    seen = {}
+    for tier in TIERS:
+        names = tier_choices(mapping, tier)
+        for name in names:
+            require(name in choices, f"{tier}: unknown choice")
+            # Tiers that each name one choice may share it (as before); a listed choice sits in one tier.
+            prior = seen.setdefault(name, tier)
+            require(prior == tier or not (isinstance(tiers[tier], list) or isinstance(tiers[prior], list)),
+                    f"{name}: a choice in a tier's list may sit in only one tier")
+            # The rule, judged against the ceiling as the recorded lead pair. `select` judges the same
+            # rule again against the lead's ACTUAL effort, which may differ from the recorded one.
+            refusal = worker_refusal(choices[name], choices[ceiling]["model"], choices[ceiling]["effort"],
+                                     choices[ceiling],
+                                     has_no_effort_levels(mapping["catalog"]["models"][choices[name]["model"]]))
+            require(refusal is None, f"{tier}: {refusal}")
+            require(choices[name]["rank"] <= choices[ceiling]["rank"], f"{tier}: choice exceeds ceiling")
+    ranks = [choices[tier_choices(mapping, t)[0]]["rank"] for t in TIERS]
+    require(ranks == sorted(ranks), "Tier ranks must be nondecreasing (judged on each tier's first choice); equal ranks are allowed")
     return mapping
 
 
@@ -912,7 +929,7 @@ def compare_observations(initial, current):
 
 
 def select(config, harness, tier="standard", lead=None, lead_effort=None, runtime=None, required=(),
-           session=None, session_id=None, model_source=None, effort_source=None):
+           session=None, session_id=None, model_source=None, effort_source=None, choice_name=None):
     """Validate a proposed dispatch. Does not observe execution or select task tier."""
     validate_config(config)
     result = {"status": "disabled", "reason": "Optimization is off; use existing dispatch behavior"}
@@ -954,7 +971,12 @@ def select(config, harness, tier="standard", lead=None, lead_effort=None, runtim
     # the rule below is judged against the lead's actual effort every time.
     if not same_model(lead, ceiling["model"]):
         return stop("Lead changed; revalidate the mapping and ceiling")
-    choice = mapping["choices"][mapping["tiers"][tier]]
+    listed = tier_choices(mapping, tier)
+    if choice_name is not None and choice_name not in listed:
+        return stop(f"Choice {choice_name} is not in tier {tier}; the tier lists: {', '.join(listed)}")
+    if choice_name is not None or len(listed) > 1:
+        result["choice"] = choice_name or listed[0]
+    choice = mapping["choices"][choice_name or listed[0]]
     result["requested"] = {"model": choice["model"], "effort": choice["effort"]}
     # A model with no effort levels has no effort to control or evidence: the route is the
     # model alone, and demanding effort evidence for it would bump every such light route up a
@@ -1018,6 +1040,7 @@ def main(argv=None):
     parser.add_argument("--harness", choices=HARNESSES)
     parser.add_argument("--file", help="Harness mapping JSON, or Codex model/list pages for catalog")
     parser.add_argument("--tier", choices=TIERS, default="standard")
+    parser.add_argument("--choice", help="A choice the tier lists; default is the tier's first")
     parser.add_argument("--lead")
     parser.add_argument("--lead-effort")
     parser.add_argument("--session", help="Explicit identity of this active GitOS session")
@@ -1107,7 +1130,7 @@ def main(argv=None):
                 runtime = read_json(args.runtime) if config["enabled"] and args.runtime else None
                 session = load_session(home) if config["enabled"] else None
                 output = select(config, args.harness, args.tier, args.lead, args.lead_effort, runtime, args.required,
-                                session, args.session, args.model_source, args.effort_source)
+                                session, args.session, args.model_source, args.effort_source, args.choice)
                 if "session" in output:
                     save_json(home, SESSION_FILENAME, output["session"])
             else:

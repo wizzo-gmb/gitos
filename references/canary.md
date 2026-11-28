@@ -1,4 +1,4 @@
-# Canary — the state canary, the worktree lifecycle, descoping and the durable anchor
+# Canary — the state canary, the worktree lifecycle, advisory findings and the durable anchor
 
 The router (`SKILL.md` → *Canary*) holds the two things every reply needs: the role marker and the slippage
 protocol. The rest of the always-on drift early-warning lives here, moved from the router unchanged. Two cheap
@@ -37,19 +37,14 @@ worktree: `new NNN` makes `<parent>/<repo name>.worktrees/wo-NNN` (outside the r
 canary reports `worktree-reapable` and `worktree-abandoned` leftovers; it never deletes.
 The `loose-ends` category (report-only) flags a parked work-order with no `trigger:`, a list that is no longer rare (advisory `loose-ends-last-resort`: more than 3 open rows or one older than 14 days), resolved orders whose notes were never adjudicated, and a malformed, oversized or stale loose-ends list. That list (`<home>/loose-ends.md`, created by the first `scripts/loose_ends.py add`) holds the loose ends, the last resort for a finding that is out of an order's scope; the drain ("drain the loose ends") empties it, moving each proposed item to the pile (`<home>/drain/pending/`), and nothing leaves the list or the pile without the orchestrator's or the operator's decision. A pending proposal undecided for 14 days, or more than 20 pending, is `drain-stale`. An item accepted into an order is a `proposed` slice with `origin:` naming it (`drain accept ID --work-order NNN --slice NAME`); a resolved order still holding an old open carried box is `carried-open`.
 
-## Category descoping
+## Advisory findings, and no descoping
 
-**The gate binds on *actionable* findings — category descoping.** The canary encodes the
-engine's own conventions as its defaults, and a healthy repo may legitimately differ. A
-convention mismatch must never freeze a healthy ledger, so an operator (or a repo's BRIDGE)
-may **descope a canary category** for that repo — recording the
-deviation and its reason where the deviation lives. **A descoped category still reports; it
-does not gate.** The finding stays visible (no false-CLEAN, nothing is silenced) while
-resolution proceeds. Descoping is a local, recorded workaround for a convention the engine
-does not yet tolerate — not a way to hide a real defect: descope the *category*, never the
-individual finding, and the right durable fix is an upstream work-order that teaches the
-canary the shape. A descoped category is a standing debt — re-scope it once the engine
-tolerates the shape.
+**There is no way to descope a canary category.** The canary has no switch, setting or file that turns a category off
+for a repo or a sprint's gate. What it does have is the advisory: a finding flagged `"advisory": true` is reported, in the
+human report and in `--json`, but is not counted and does not change the exit code. Which findings are advisory is fixed in
+`canary.py`, per kind; a repo cannot move a finding between gating and advisory. A gating finding stops resolution and a
+sprint's `land` until it is fixed. If a convention of the engine does not fit a healthy repo, file a work-order that teaches
+the canary the shape.
 
 ## Honesty clause
 

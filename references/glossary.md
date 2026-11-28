@@ -46,7 +46,7 @@ not the thesis's verb "hand off".
 The live session pointer: what is serving or running and how to stop it, what is in flight and how to reattach,
 who is waited on, the next three steps, pointers to the standing rules. Replaced wholesale at every checkpoint
 and deletable without loss: a line that would still be true in a fresh clone belongs in the brain, the ledger or
-the handoff, and RESUME only points at it.
+the handoff, and RESUME only points at it. Its short-term notes each end in an *until* and are flushed at every checkpoint.
 
 **Standing rule**
 An operator rule, written to the brain (`concepts/standing-rules.md`) in the turn it is given; RESUME points at it.
@@ -118,8 +118,8 @@ The orchestrator handing one work-order or slice to an implementer, with its sco
 model optimization on, its tier.
 
 **Helper**
-The cheapest-tier agent that answers a drain export when no local model is available (down, off or not configured):
-the drain is the local model's or a helper's, never the orchestrator's by hand. Not an implementer.
+The cheapest-tier agent that answers a drain export, the default answerer (a repo with an opt-in local model uses that
+instead while it is up): the drain is the helper's or the local model's, never the orchestrator's by hand. Not an implementer.
 
 **Lens**
 An operator-imported domain technique pack (`<home>/agents/`, or the global library `<skill>/agents/`) that a role
@@ -278,8 +278,8 @@ closed, it leaves the list: not on the list means routed. The canary says (advis
 the list holds more than 3 open rows or one older than 14 days.
 
 **Drain**
-The pass that turns `new` rows into proposals (`system_one.py drain` on the local model, or a dispatched helper
-when it is down, off or not configured; never the orchestrator by hand): after an order
+The pass that turns `new` rows into proposals (a dispatched helper by default, or `system_one.py drain` on the local model
+where a repo runs one; never the orchestrator by hand): after an order
 resolves, at each checkpoint, on `loose-ends-stale`, or when the operator asks ("drain the loose ends").
 
 **Pile** (`<home>/drain/pending/`)
@@ -385,7 +385,7 @@ One of the nine classes of defect the diagnostic scans for (`references/anomaly-
 
 **Canary**
 The engine's two drift sentinels. The *state canary* (`canary.py`) checks the home's state: it reports at bootstrap
-and gates at resolution, by category, and a descoped category still reports but no longer gates. The *context
+and gates at resolution; an advisory finding still reports but does not gate (there is no per-repo descoping). The *context
 canary* is the role marker. The canary is the monitor; the operator's glance is the backstop. A finding is named `<concept>-<state>`, in
 hyphens (`order-oversized`, `lens-registry-missing`): `missing` is absent, `oversized` is over its limit,
 `unparseable` is read but malformed, `unreadable` could not be read at all, `stale` has gone out of date.
@@ -395,10 +395,10 @@ Claude Code hooks the engine installs: `SessionStart` and `Stop` (`compact_resto
 (`slice_guard.py`, `dispatch_guard.py`). A guardrail, not a proof: hooks can be switched off.
 
 **System One**
-An optional local decision model that drains the loose-ends list and does nothing else; its *uses* are the
+A judgment step, answered by a helper by default or by an opt-in local decision model, that drains the loose-ends list and does nothing else; its *uses* are the
 questions it answers (`loose-end-state`, `loose-end-join`, `loose-end-bundle`, `loose-end-pick`, `probe`). A question
 has a type: `noul` (yes/no; the name is code's), `choice` or `score`; the endpoint's answer comes in one of two
-shapes, *typed* or *keyed*. Down is a normal state.
+shapes, *typed* or *keyed*. A local model being down is a normal state; the helper drains instead.
 
 **Federation**
 Opt-in, machine-local discovery between gitos repos (`<home>/federation.json`). A *tenant* is one repo's record in

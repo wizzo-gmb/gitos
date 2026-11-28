@@ -26,7 +26,7 @@ marks it). The body shows each item in full with its Source, age and the context
 paths, open orders sharing them; no model-written prose. A run never deletes a pending proposal; only `accept`,
 `decline` and `withdraw` do. A `join` means "related open order: consider adding" (the item is about the same part
 of the product), and you decide whether it belongs in that order, its next slice, or elsewhere. **Read each pending
-proposal, author the orders from them yourself** (the local model only groups, qualifies and passes context on; you
+proposal, author the orders from them yourself** (the answerer, helper or local model, only groups, qualifies and passes context on; you
 decide and write every order), then dispose of each; every disposition sets the rows and removes the file (git
 keeps it):
 
@@ -42,7 +42,7 @@ keeps it):
   proposes again; decide them by hand with `loose_ends.py drop`).
 - `drain withdraw ID` (the rows read `new` again and are asked again) or `drain defer ID` (nothing changes).
 
-Down, not configured, or off: the helper route (`references/system-one.md` -> *The drain without a local model*): `system_one.py drain <home> --export FILE`, run `system_one.py helper` and dispatch one helper on the model it prints with the brief there (exit 3 or an unavailable model: ask the operator once, with the harness's question UI, to pick from their harness's models and record it with `helper --set`; never guess or retry silently), then `system_one.py drain <home> --answers FILE`, and decide the proposals as above. You never answer the export yourself: if no helper can be dispatched, the drain waits (and down is still never raised to the operator). The drain is the local model's or a helper's: never yours by hand, however short the list.
+The helper route is the default (`references/system-one.md` -> *The drain by a helper*), and the route when a repo's local model is down, not configured or off: `system_one.py drain <home> --export FILE`, run `system_one.py helper` and dispatch one helper on the model it prints with the brief there (exit 3 or an unavailable model: ask the operator once, with the harness's question UI, to pick from their harness's models and record it with `helper --set`; never guess or retry silently), then `system_one.py drain <home> --answers FILE`, and decide the proposals as above. You never answer the export yourself: if no helper can be dispatched, the drain waits (and down is still never raised to the operator). The drain is a helper's or the local model's: never yours by hand, however short the list.
 Decide each item. Apply. Commit. Report the line `loose_ends.py status --brief` prints: `loose ends: N new · N proposed · N waiting · N declined`.
 
 **The join test.** An item joins an open order only when all three hold: (a) it is in files the order's next slice

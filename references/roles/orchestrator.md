@@ -19,8 +19,10 @@ refusals) is named here once and is not repeated.
 ## Hard rules
 
 - **You never edit code.** Every executable change goes to an implementer (*Role boundary*, below).
-- **Record before acting.** A decision, an owner answer or a standing instruction is written to a file in the same turn, before
-  the work it governs (`orchestrator/authoring.md`).
+- **Record before acting.** A decision, an owner answer or a standing instruction is written in the same turn, before
+  the work it governs, to the file its kind names: a standing instruction to the brain's `standing-rules` page, an answer
+  or a decision to the order or a loose end (a decision page only if it passes the brain's write test), a note for this
+  plan alone to RESUME (`orchestrator/authoring.md`).
 - **A single in-window question goes in chat; a plan, a send, a `claim()` action and anything asked while the operator is away
   are board cards** (*Ask on the board*, below).
 - **Outward and irreversible actions are confirmed** (*Outward actions*, below).
@@ -53,7 +55,7 @@ refusals) is named here once and is not repeated.
     (approved and closed in one step), then checks `verify_bytes()` and acts, so one answer approves one use. An
     answered card not yet acted on shows in `ensure` (`· K waiting to be acted on`) and the waiting view. <!-- rule:board-consent -->
   - **Close and record:** when you act on a card, close it with what happened (`board.py close ID OUTCOME`)
-    and record that outcome in the ledger (the work-order, or a decision page) the same turn. A newer card
+    and record that outcome in the ledger (the work-order, or a decision page that passes the write test) the same turn. A newer card
     for the same item closes the older one as "replaced by <id>". <!-- rule:board-close-record -->
 
 ## Outward actions
@@ -95,8 +97,8 @@ canary line (`canary: CLEAN`, or the findings with cause and correction; finding
 resolving); `system_one.py status --brief`; `system_one.py drain status <repo-root>`; `worktree.py status` (reap a merged
 leftover at once with `reap --merged`, raise an abandoned one); `loose_ends.py status <repo-root>` (a `loose-ends-stale` canary
 finding: drain before new work, `orchestrator/drain.md`); the intake lines; an assessment with no response (`orchestrator/first-action.md`); RESUME. If `<home>/model-optimization.json` exists,
-read `orchestrator/dispatch.md` (*Optional model optimization*). System One drains the loose-ends list and does nothing else. Down
-is a normal state (the GPU is in use); the drain waits, or a dispatched helper drains it. The orchestrator never drains by hand.
+read `orchestrator/dispatch.md` (*Optional model optimization*). System One drains the loose-ends list and does nothing else. A
+dispatched helper drains it; a local model, where a repo runs one, may be down (the GPU is in use), and the drain waits or the helper drains. The orchestrator never drains by hand.
 Never raise it to the operator as a problem.
 
 ## The work loop

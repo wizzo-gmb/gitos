@@ -1,19 +1,20 @@
-# System One: an optional local decision model
+# System One: a helper by default, an optional local model
 
-> **System One drains the loose-ends list and does nothing else. Down is a normal state (the GPU is in use); the
-> drain waits, or a dispatched helper drains it; the orchestrator never drains by hand.
-> Never raise it to the operator as a problem.**
+> **System One drains the loose-ends list and does nothing else. A dispatched helper drains it; a local model, where a
+> repo runs one, may be down (the GPU is in use), and then the drain waits or the helper drains. The orchestrator never
+> drains by hand. Never raise it to the operator as a problem.**
 
 The loose-ends drain makes many small, repeated judgments (an item's state, which open order it joins, which items bundle).
-**System One** lets the drain ask a small local model a typed question instead of spending a
-pass of the reasoning model. Implemented by `scripts/system_one.py` (client, cascade, log, CLI) and
+**System One** lets the drain ask a typed question of a cheap answerer instead of spending a
+pass of the reasoning model. The answerer is a helper dispatched on the cheapest tier (*The drain by a helper*, the
+default in every repo); a small local model is an opt-in backend that replaces the helper where a repo runs one. Implemented by `scripts/system_one.py` (client, cascade, log, CLI) and
 `scripts/system_one_questions.py` (the single registry of question wording and decision tables).
-**Opt-in per repo, invisible when off:** with no machine config (or a repo that has not chosen) every function reports off, no file is created, no
-network call is made and the canary prints nothing new.
+**The local model is opt-in per repo, invisible when off:** with no machine config (or a repo that has not chosen) the server functions report off, no file is created, no
+network call is made and the canary prints nothing new; the helper route needs none of that.
 
 ## The cascade
 
-code rules -> **local decision model** -> the reasoning model -> the operator. The model answers small
+code rules -> **the answerer** (a helper by default, the local model where a repo runs one) -> the reasoning model -> the operator. The model answers small
 typed questions (`noul`, the yes/no type's name in code; `choice`; `score`); a **table in code** decides. `decide(use, item, state,
 second_state=None)` asks the use's questions, settles each probability (`yes` above 0.7, `no` below 0.3,
 otherwise `unsure`), applies the table, and on any `unsure` runs **one** second pass (the caller's
@@ -30,13 +31,13 @@ no engine script applies it. Writing callers guard with `require_reversible(resu
 ## What System One is for
 
 One job: the loose-ends drain (`system_one.py drain`), which runs between orders on many small items that no pass is
-holding, and a cheap local model reads them well. **Everything else stays with the reasoning model**: the checkpoint
+holding, and a cheap answerer reads them well. **Everything else stays with the reasoning model**: the checkpoint
 read, intake, board cards, log reading, brain duplicates, implementer notes, scoring a work-order, deciding which
 lens applies and judging a hunk are the orchestrator's own reading. `lenses` only lists the active set, and `scope`
 is a code rule on the paths a work-order names; neither asks a model.
 
-**Down is normal.** The operator's GPU is often busy, so the server is often down. The drain waits until it is back, or
-a dispatched helper answers the same questions of the same table (*The drain without a local model*) and the proposals are made through the same path. The orchestrator never drains by hand. Report it once in the first-action line and never raise it to the operator as a problem.
+**Down is normal, for a repo that runs a local model.** The operator's GPU is often busy, so the server is often down. The drain waits until it is back, or
+a dispatched helper answers the same questions of the same table (*The drain by a helper*) and the proposals are made through the same path. The orchestrator never drains by hand. Report it once in the first-action line and never raise it to the operator as a problem.
 
 ## Config
 
@@ -224,15 +225,15 @@ per line: `{"id": "L<n>", "text": "...", "source": "...", "age_days": N, "expect
 prints the hand-back rate (items that escalate), the state accuracy on the settled items, and the join precision
 and recall (an item's join is its first `join` pair). It writes nothing in the home; calls are logged.
 
-## The drain without a local model
+## The drain by a helper
 
-When System One is not configured, is off for the repo, or is down, the same drain runs on a helper's answers, so a
-repo with no local model gets the same saving. Code does everything but the reading: it builds the items and the
+This is the default route: the drain runs on a helper's answers in every repo, and also where a local model is
+configured but down, so a repo that runs no local model gets the same saving. Code does everything but the reading: it builds the items and the
 candidate pairs, writes the questions to a file, validates the answers, applies each use's table and writes the
 proposals through the same path as the server route (same kinds, ids, decline memory, the pile and
 `drain status`). **Nothing here calls a model or handles a key**: the helper is dispatched by the harness.
 
-**Route.** System One on and up: `system_one.py drain <home>` (the server route). Otherwise: export, run `system_one.py helper [ROOT]`
+**Route.** A local model on and up: `system_one.py drain <home>` (the server route, where a repo runs one). Otherwise (the default): export, run `system_one.py helper [ROOT]`
 and dispatch one helper on the model it prints, apply. `helper` resolves the model, first match wins: the repo's
 model-optimization light choice for the harness (when enabled and configured); the repo's recorded pick (`helper`
 in `<home>/system-one.json`, `{"<harness>": "<model>"}`, written by `helper --set HARNESS MODEL`); the shipped

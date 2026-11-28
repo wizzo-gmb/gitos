@@ -1318,7 +1318,7 @@ def _drain_write(home: Path, model: str, loose_rows: list, orders: list, results
     return {"counts": counts, "written": written, "proposed": proposed}
 
 
-# ------------------------------------------------------------------ the drain without a local model (WO-101)
+# ------------------------------------------------------------------ the drain by a helper, the default (WO-101)
 # The same questions and tables, with the answers read from a file a dispatched helper wrote. Nothing here
 # calls a model or handles a key: `--export` writes the questions, `--answers` reads the words and applies
 # each use's table. The export and the answers belong to one list state, tied by a fingerprint.
@@ -2123,7 +2123,7 @@ def _helper_optimization(home: Path, harness: str) -> "str | None":
     mapping = cfg["harnesses"].get(harness)
     if not mapping:
         return None
-    return mapping["choices"][mapping["tiers"]["light"]]["model"]
+    return mapping["choices"][mo.tier_choices(mapping, "light")[0]]["model"]
 
 
 def _helper_recorded(home: Path, harness: str) -> "str | None":

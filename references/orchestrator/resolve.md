@@ -75,7 +75,7 @@ Read this when a landing is verified and you adjudicate its notes (work-loop ste
    story — and a sweep you hid is a boundary failure with the evidence deleted. **A worktree
    landing:** merge the `wo-NNN` branch, verify on the merged result, then run
    `worktree.py reap NNN` *before* step 7 resolves the order, so the canary run that closes resolution
-   sees no leftover. Never stage a worktree path.
+   sees no leftover. Never stage a worktree path. For a single-file order, add `landed: <sha>` (the merge commit) to its front matter at the merge, so the board shows it as awaiting accept.
    *Gate:* **nothing is committed before steps 4–5 pass** — no commit of an unverified or
    un-adjudicated landing — and **the staged set matches this work-order's scope.**
    **Landing on the main branch.** In a named sprint (`GITOS_SPRINT_ID` is set) you work in your own worktree on branch
@@ -95,7 +95,7 @@ Read this when a landing is verified and you adjudicate its notes (work-loop ste
    An order held open for a live proof carries `pending: <what>` in its front matter; remove it when the proof lands.
    **Sort each `### Durable facts` item** (judgment, one sentence in the adjudication): a code comment where the fact
    lives (most), the tool's reference doc, a brain page only if it passes the write test, or nowhere.
-   Write a decision page on a non-trivial choice only when the order does not already record the why,
+   Write a decision page on a non-trivial choice only when it passes the write test and the order does not already record the why,
    **replace `<home>/RESUME.md` wholesale**, regenerate the brain index and run `brain_lint` + `canary.py`,
    reflection-pass the forward-positive invariant.
    → *INDEX lifecycle · Brain stewardship.*

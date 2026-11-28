@@ -1,31 +1,27 @@
 #!/usr/bin/env python3
-"""sprint_log.py - the sprint log of one gitos home, and its board page. Standard library only.
+"""sprint_log.py - the sprint log of one gitos home. Standard library only.
 
     python sprint_log.py add KIND MESSAGE [--ref WO-NNN] [--session ID]    append one line to <home>/sprint/log.jsonl
-    python sprint_log.py render                                            write <home>/board/local/sprint.html
 
 The log is append-only JSON lines `{"t", "kind", "ref", "msg"}` (plus `session` where a session id is known); KIND is one of
-start, done, note, stop, rotate, error, and a message is cut at 140 characters. The page is the board's `sprint` tab: a
-header (started, orders done and open, rotations, cost, state) and the log newest-first, reloading itself every 10 seconds.
-It is written without a byte-order mark and atomically, so a reload never meets half a file.
+start, done, note, stop, rotate, error, and a message is cut at 140 characters. The board's Sprints view
+reads the log; no page is written.
 
 The home comes from GITOS_SPRINT_HOME (the sprint driver sets it, so the orchestrator may call this from any directory,
 a worktree included), else from the working directory by the router's home detection. A GITOS_SPRINT_HOME that is not a gitos
 home (no `work-orders/` folder, no `INDEX.md` beside a `sprint/` folder: a repo root, say) is refused, and nothing is written.
 
-A named sprint (GITOS_SPRINT_ID, set by the driver beside GITOS_SPRINT_HOME) has its own log `<home>/sprint/<id>/log.jsonl`,
-archive `<home>/sprint/<id>/archive/` and page `<home>/board/local/sprint-<id>.html` (its own tab); the commands above act on
+A named sprint (GITOS_SPRINT_ID, set by the driver beside GITOS_SPRINT_HOME) has its own log `<home>/sprint/<id>/log.jsonl`
+and archive `<home>/sprint/<id>/archive/`; the commands above act on
 that sprint's. Without the id they act on the exclusive sprint's paths, as before.
 """
 from __future__ import annotations
 
 import argparse
-import html
 import json
 import os
 import random
 import sys
-import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,14 +31,11 @@ import compact_restore  # noqa: E402  (the router's home list)
 
 KINDS = ("start", "done", "note", "stop", "rotate", "error")
 MSG_MAX = 140
-DENIED_TRIES = 10                        # attempts at a log or page file another process holds open (a Windows sharing violation)
-REFRESH_SECONDS = 10
+DENIED_TRIES = 10                        # attempts at a log file another process holds open (a Windows sharing violation)
 LOG_REL = Path("sprint") / "log.jsonl"
-HTML_REL = Path("board") / "local" / "sprint.html"
 ARCHIVE_REL = Path("sprint") / "archive"
 HOME_ENV = "GITOS_SPRINT_HOME"
 ID_ENV = compact_restore.SPRINT_ID_ENV
-PAGE_NAME_MAX = 32                       # the board's limit on a local page's name
 
 
 def locate(start) -> "tuple[Path, Path] | None":
@@ -76,22 +69,6 @@ def sprint_folder(home: Path, sid: str = "") -> Path:
 
 def log_path(home: Path, sid: str = "") -> Path:
     return sprint_folder(home, sid) / LOG_REL.name
-
-
-def page_name(sid: str = "") -> str:
-    """The board's local page (and tab) name: `sprint`, or `sprint-<id>` for a named sprint. The board allows 32 characters:
-    a longer one keeps the first 17 characters of the id and takes 7 of its hash, so two ids do not share a page."""
-    if not sid:
-        return "sprint"
-    name = f"sprint-{sid}"
-    if len(name) <= PAGE_NAME_MAX:
-        return name
-    import hashlib
-    return f"sprint-{sid[:17]}-{hashlib.sha1(sid.encode()).hexdigest()[:7]}"
-
-
-def page_path(home: Path, sid: str = "") -> Path:
-    return Path(home) / "board" / "local" / f"{page_name(sid)}.html"
 
 
 def now_iso() -> str:
@@ -253,71 +230,6 @@ def state_of(records: list) -> str:
     return "running"
 
 
-def render_html(records: list, open_now: int, cost: str = "", sid: str = "") -> str:
-    """The page text: header, then the log newest-first. Every value is escaped. A named sprint's page says which sprint."""
-    esc = lambda v: html.escape(str(v), quote=True)  # noqa: E731
-    started = records[0]["t"] if records else ""
-    done = len({r.get("ref") or r.get("msg") for r in records if r["kind"] == "done"})
-    rotations = sum(1 for r in records if r["kind"] == "rotate")
-    rows = "\n".join(
-        f'<tr class="k-{esc(r["kind"])}"><td>{esc(r.get("t", ""))}</td><td>{esc(r["kind"])}</td>'
-        f'<td>{esc(r.get("ref", ""))}</td><td>{esc(r.get("msg", ""))}</td></tr>'
-        for r in reversed(records))
-    head = (f"started {esc(started) or 'n/a'} &middot; orders done {done} &middot; open now {open_now} "
-            f"&middot; rotations {rotations} &middot; cost {esc(cost) or 'n/a'}")
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta http-equiv="refresh" content="{REFRESH_SECONDS}">
-<title>{esc(f"Sprint {sid} log" if sid else "Sprint log")}</title>
-<style>
-:root {{ color-scheme: light dark; }}
-body {{ font: 14px/1.4 system-ui, sans-serif; margin: 12px 16px; }}
-h1 {{ font-size: 16px; margin: 0 0 4px; }}
-p {{ margin: 2px 0; }}
-table {{ border-collapse: collapse; width: 100%; margin-top: 10px; }}
-td {{ border-top: 1px solid #8884; padding: 3px 8px 3px 0; vertical-align: top; }}
-td:nth-child(1) {{ white-space: nowrap; opacity: .7; }}
-.k-stop td, .k-error td {{ font-weight: 600; }}
-</style></head><body>
-<h1>{esc(f"Sprint {sid}: " if sid else "Sprint: ")}{esc(state_of(records))}</h1>
-<p>{head}</p>
-<table><tbody>
-{rows}
-</tbody></table>
-</body></html>
-"""
-
-
-def write_atomic(path: Path, text: str) -> None:
-    """Write `text` as UTF-8 with no byte-order mark, replacing `path` in one step."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".sprint-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(text)
-        retry_denied(lambda: os.replace(tmp, path))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
-def render(home: Path, root: "Path | None" = None, cost: "str | None" = None, sid: str = "", ledger: "Path | None" = None) -> Path:
-    """Write `<home>/board/local/sprint.html` (`sprint-<id>.html` for a named sprint) from the log. `cost` is a ready line (the
-    driver caches it); None reads it. `ledger` is the home whose open orders are counted: a named sprint works in its own worktree,
-    whose ledger is ahead of the main home's until its orders land (default: `home`)."""
-    home = Path(home)
-    records = read_records(home, sid)
-    root = root or home.parent
-    if cost is None:
-        cost = sprint_cost(root, session_ids(records))
-    dest = page_path(home, sid) if sid else home / HTML_REL
-    write_atomic(dest, render_html(records, len(open_orders(ledger or home)), cost, sid))
-    return dest
-
-
 class NotAHome(Exception):
     """GITOS_SPRINT_HOME names a folder that is not a gitos home."""
 
@@ -341,7 +253,6 @@ def main(argv=None) -> int:
     add.add_argument("message")
     add.add_argument("--ref", default="", help="the order, WO-NNN")
     add.add_argument("--session", default="")
-    sub.add_parser("render", help="write the sprint page")
     a = ap.parse_args(argv)
     try:
         found = home_from_env_or_cwd()
@@ -357,15 +268,8 @@ def main(argv=None) -> int:
         print(f"sprint_log: {ID_ENV} {sid!r} is not a sprint id", file=sys.stderr)
         return 1
     try:
-        if a.cmd == "add":
-            rec = add_record(home, a.kind, a.message, a.ref, a.session, sid=sid)
-            print(f"{rec['t']} {rec['kind']} {rec['ref']} {rec['msg']}".rstrip())
-        else:
-            ledger = None
-            if sid:                                  # a named sprint's session runs in its own worktree: count that ledger's orders
-                here = locate(Path.cwd())
-                ledger = here[0] if here else None
-            print(render(home, root, sid=sid, ledger=ledger))
+        rec = add_record(home, a.kind, a.message, a.ref, a.session, sid=sid)
+        print(f"{rec['t']} {rec['kind']} {rec['ref']} {rec['msg']}".rstrip())
     except OSError as e:
         print(f"sprint_log: {e}", file=sys.stderr)
         return 1

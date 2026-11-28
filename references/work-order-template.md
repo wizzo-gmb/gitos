@@ -11,7 +11,8 @@ A work-order opens with a flat front matter block between `---` lines (`key: val
 or `[a, b]`; nothing else): `severity`, `title` and `evidence` are what `scripts/ledger_index.py` writes into the
 board's Open row (evidence is cut at 100 characters there). With none, the row is built from the H1 and the first word of
 `## Severity`, and evidence reads `—`. At resolution the orchestrator adds `released` (the engine version; the older key
-`landed` still reads); nothing else is written for a resolved order and no row is added anywhere.
+`landed` still reads); nothing else is written for a resolved order and no row is added anywhere. At merge, before resolution, a
+single-file order gets `landed: <sha>` (the merge commit); only the owner board reads it, to show Awaiting accept.
 
 **A parked work-order** is deferred work that waits on a named event: an ordinary order file in `work-orders/`
 whose front matter adds `status: parked` and `trigger: <restart trigger>` (and `origin: L<n>` when it took items).

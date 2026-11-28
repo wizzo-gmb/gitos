@@ -54,7 +54,7 @@ TERMINAL = ("landed", "dropped")
 # A named sprint's session. The id rule and reserved ids are compact_restore.py's, copied here: this hook is loaded alone by path
 # and must not depend on a sibling that could fail to import (it would then silently stop guarding); a selftest gate pins the copy.
 SPRINT_ID_RE = re.compile(r"[a-z0-9-]{1,32}")
-SPRINT_RESERVED_IDS = ("claims", "archive")
+SPRINT_RESERVED_IDS = ("claims", "archive", "stop", "rotate", "busy", "exclusive")
 
 
 def _git_dir(path: Path) -> "Path | None":
@@ -114,8 +114,22 @@ def _after(text: str, tool: str, inp: dict) -> "str | None":
     return text
 
 
+EXTENDED_PREFIXES = ("\\\\?\\", "//?/")      # the Windows extended-length prefix, in either slash form
+
+
+def _plain(path: str) -> str:
+    r"""`path` without the extended-length prefix: `\\?\C:\x` is `C:\x` and `\\?\UNC\host\share` is `\\host\share`."""
+    for pre in EXTENDED_PREFIXES:
+        if path.startswith(pre):
+            rest = path[len(pre):]
+            if rest[:4].upper() in ("UNC\\", "UNC/"):
+                return "\\\\" + rest[4:]
+            return rest
+    return path
+
+
 def _norm(path) -> str:
-    return os.path.normcase(os.path.realpath(str(path)))
+    return os.path.normcase(_plain(os.path.realpath(_plain(str(path)))))
 
 
 def _within(path: str, root: str) -> bool:
@@ -254,10 +268,25 @@ def decide(payload) -> "dict | None":
     return None
 
 
+def end_orphan_session() -> None:
+    """In a sprint session (named or exclusive) whose driver is gone, end the session (`compact_restore.end_orphan_session`, loaded from beside this
+    file; any other session never loads it). Anything that goes wrong leaves the guard to its own job."""
+    if os.environ.get("GITOS_SPRINT") != "1" or not os.environ.get("GITOS_SPRINT_PID"):
+        return
+    try:
+        spec = importlib.util.spec_from_file_location("_gitos_slice_guard_restore", Path(__file__).resolve().parent / "compact_restore.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.end_orphan_session()
+    except Exception:
+        pass
+
+
 def hook_command(stream) -> int:
     """The client-event entry point. ALWAYS returns 0; stdout carries a refusal or nothing. Anything the hook
     cannot decide leaves the edit alone."""
     try:
+        end_orphan_session()
         decision = decide(json.loads(stream.read() or "null"))
         if decision is not None:
             print(json.dumps(decision, ensure_ascii=False))

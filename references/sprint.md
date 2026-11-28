@@ -42,7 +42,7 @@ python <skill>/scripts/gitos-sprint.py --id b --orders 260
 Start them a few seconds apart. This is advice only; the engine does not depend on it.
 
 - **Its own state.** A named sprint keeps `STATE.md`, `log.jsonl`, `STOP`, `ROTATE`, `BUSY` and `archive/` under
-  `<home>/sprint/<id>/`, and has its own page (`board/local/sprint-<id>.html`) and Stop card. A card names its sprint and stops
+  `<home>/sprint/<id>/`, and has its own Stop card (the board's *Sprints* view shows it). A card names its sprint and stops
   only that one. The session reads only its own card (`board.py answer-for <its stop-card.id> --tab sprint`), never the tab's
   other cards, and its signals are `<home>/sprint/<id>/STOP` and `ROTATE`. The stuck cap counts only that sprint's own orders and branches.
 - **Its own worktree.** The driver makes `<repo>.worktrees/sprint-<id>` on branch `sprint-<id>` from the main branch's tip and
@@ -242,7 +242,7 @@ most 140 characters); the previous sprint's log is moved to `<home>/sprint/archi
 ## What it touches
 
 On the first run in a repo: `sprint` is added to `tabs` in `<home>/board/board.json` (no other key changes), and
-`<home>/sprint/` (the log, the Stop card id and `STATE.md` among it) and `<home>/board/local/sprint.html` are git-ignored through the repo's own `.git/info/exclude`, so no `.gitignore` is edited. The child session's environment is yours without any `CLAUDE*` or `MCP_*` variable (a leftover marker from an
+`<home>/sprint/` (the log, the Stop card id and `STATE.md` among it) are git-ignored (the driver also keeps the old `board/local/sprint*.html` page names on that list; it writes no such page now) through the repo's own `.git/info/exclude`, so no `.gitignore` is edited. The child session's environment is yours without any `CLAUDE*` or `MCP_*` variable (a leftover marker from an
 outer Claude session would turn transcripts off and an inherited compaction window would beat the flag); your own settings
 `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_GIT_BASH_PATH`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX` are kept. The session gets `GITOS_SPRINT=1`.
 

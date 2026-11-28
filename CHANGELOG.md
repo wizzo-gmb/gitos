@@ -18,10 +18,23 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v74 — 2026-11-27
+breaking: yes
+
+- Owner board as a realtime web app: live work views, owner actions, the Awaiting accept status, repo views and providers, a hub overview; the sandboxed `local/*.html` pages are retired, and a repo migrates per `references/owner-board.md` -> *Migrating a page* (WO-153)
+- Parallel sprints follow-ups: review findings and live-run notes from WO-150 (WO-152)
+- Sprint transcript path follows the CLI's real project-log encoding (WO-149)
+- Brain or RESUME: one short test, and RESUME notes that expire (WO-154)
+- A tier names a range of model/effort pairs, picked by the work (WO-155)
+- System One docs: the helper is the default, the local model an option (WO-156)
+- System One script texts: the helper is the default (WO-157)
+
+---
+
 ## v73 — 2026-11-24
 breaking: no
 
-- Parallel sprints in one home: named sprints (`--id`) in their own worktrees, order claims, `worktree.py land` under one merge lock with the gate read from main, one exclusive sprint at a time, per-sprint Stop card, stuck cap and board routing, an edit guard on other trees (WO-150)
+- Parallel sprints in one home: named sprints (`--id`) in their own worktrees, order claims, `worktree.py land` under one merge lock, one exclusive sprint at a time, per-sprint Stop card, stuck cap and board routing, an edit guard on other trees (WO-150)
 
 ---
 

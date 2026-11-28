@@ -86,8 +86,8 @@ ROLE_SUMMARIES = {
         "INDEX.md + the brain. Builds with the operator; authors and prioritizes "
         "work-orders; invokes the diagnostic finder for evidence; dispatches and "
         "verifies implementer agents; stewards the brain (inline upsert -> checkpoint "
-        "reconcile -> brain_lint), recording a decision page on every non-trivial "
-        "choice. May authorize edits."
+        "reconcile -> brain_lint), recording a decision page for a non-trivial "
+        "choice that passes the write test. May authorize edits."
     ),
     "diagnostic": (
         "Read-only finder. Builds the log/output vocabulary, scans the nine anomaly "
@@ -400,8 +400,10 @@ def worktree_module():
 
 # ---------------------------------------------------------------- the owner board (WO-122)
 BOARD_SRC = ASSETS / "board" / "board.py"
+BOARD_UI_SRC = ASSETS / "board" / "ui"
 BOARD_VERSION_RE = re.compile(rb"(?m)^BOARD_VERSION = (\d+)\s*$")
 BOARD_IGNORE_COMMENT = "# The owner board's data (answers, notes, cards) stays on this machine; board.py and board.json are tracked."
+ARCHIVE_IGNORE_COMMENT = "# A worktree's kept files (worktree-archive/) stay on this machine: copies of work that never reached the repo."
 
 
 def board_module():
@@ -417,17 +419,63 @@ def _board_version(data: bytes) -> "int | None":
     return int(m.group(1)) if m else None
 
 
+def _ui_files(base: Path) -> dict:
+    """Every file under `base` as {posix path relative to base: bytes}; {} when there is no such folder."""
+    if not base.is_dir():
+        return {}
+    return {f.relative_to(base).as_posix(): f.read_bytes() for f in sorted(base.rglob("*")) if f.is_file()}
+
+
+def ensure_board_ui(root: Path, board: Path, refreshed: bool) -> None:
+    """`<board>/ui/` is the board's page (WO-153), the engine's files alone: a repo's own pages, data and look live elsewhere
+    in the board folder and are never touched here. Written whole when the folder is absent or board.py was just refreshed
+    (files the engine no longer ships are removed); else only a missing file is added, and a file that differs from the
+    engine's is reported and left, as board.py is at the same version."""
+    src, dest = _ui_files(BOARD_UI_SRC), board / "ui"
+    have = _ui_files(dest)
+    norm = lambda b: b.replace(b"\r\n", b"\n")
+    rel = lambda f: str(f.relative_to(root)).replace("\\", "/")
+    if not src:
+        print(f"NOTE the engine ships no board page files at {BOARD_UI_SRC}; {rel(dest)} left as it is")
+        return
+    whole = refreshed or not have
+    differs = []
+    for name, data in src.items():
+        f = dest / name
+        if name in have and norm(have[name]) == norm(data):
+            continue
+        if name in have and not whole:
+            differs.append(name)
+            continue
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(data)
+        WRITTEN.append(rel(f))
+        print(f"OK   {'refreshed' if name in have else 'wrote'} {rel(f)}")
+    if whole:
+        for name in sorted(set(have) - set(src)):
+            (dest / name).unlink()
+            WRITTEN.append(rel(dest / name))
+            print(f"OK   removed {rel(dest / name)} (the engine no longer ships it)")
+    if differs:
+        print(f"NOTE {rel(dest)} differs from the engine copy in {', '.join(differs)}; left as it is")
+    elif all(norm(have.get(n, b"")) == norm(d) for n, d in src.items()):
+        print(f"SKIP current {rel(dest)}")
+
+
 def ensure_board(root: Path, home: Path) -> dict:
     """Build or refresh `<home>/board/`. board.py: copied when absent, refreshed when its BOARD_VERSION is older than
-    the engine's, reported and left when it differs at the same version. board.json: written once (the derived,
-    bind-tested port and a random board_id) and never touched again; data/ is never touched. -> board.json."""
+    the engine's, reported and left when it differs at the same version. ui/ (the page) follows it, see ensure_board_ui.
+    board.json: written once (the derived, bind-tested port and a random board_id) and never touched again; data/ is
+    never touched. -> board.json."""
     board = home / "board"
     dest = board / "board.py"
     src = BOARD_SRC.read_bytes()
+    refreshed = False
     if not dest.exists():
         board.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(src)
         report(True, dest, root)
+        refreshed = True
     else:
         have = dest.read_bytes()
         mine, theirs = _board_version(src), _board_version(have)
@@ -437,9 +485,11 @@ def ensure_board(root: Path, home: Path) -> dict:
         elif theirs is None or (mine is not None and theirs < mine):
             dest.write_bytes(src)
             WRITTEN.append(rel)
+            refreshed = True
             print(f"OK   refreshed {rel} (BOARD_VERSION {theirs} -> {mine}; the prior bytes are in git)")
         else:
             print(f"NOTE {rel} differs from the engine copy at BOARD_VERSION {theirs}; left as it is")
+    ensure_board_ui(root, board, refreshed)
     cfg_path = board / "board.json"
     existed = cfg_path.is_file()
     cfg = board_module().make_config(board)
@@ -507,26 +557,32 @@ def resume_board_section(rendered_resume: str) -> str:
     return text[i:j] + "\n"
 
 
-def ensure_board_ignored(root: Path, home_label: str) -> bool:
-    """Make `<home>/board/data/` ignored in a git repo. -> True when a line was appended."""
-    line = f"{home_label}/board/data/"
-    try:
-        cp = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", f"{line}x"],
-                            capture_output=True, text=True)
-        if cp.returncode == 0:
-            return False
-    except OSError:
-        pass
+def ensure_home_ignored(root: Path, home_label: str, subs: list[tuple[str, str]]) -> list[tuple[str, bool]]:
+    """Make each `<home>/<sub>` ignored in a git repo; `subs` is (sub, comment) pairs, one comment-and-line block each.
+    -> [(line, appended)] in order. A path git already ignores, or a line already in .gitignore, is not written again."""
     path = root / ".gitignore"
-    data = path.read_bytes() if path.exists() else b""
-    if line.encode("utf-8") in data.replace(b"\r\n", b"\n").split(b"\n"):
-        return False
-    eol = b"\r\n" if b"\r\n" in data else b"\n"
-    if data and not data.endswith(b"\n"):
-        data += eol
-    data += ("\n" + BOARD_IGNORE_COMMENT + "\n" + line + "\n").encode("utf-8").replace(b"\n", eol)
-    path.write_bytes(data)
-    return True
+    out = []
+    for sub, comment in subs:
+        line = f"{home_label}/{sub}"
+        try:
+            cp = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", f"{line}x"],
+                                capture_output=True, text=True)
+            if cp.returncode == 0:
+                out.append((line, False))
+                continue
+        except OSError:
+            pass
+        data = path.read_bytes() if path.exists() else b""
+        if line.encode("utf-8") in data.replace(b"\r\n", b"\n").split(b"\n"):
+            out.append((line, False))
+            continue
+        eol = b"\r\n" if b"\r\n" in data else b"\n"
+        if data and not data.endswith(b"\n"):
+            data += eol
+        data += ("\n" + comment + "\n" + line + "\n").encode("utf-8").replace(b"\n", eol)
+        path.write_bytes(data)
+        out.append((line, True))
+    return out
 
 
 def detect_home(root: Path, requested: str) -> tuple[Path, str]:
@@ -661,6 +717,11 @@ def starter_gitignore(home_label: str, brain_on: bool) -> str:
         "",
         BOARD_IGNORE_COMMENT,
         f"{home_label}/board/data/",
+    ]
+    lines += [
+        "",
+        ARCHIVE_IGNORE_COMMENT,
+        f"{home_label}/worktree-archive/",
     ]
     return "\n".join(lines) + "\n"
 
@@ -1094,12 +1155,11 @@ def main() -> int:
                 print(f"OK   appended `{wt.IGNORE_LINE}` to .gitignore (agent worktrees are never tracked)")
             else:
                 print(f"SKIP .gitignore already ignores {wt.IGNORE_LINE}")
-        if hub_mode:
-            pass                                   # no board here, so no board data to ignore
-        elif ensure_board_ignored(root, home_label):
-            print(f"OK   appended `{home_label}/board/data/` to .gitignore (the board's answers stay local)")
-        else:
-            print(f"SKIP .gitignore already ignores {home_label}/board/data/")
+        # The board's answers (no board in a hub) and a worktree's kept files, one helper for both.
+        subs = [] if hub_mode else [("board/data/", BOARD_IGNORE_COMMENT)]
+        subs.append(("worktree-archive/", ARCHIVE_IGNORE_COMMENT))
+        for line, appended in ensure_home_ignored(root, home_label, subs):
+            print(f"OK   appended `{line}` to .gitignore" if appended else f"SKIP .gitignore already ignores {line}")
 
     # ---- live session resume (WO-053) -------------------------------------
     # `<home>/RESUME.md` is the store for what is true RIGHT NOW: replaced wholesale at every

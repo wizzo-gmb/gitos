@@ -235,6 +235,13 @@ verification, so a verification demand is the dominant signal, and a settled app
 does not cancel a hidden edge-case burden. Where no rule matches, **standard** stands
 as the opening default. The ceiling binds after the rule resolves.
 
+A tier may list several choices (see the shape below); the three rules above pick the
+tier, never the choice. Open at the tier's first choice. Go to a cheaper listed choice
+for a small, bounded change with reliable checks; to a more expensive one only for wide
+or subtle work, with a reason specific to the task in the dispatch line. The repo's
+stakes, or a failed review alone, are not a reason. `select --choice NAME` names the
+listed choice; a name the tier does not list stops.
+
 No model scores a work-order's complexity: the standing rule is the orchestrator's own reading. Open at
 this repo's standard tier, go deeper only for a reason specific to this task.
 
@@ -250,8 +257,8 @@ Source: [Using Claude Code: Spending your effort](https://claude.dev/blog/spendi
 Thariq Shihipar, claude.dev Engineering, 2026-09-25.
 
 Discover choices from the active dispatch-tool schema first, a supported local
-catalog second, or an explicitly supplied model-picker/mapping. Keep one preferred
-pair per tier. No universal ranking by model name, version, or price. Effort has
+catalog second, or an explicitly supplied model-picker/mapping. Name one preferred
+pair per tier, and a short list only where the work calls for it. No universal ranking by model name, version, or price. Effort has
 one fixed order, for the five documented levels only, used by the worker rule
 below. Refresh on enable, mapping/lead/harness change, native override change, or an
 unavailable-model failure; no per-WO roster sweep or web research.
@@ -272,20 +279,23 @@ configured ranks are policy, not measured provider facts:
   },
   "choices": {
     "light": {"model": "light-model", "effort": "low", "rank": 1},
+    "light-medium": {"model": "light-model", "effort": "medium", "rank": 1},
     "standard": {"model": "mid-model", "effort": "medium", "rank": 2},
     "deep": {"model": "mid-model", "effort": "high", "rank": 2},
     "lead": {"model": "lead-model", "effort": "medium", "rank": 3}
   },
   "ceiling": "lead",
-  "tiers": {"light": "light", "standard": "standard", "deep": "deep"}
+  "tiers": {"light": ["light", "light-medium"], "standard": "standard", "deep": "deep"}
 }
 ```
 
 Ranks order **model/effort pairs**; equal ranks are permitted. The same pair cannot
 have contradictory ranks. Different efforts on the same model can share a rank or
 have explicitly configured ranks; the worker rule below compares effort words only on
-one model, and never across models. Tier ranks must be nondecreasing and no tier may
-exceed the ceiling. Capabilities
+one model, and never across models. A tier is one choice name or a list of distinct
+names, and a choice in a list sits in one tier only. Every listed choice must pass the worker rule
+and stay at or under the ceiling; tier ranks must be nondecreasing, judged on each tier's
+first choice. Capabilities
 are evidence-backed labels for task requirements (inputs, tools, context capacity
 where known), not an invented provider taxonomy. Unknown required support blocks
 that route. `default` effort means no adjustable effort has been established;

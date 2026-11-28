@@ -174,8 +174,14 @@ Every gitos home carries a small local web page, the **owner board** (`<home>/bo
 the agent asks. A plan with several items, a send to an outside party, or a question left while you are away
 becomes a card there; a single question while you are in the window is just asked in chat. It is stdlib-only
 Python on a loopback address, its answers are files in the home, and any session finds it again after a
-compaction, `/clear` or a new window. Start or find it with `python <home>/board/board.py ensure`. A workspace of
-several repos can share one board (a hub). Details: [owner board](references/owner-board.md).
+compaction, `/clear` or a new window. Start or find it with `python <home>/board/board.py ensure`.
+
+Since v74 the board is a live web app: the work views update as the ledger changes, a merged order shows as
+**Awaiting accept** until you accept it, and you can act on an order from the page (set its severity, park, hold,
+approve, leave a note), with the agent applying each action at its next step. A repo adds its own views beside
+the built-in ones, and a workspace of several repos can share one board (a hub) with an overview of every repo.
+The old sandboxed `local/*.html` pages are retired; a repo moves each one to a view as the
+[owner board](references/owner-board.md) reference describes under *Migrating a page*.
 
 ## Sprint mode — work the ledger while you are away
 
@@ -194,8 +200,8 @@ python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --autocompact 500k 
 - **Rotates itself.** After the session compacts twice, the orchestrator checkpoints and the driver starts a
   fresh session, which resumes from the ledger. The sprint keeps its own state file; your next normal window
   folds it into the resume.
-- **Quiet.** Each reply is the role marker line alone; progress goes to a `sprint` tab on the owner board (a
-  self-refreshing log with a cost line), the commits and the ledger.
+- **Quiet.** Each reply is the role marker line alone; progress goes to the owner board's Sprints view (a
+  live log with a cost line), the commits and the ledger.
 - **Stops cleanly.** The board's Stop card stops after the current order; a malformed input is refused and
   reported back for your next normal window. Every stop writes the sprint state first.
 - **Your own safety check.** A repo with outside state (a running service, open positions, a live job) can name a

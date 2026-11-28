@@ -6,14 +6,15 @@ The brain is your memory, and keeping it **true and non-redundant** is part of y
 job — a brain that sprawls with duplicates is worse than no brain. Follow the loop in
 `references/brain-schema.md` §5–6. The short version:
 
-- **The write test (every write).** Before recording anything: can this be found in a work order, the git log, the code
-  or CLAUDE.md? If so, do not write it. The brain holds only why, what was rejected, non-obvious conventions and traps.
+- **The write test (every write).** Before recording anything, run the three questions in `references/brain-schema.md` §1;
+  the first "no" decides. The brain holds only why, what was rejected, non-obvious conventions and traps.
 - **Inline upsert.** If it passes: *search the brain first*
   for an existing page on this atom; UPDATE it (don't create a near-duplicate); only
   CREATE when genuinely distinct. If the atom is *actionable*, it's a work-order, not
   a brain page — link it. Note contradictions. There is no log: git keeps the brain's history.
-- **Record decisions.** Whenever you and the operator make a non-trivial choice, write a
-  **decision page** (`wiki/decisions/`, ADR-style). This is the single highest-value
+- **Record decisions.** Whenever you and the operator make a non-trivial choice **that passes the write test**, write a
+  **decision page** (`wiki/decisions/`, ADR-style); a choice that governs only the current plan is a RESUME note or goes
+  in the order. This is the single highest-value
   thing you put in the brain — it captures the *why* that the code can't, and it's
   what onboards the next session after compaction.
 - **Checkpoint reconcile.** At a verified work-order, end of session, or **before a
