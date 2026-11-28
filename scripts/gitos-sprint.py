@@ -2,9 +2,10 @@
 """gitos-sprint.py - run a repo's open work-orders in a visible Claude session that rotates itself. Standard library only.
 
     python gitos-sprint.py [REPO] [--autocompact TOKENS] [--effort LEVEL] [--model MODEL] [--add-dir DIR ...]
-                           [--max-rotations N] [--orders 253,254] [--id NAME]
+                           [--max-rotations N] [--orders 253,254] [--id NAME] [--window]
 
-Run it in a Windows terminal. It launches an interactive Claude session in the repo root with the sprint start prompt,
+Run it in a Windows terminal, or add --window and an orchestrator (or any caller) gets the sprint in a new visible PowerShell
+window instead (`launch_window`). It launches an interactive Claude session in the repo root with the sprint start prompt,
 watches `<home>/sprint/ROTATE` and `<home>/sprint/STOP`, closes the session on either (writing `/exit` into the console,
 then killing the process tree if it does not leave), starts a fresh session after a ROTATE, and ends after a STOP. The log
 is `<home>/sprint/log.jsonl`; its page is the board's `sprint` tab; one Stop card there ends the sprint after the current
@@ -14,6 +15,9 @@ order. Every cap and stop below is code here, not an instruction to the model. O
 it the candidates are the open orders marked `sprint: ready` in their front matter, and an unmarked order is never taken. An
 order marked `sprint: no` is never a candidate. Either way the orchestrator skips, with a logged reason, the candidates that
 are not sprint-eligible at run time (references/orchestrator/sprint.md, references/orchestrator/sprint-prep.md).
+Before anything is launched a folder order must also have a `ready` slice whose dependencies are landed (`slice_problem`, read by
+`slice.py`'s own reader): a listed order without one is refused, one line naming it and why; an unlisted marked one is skipped with
+the same line; with no order left nothing is launched.
 
 The start prompt asks for replies that are the role marker line alone.
 
@@ -48,6 +52,12 @@ A named sprint's clean end (STOP id `no-open-order` or `stop-card`, the guard pa
 its STATE.md and STOP into `sprint/<id>/archive/` so the same id can start again; any other end leaves them for the operator to read.
 The exclusive sprint's STATE.md is always left: an interactive window folds it into RESUME.md first. An emptied
 `<repo>.worktrees/sprint-<id>.worktrees` folder, and an emptied `<repo>.worktrees`, are removed when the sprint ends.
+--window: after every pre-launch check has passed in the calling process (a refusal is printed there and nothing opens), the driver
+starts itself again, with the same arguments minus the flag, in a new PowerShell console (`-NoExit`, the repo root as the working
+directory), prints one line naming the window's pid and the sprint id, and exits 0. Windows only. The window gets the PATH repaired
+(`repaired_path`: the registry's Machine and User `Path` merged in, the folder holding claude.exe first when it is not on PATH).
+`find_claude` looks on PATH first, then on the PATH rebuilt from the registry, then in the install folders (`claude_known_folders`);
+a claude.exe found off PATH has its folder put first on the PATH the session gets (`claude_on_path`).
 Exit status: 0 the sprint ended on a stop signal, 1 it ended on an error, an interruption, a cap or a failed guard, 2 nothing
 was launched.
 """
@@ -75,6 +85,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import compact_restore  # noqa: E402
 import sprint_log as slog  # noqa: E402
+import slice as slicemod  # noqa: E402
 
 SKILL_DIR = HERE.parent
 DEFAULT_AUTOCOMPACT = 500_000
@@ -114,7 +125,7 @@ BUSY_FILE = "BUSY"                       # the repo's own lease file, in `<home>
 SETTLE_STEP = 1.0                        # the settle wait sleeps in steps this long, so Ctrl-C is heard
 GUARD_TAIL_LINES, GUARD_TAIL_CHARS = 5, 300
 CARD_ID_RE = re.compile(r"card (\d{8}-\d{6}-\d{6}-[0-9a-f]{4}) added")
-WO_RE = re.compile(r"WO-\d+(?:/S\d+)?")
+WO_RE = re.compile(r"WO-\d+(?:/S\d+[a-z]?)?")
 HARNESS_PREFIXES = ("CLAUDE", "MCP_")
 KEEP_ENV = (                          # operator configuration, not harness markers: these pass through the strip
     "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX")
@@ -733,13 +744,66 @@ def prune_empty_folders(root: Path, path: Path) -> None:
             pass
 
 
+def unwritten_part(path: Path) -> str:
+    """The heading of the first section of a slice file whose body still says `(to be written)`, or ""."""
+    heading = ""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        if line.startswith("#"):
+            heading = line.lstrip("#").strip()
+        elif "(to be written)" in line.lower():
+            return heading
+    return ""
+
+
+def slice_problem(home: Path, ref: str) -> str:
+    """Why a sprint cannot dispatch anything from order `ref` ("WO-NNN"), one line, or "" when it can. A single-file order has no
+    slices and is eligible. A folder order is eligible when `slice.py`'s own reader (`slice_next`) finds a `ready` slice whose
+    dependencies are all landed; the reason is the first slice that is not finished: its status and what its file still lacks,
+    or the dependency a ready slice waits on."""
+    try:
+        found = slicemod.find_order(Path(home), ref[3:])
+        if not found or not found[2]:
+            return ""
+        hit, waiting = slicemod.slice_next(Path(home), ref)
+        if hit:
+            return ""
+        slices = slicemod.list_slices(found[0])
+    except (slicemod.SliceError, OSError, ValueError) as e:
+        return f"its slices cannot be read ({type(e).__name__}: {e})"
+    for num, path, meta in slices:
+        status = str(meta.get("status", "")).strip() or "no status"
+        if status in ("landed", "dropped"):
+            continue
+        if status == "ready":
+            note = next((w for w in waiting if w.startswith(f"{ref}/S{num} ")), "")
+            if note:
+                return f"no slice is ready to dispatch ({note.split('/', 1)[1]})"
+        part = unwritten_part(path)
+        return f"no slice is ready to dispatch (S{num} {status}" + (f", {part} to be written)" if part else ")")
+    return "no slice is ready to dispatch (every slice is landed or dropped, or the order has none)"
+
+
+def ready_marked(home: Path) -> tuple:
+    """The open orders marked `sprint: ready`, canonical and sorted."""
+    return tuple(f"WO-{n:03d}" for n in sorted(n for n, m in slog.open_order_marks(home).items() if m == "ready"))
+
+
+def skipped_orders(home: Path) -> list:
+    """[(order, why)] of the orders marked `sprint: ready` that have no slice to dispatch (`slice_problem`)."""
+    return [(ref, why) for ref in ready_marked(home) for why in [slice_problem(home, ref)] if why]
+
+
 def candidate_orders(orders: tuple, home: Path) -> tuple:
     """The orders a sprint may take, canonical and sorted: the operator's `--orders` list when there is one, else the open
-    orders whose front matter says `sprint: ready`. An unmarked order is never a candidate by default."""
+    orders whose front matter says `sprint: ready` and that have a slice to dispatch (`slice_problem`). An unmarked order is
+    never a candidate by default."""
     if orders:
         return tuple(orders)
-    marks = slog.open_order_marks(home)
-    return tuple(f"WO-{n:03d}" for n in sorted(n for n, m in marks.items() if m == "ready"))
+    return tuple(ref for ref in ready_marked(home) if not slice_problem(home, ref))
 
 
 def parse_orders(text: str) -> tuple:
@@ -781,7 +845,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--id", type=parse_id, default=None, metavar="NAME",
                     help="a named sprint (needs --orders): runs beside other named sprints on disjoint orders; default: the "
                          "exclusive sprint")
+    ap.add_argument("--window", action="store_true",
+                    help="after the checks pass, start this sprint in a new visible PowerShell window and exit (Windows only)")
     a = ap.parse_args(argv)
+    a.argv = list(sys.argv[1:] if argv is None else argv)
     a.id = a.id or ""
     if a.max_rotations < 0:
         ap.error("--max-rotations is 0 or more")
@@ -908,10 +975,10 @@ def lead_without_worker(home: Path, model: str, effort: str) -> str:
             "would be refused; raise --effort, or choose a model with a lower tier")
 
 
-def find_claude(env) -> "str | None":
-    """The claude executable: an .exe on PATH, or the one an npm shim sits beside (a .cmd shim would put the prompt
-    through cmd.exe quoting)."""
-    found = shutil.which("claude", path=env.get("PATH"))
+def claude_in_path(path: "str | None") -> "str | None":
+    """The claude executable `which` finds on this PATH string: an .exe, or the one an npm shim sits beside (a .cmd shim would
+    put the prompt through cmd.exe quoting)."""
+    found = shutil.which("claude", path=path)
     if not found:
         return None
     if found.lower().endswith(".exe"):
@@ -922,6 +989,174 @@ def find_claude(env) -> "str | None":
         if cand.is_file():
             return str(cand)
     return None if sys.platform == "win32" else found
+
+
+def claude_in_dir(folder) -> "str | None":
+    """claude.exe in one folder: directly, or in the npm package folder below it (`node_modules/@anthropic-ai/claude-code/bin`)."""
+    folder = Path(folder)
+    for cand in (folder / "claude.exe", folder / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"):
+        if cand.is_file():
+            return str(cand)
+    return None
+
+
+def env_lookup(env, name: str) -> "str | None":
+    for k, v in env.items():
+        if k.upper() == name.upper():
+            return v
+    return os.environ.get(name)
+
+
+def expand_vars(text: str, env) -> str:
+    """`%NAME%` in a registry value, looked up in env then in this process; an unknown name is left as written."""
+    return re.sub(r"%([^%]+)%", lambda m: env_lookup(env, m.group(1)) or m.group(0), text)
+
+
+def registry_path(env=None) -> str:
+    """The Machine and User `Path` from the Windows registry, expanded and joined with `;` ("" off Windows or when unreadable): what a
+    fresh terminal would have, whatever PATH this process inherited."""
+    if sys.platform != "win32":
+        return ""
+    try:
+        import winreg
+    except ImportError:
+        return ""
+    parts = []
+    for hive, sub in ((winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+                      (winreg.HKEY_CURRENT_USER, "Environment")):
+        try:
+            with winreg.OpenKey(hive, sub) as key:
+                value, _kind = winreg.QueryValueEx(key, "Path")
+        except OSError:
+            continue
+        if isinstance(value, str) and value.strip():
+            parts.append(expand_vars(value, env or os.environ))
+    return ";".join(parts)
+
+
+def claude_known_folders(env) -> list:
+    """Where the install methods put claude.exe: the npm global folder (`%APPDATA%/npm`, with the package below it) and the native
+    installer's `%USERPROFILE%/.local/bin` (code.claude.com/docs/en/setup)."""
+    profile = env_lookup(env, "USERPROFILE") or str(Path.home())
+    appdata = env_lookup(env, "APPDATA") or str(Path(profile) / "AppData" / "Roaming")
+    return [Path(appdata) / "npm", Path(profile) / ".local" / "bin"]
+
+
+def path_entries(path: "str | None") -> list:
+    return [e.strip().strip('"') for e in (path or "").split(os.pathsep) if e.strip()]
+
+
+def find_claude(env) -> "str | None":
+    """The claude executable: on PATH first, then on the PATH rebuilt from the registry, then in the known install folders."""
+    found = claude_in_path(env.get("PATH"))
+    if found:
+        return found
+    for folder in [*path_entries(registry_path(env)), *claude_known_folders(env)]:
+        found = claude_in_dir(folder)
+        if found:
+            return found
+    return None
+
+
+def claude_not_found(env) -> str:
+    """The refusal when find_claude comes back empty: it names every place that was tried."""
+    folders = ", ".join(str(f) for f in claude_known_folders(env))
+    return ("the claude executable (claude.exe) was not found on PATH, on the PATH rebuilt from the registry (Machine and User Path), "
+            f"or in the install folders {folders}")
+
+
+def claude_on_path(env, claude: "str | None") -> dict:
+    """env with the folder holding `claude` first on its PATH when `claude` is an absolute path PATH does not reach, so the session's
+    own `claude` calls and hooks work too. Any other env comes back as a copy."""
+    out = dict(env)
+    if claude and Path(claude).is_absolute() and not claude_in_path(env.get("PATH")):
+        key = next((k for k in out if k.upper() == "PATH"), "PATH")
+        folder = str(Path(claude).parent)
+        out[key] = os.pathsep.join([folder, *path_entries(out.get(key))])
+    return out
+
+
+def repaired_path(env) -> str:
+    """env's PATH with every registry Path entry it lacks appended (same-folder spellings compared case-insensitively)."""
+    have = path_entries(env.get("PATH"))
+    seen = {os.path.normcase(os.path.normpath(e)) for e in have}
+    for e in path_entries(registry_path(env)):
+        norm = os.path.normcase(os.path.normpath(e))
+        if norm not in seen:
+            seen.add(norm)
+            have.append(e)
+    return os.pathsep.join(have)
+
+
+HOOK_SCRIPTS_MARK = ".claude/skills/gitos/scripts/"      # the self-locating bootstrap every gitos hook carries (WO-166)
+
+
+def hook_commands(root: "Path | None") -> list:
+    """The distinct `command` values of the gitos hooks in `<root>/.claude/settings.json`, in file order ([] when the file is absent,
+    unreadable or registers none): a gitos hook is one whose args hold the bootstrap that loads a script from the skill folder."""
+    out = []
+    try:
+        doc = json.loads((Path(root) / ".claude" / "settings.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError):
+        return out
+    hooks = doc.get("hooks") if isinstance(doc, dict) else None
+    for groups in (hooks.values() if isinstance(hooks, dict) else ()):
+        for group in (groups if isinstance(groups, list) else ()):
+            for h in (group.get("hooks") if isinstance(group, dict) and isinstance(group.get("hooks"), list) else ()):
+                if isinstance(h, dict) and isinstance(h.get("command"), str) and h["command"] not in out                         and any(isinstance(a, str) and HOOK_SCRIPTS_MARK in a for a in (h.get("args") or ())):
+                    out.append(h["command"])
+    return out
+
+
+def resolve_command(command: str, path: "str | None") -> "str | None":
+    """Where a hook `command` runs from: itself when it is an absolute file, else the first PATH folder holding it (with a PATHEXT
+    suffix too). Not `shutil.which`: on Windows that searches the current directory first, which a session does not."""
+    if Path(command).is_absolute():
+        return command if Path(command).is_file() else None
+    exts = [""] + [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
+    for folder in path_entries(path):
+        for ext in exts:
+            cand = Path(folder) / (command + ext)
+            if cand.is_file():
+                return str(cand)
+    return None
+
+
+def session_path(args, env) -> str:
+    """The PATH the session will get: this env's PATH, and with --window the registry Path entries it lacks appended (launch_window)."""
+    return repaired_path(env) if getattr(args, "window", False) else (env.get("PATH") or "")
+
+
+def hook_problem(args, env, root: "Path | None") -> str:
+    """One sentence naming a gitos hook command the session could not run, and where it looked; "" when each can run (WO-166)."""
+    if root is None:
+        return ""
+    path = session_path(args, env)
+    for command in hook_commands(root):
+        if not resolve_command(command, path):
+            folders = path_entries(path)
+            where = f"looked in {len(folders)} folder{'' if len(folders) == 1 else 's'} on PATH"                 + (f", first {', '.join(folders[:2])}" if folders else "")
+            return (f"the gitos hook command `{command}` in .claude/settings.json is not found on the PATH the session will get "
+                    f"({where}{'' if getattr(args, 'window', False) else '; --window adds the registry Path'}), so every hook would "
+                    "fail or go silent: re-run scaffold.py in the repo to rewrite it to the `py` launcher, or put its folder on PATH")
+    return ""
+
+
+def optimization_engine():
+    """model_optimization.py (the hook writer's shared helper), or None."""
+    import dispatch_guard
+    return dispatch_guard._engine()
+
+
+def registry_paths() -> tuple:
+    engine = optimization_engine()
+    return engine.registry_paths() if engine else ("", "")
+
+
+def path_advisory_line(platform: str = sys.platform) -> str:
+    """The one advisory line when the registry PATH is near the length Windows drops, else ""."""
+    engine = optimization_engine() if platform == "win32" else None
+    return engine.path_advisory(registry_paths()) if engine else ""
 
 
 def home_file(home: Path, rel: str) -> str:
@@ -1107,14 +1342,27 @@ def preflight(args, env, root: "Path | None", home: "Path | None", platform: str
             elif marks.get(int(ref[3:])) == "no":
                 out.append(f"--orders {ref} is marked `sprint: no` in its front matter: remove the mark first, or leave it "
                            "out of --orders")
+            else:
+                why = slice_problem(home, ref)
+                if why:
+                    out.append(f"--orders {ref} is refused: {why}")
     elif "ready" not in marks.values():
         out.append("no order is marked `sprint: ready`; prepare orders in a normal orchestrator window "
                    "(references/orchestrator/sprint-prep.md), or pass --orders")
+    if not args.orders and "ready" in marks.values() and not candidate_orders((), home):
+        out.append("no order marked `sprint: ready` has a slice to dispatch: write or ready its slices in a normal orchestrator "
+                   "window (references/orchestrator/sprint-prep.md), or pass --orders")
     for d in args.add_dir:
         if not Path(d).is_dir():
             out.append(f"--add-dir {d} is not a folder")
     if platform == "win32" and not (claude or find_claude(env)):
-        out.append("the claude executable (claude.exe) was not found on PATH")
+        out.append(claude_not_found(env))
+    if getattr(args, "window", False) and platform != "win32":
+        out.append("--window opens a PowerShell console and works on Windows only")
+    if platform == "win32":
+        why = hook_problem(args, env, root)
+        if why:
+            out.append(why)
     return out
 
 
@@ -2377,10 +2625,98 @@ def main(argv=None, env=None, ops_factory=None) -> int:
         SPRINT_ID = ""
 
 
+LONG_OPTIONS = ("--autocompact", "--effort", "--model", "--add-dir", "--max-rotations", "--orders", "--id", "--window")
+
+
+def option_name(token: str) -> "str | None":
+    """The long option a command-line token names (an unambiguous prefix counts, as argparse reads it), or None."""
+    if not token.startswith("--") or len(token) < 3:
+        return None
+    name = token.split("=", 1)[0]
+    if name in LONG_OPTIONS:
+        return name
+    hits = [o for o in LONG_OPTIONS if o.startswith(name)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def window_argv(raw: list, root: Path) -> list:
+    """The driver's own arguments for the window: `raw` without --window, the repo named by its root and each --add-dir made
+    absolute (the window starts in the repo root, not where this call was made). Every other option is a single option and value."""
+    out, expect = [], None
+    for tok in raw:
+        if expect:
+            out.append(str(Path(tok).resolve()) if expect == "--add-dir" else tok)
+            expect = None
+            continue
+        name = option_name(tok)
+        if name == "--window":
+            continue
+        if name and "=" in tok:
+            key, value = tok.split("=", 1)
+            out.append(f"{key}={Path(value).resolve()}" if name == "--add-dir" else tok)
+        elif name:
+            out.append(tok)
+            expect = name
+        elif tok.startswith("-") and tok != "-":
+            out.append(tok)
+        else:
+            out.append(str(root))
+    return out
+
+
+def ps_quote(text: str) -> str:
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+def powershell_exe(env) -> str:
+    root = env_lookup(env, "SystemRoot") or env_lookup(env, "windir") or r"C:\Windows"
+    cand = Path(root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    return str(cand) if cand.is_file() else (shutil.which("powershell.exe", path=env.get("PATH")) or "powershell.exe")
+
+
+def window_command(args, root: Path, env) -> list:
+    """The command line that starts this sprint in its own PowerShell console: the driver again, the same arguments minus --window."""
+    argv = window_argv(list(args.argv), root)
+    title = f"gitos sprint {args.id or 'exclusive'}"
+    text = (f"$Host.UI.RawUI.WindowTitle = {ps_quote(title)}; "
+            + "& " + " ".join(ps_quote(a) for a in [sys.executable, str(Path(__file__).resolve()), *argv]))
+    return [powershell_exe(env), "-NoLogo", "-NoExit", "-Command", text]
+
+
+def spawn_window(cmd: list, cwd: Path, env: dict) -> int:
+    """Start cmd in a new visible console; -> its pid."""
+    return subprocess.Popen(cmd, cwd=str(cwd), env=env, creationflags=subprocess.CREATE_NEW_CONSOLE).pid
+
+
+def launch_window(args, root: Path, env) -> int:
+    """--window, after the preflight passed: the sprint in a new PowerShell window, with the repaired PATH (and no session markers).
+    One line names the window and the sprint; exit 0."""
+    child = strip_env(env)
+    for k in (compact_restore.SPRINT_ID_ENV, compact_restore.SPRINT_PID_ENV, compact_restore.SPRINT_WORKTREE_ENV,
+              compact_restore.SPRINT_ORDERS_ENV, "GITOS_SPRINT", "GITOS_SPRINT_HOME"):
+        child.pop(k, None)
+    key = next((k for k in child if k.upper() == "PATH"), "PATH")
+    child[key] = repaired_path(child)
+    try:
+        pid = spawn_window(window_command(args, root, child), root, child)
+    except OSError as e:
+        print(f"sprint: the PowerShell window could not be started ({e}); nothing was launched", file=sys.stderr)
+        return 2
+    print(f"sprint: launched PowerShell window pid {pid} for sprint {args.id or 'exclusive'} in {root}", flush=True)
+    return 0
+
+
 def run_main(args, env, ops_factory) -> int:
     env = dict(os.environ if env is None else env)
     start, home, root = resolve_target(args.repo)
     claude = find_claude(env) if home is not None else None
+    env = claude_on_path(env, claude)
+    if home is not None and not args.orders:
+        for ref, why in skipped_orders(home):
+            print(f"sprint: skipped {ref}: {why}", file=sys.stderr)
+    advisory = path_advisory_line()
+    if advisory:
+        print(f"sprint: {advisory}", file=sys.stderr)
     problems = preflight(args, env, root, home, claude=claude)
     if problems:
         for p in problems:
@@ -2389,6 +2725,8 @@ def run_main(args, env, ops_factory) -> int:
         where = f"; {report_refusal(home, bad)}" if bad else ""
         print(f"sprint: nothing was launched{where}", file=sys.stderr)
         return 2
+    if args.window:
+        return launch_window(args, root, env)
     ops = (ops_factory or Ops)(root, home, env, claude)
     with exit_signals():
         return Sprint(args, root, home, env, ops, claude).run()

@@ -9,7 +9,7 @@ function blank() {
     version: "", engine: "", name: "", where: "", host: "", port: "", now: "",
     counts: { open: 0, parked: 0, resolved: 0 },
     orders: [], links: [], resolved: [], sprints: [], records: [], looseEnds: { count: 0, rows: [] },
-    cards: [], notes: [], tabs: ["decisions"], problems: [], copy: "", errors: [], canary: { total: null, at: null },
+    cards: [], controls: [], notes: [], tabs: ["decisions"], problems: [], copy: "", errors: [], canary: { total: null, at: null },
     views: [],           // the repo's own views, [{name, v}]; theme: the repo's theme.css version or null; ext: its providers' output by name (WO-153/S6)
     theme: null, ext: {},
     hub: false, tab: null, repos: [], repoError: null,   // a hub (WO-153/S7): the repos [{tab, name, ok, error, open, active, ready, waiting, parked, sprints, needs}] in the hub's own state, [{tab, name}] in a repo's; `tab` is the repo this state is of
@@ -26,7 +26,7 @@ function blank() {
 export function adapt(raw) {
   const out = {};
   for (const k of ["version", "engine", "name", "where", "host", "port", "now", "counts", "orders", "links", "records", "looseEnds",
-    "cards", "notes", "tabs", "problems", "copy", "errors", "canary", "views", "theme", "ext"]) if (raw[k] !== undefined) out[k] = raw[k];
+    "cards", "controls", "notes", "tabs", "problems", "copy", "errors", "canary", "views", "theme", "ext"]) if (raw[k] !== undefined) out[k] = raw[k];
   for (const k of ["hub", "tab", "repos", "repoError"]) if (raw[k] !== undefined) out[k] = raw[k];   // a hub's (WO-153/S7)
   out.resolved = (raw.resolved || []).map((r) => ({ id: r.id, title: r.title, sev: r.sev, released: r.released || "", path: r.path || "" }));
   out.sprints = (raw.sprints || []).map((s) => ({ ...s, at: Date.parse(s.last || s.started || "") || 0 }));
@@ -101,6 +101,7 @@ function signatures(v, st) {
   for (const s of v.slices.values()) m.set("s:" + s.key, JSON.stringify(s));
   for (const s of st.sprints) m.set("p:" + s.id, JSON.stringify(s));
   for (const c of st.cards) m.set("c:" + c.id, JSON.stringify(c));
+  for (const c of st.controls) m.set("k:" + c.id, JSON.stringify(c));   // a sprint's Stop card: a control, not one of the owner's cards
   for (const r of st.records) m.set("r:" + r.slug, JSON.stringify(r));
   m.set("tabs", JSON.stringify(st.tabs));
   m.set("views", JSON.stringify([st.views, st.theme]));

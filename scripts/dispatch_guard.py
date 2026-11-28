@@ -479,7 +479,10 @@ def hook_entry():
     stops being a gate. `onFailure: "block"` would make the gate's own breakage a refusal,
     which is precisely the accidental block this design exists to rule out.
     """
-    return {"type": "command", "command": "python", "args": ["-I", "-c", HOOK_BOOTSTRAP],
+    engine = _engine()                     # the one interpreter choice all four hook writers share (WO-166)
+    command, args = engine.hook_python(["-c", HOOK_BOOTSTRAP]) if engine else (sys.executable or "python",
+                                                                               ["-I", "-c", HOOK_BOOTSTRAP])
+    return {"type": "command", "command": command, "args": args,
             "statusMessage": "gitos dispatch_guard: every dispatch names a task tier"}
 
 

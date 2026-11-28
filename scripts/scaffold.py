@@ -1098,6 +1098,11 @@ def main() -> int:
                 "present": "SKIP .claude/settings.json slice-edit hook already registered",
                 "skipped": "SKIP .claude/settings.json left untouched",
             }[status] + (f" — {detail}" if status == "skipped" else ""))
+        # A PATH near the length Windows drops would take the hooks above with it: say so once, never refuse (WO-166).
+        engine = model_optimization_module()
+        advisory = engine.path_advisory() if engine is not None and hasattr(engine, "path_advisory") else ""
+        if advisory:
+            print(f"NOTE {advisory}")
         for name in CLAUDE_AGENT_DEFINITIONS:
             dest = root / ".claude" / "agents" / name
             shipped = read_template(f"claude-agents/{name}.tmpl")

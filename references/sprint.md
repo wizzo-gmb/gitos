@@ -1,20 +1,32 @@
 # Sprint mode (operator guide)
 
-A sprint works through a repo's open work-orders in a visible Claude session while you are away. You start it with one
-command in a Windows terminal; a driver script keeps the session going, replaces it with a fresh one when it has compacted
+A sprint works through a repo's open work-orders in a visible Claude session while you are away. You ask the orchestrator for
+one ("run a sprint on these orders"); it prepares the orders, then launches the sprint itself in a visible PowerShell window you
+can watch and step into. A driver script keeps the session going, replaces it with a fresh one when it has compacted
 twice, and ends it when a stop signal appears. The rules the orchestrator follows inside the session are in
 `references/orchestrator/sprint.md`; the reasons for the design are in the repo's brain (`wiki/decisions/sprint-mode.md`).
-Nothing in a repo changes until you run the command there.
+Nothing in a repo changes until you ask for the sprint there.
 
 ## Start
 
+Ask the orchestrator in a normal window: "run a sprint on WO-253 and WO-254". It does the preparation
+(`references/orchestrator/sprint-prep.md`), then runs the driver with `--window`, which opens the sprint in a new visible PowerShell
+window (working directory the repo root, Claude's install folder on its PATH even when the orchestrator's own PATH lacked it) and
+reports the line the driver printed. The orchestrator launches a sprint only when you asked for one in that window.
+
+The command is also the fallback, for example from your own terminal; the session then opens in that terminal, in the repo root:
+
 ```
 python <skill>/scripts/gitos-sprint.py [REPO] [--autocompact TOKENS] [--effort LEVEL] [--model MODEL]
-                                       [--add-dir DIR ...] [--max-rotations N] [--orders NUMS]
+                                       [--add-dir DIR ...] [--max-rotations N] [--orders NUMS] [--window]
 ```
 
-`REPO` is the repo root (default: the current directory; the gitos home is found the way the router finds it). The session
-opens in that terminal, in the repo root, and you can watch it and step in. Windows only for now.
+`REPO` is the repo root (default: the current directory; the gitos home is found the way the router finds it). `--window` runs
+every check in the calling process first (a refusal is printed there and nothing opens), then starts the same command, minus
+the flag, in a new PowerShell window and exits 0. Windows only for now.
+
+The driver finds `claude.exe` on PATH first, then on the PATH rebuilt from the registry (Machine and User), then in the install
+folders (the npm global folder under `%APPDATA%`, and `.local/bin` under `%USERPROFILE%`); one found off PATH has its folder put first on the session's PATH.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -31,15 +43,22 @@ applies, and the driver never passes a permission-bypass flag.
 
 ## Several sprints at once
 
-`--id NAME` (`[a-z0-9-]{1,32}`, with `--orders`) makes a **named sprint**. Open one terminal per sprint, give each its own
-`--id` and disjoint `--orders`, and run them together:
+`--id NAME` (`[a-z0-9-]{1,32}`, with `--orders`) makes a **named sprint**. Each runs in its own window (the orchestrator
+opens one per sprint; from your own terminals, open one each) with its own `--id` and disjoint `--orders`:
 
 ```
 python <skill>/scripts/gitos-sprint.py --id a --orders 253,254
 python <skill>/scripts/gitos-sprint.py --id b --orders 260
 ```
 
-Start them a few seconds apart. This is advice only; the engine does not depend on it.
+Start them a few seconds apart. This is advice only; the engine does not depend on it. Asked for several, the orchestrator
+launches each with its own `--window` call, a few seconds apart.
+
+A window does not report back, so the orchestrator that launched the sprints watches their logs: in the background it runs
+`python <skill>/scripts/sprint_log.py wait-stop --id a --id b [--timeout S] [--since ISO-TIME]` (no `--id`: the exclusive sprint),
+which reads only, and ends when any listed sprint's `log.jsonl` has a `stop` or `error` record, printing `<sprint> <time> <kind>
+<order> <reason>` (exit 0; exit 3 when the timeout passes first). The orchestrator then reads the reason and fixes and relaunches,
+folds the STATE, or tells you (`references/orchestrator/sprint-prep.md`, step 6).
 
 - **Its own state.** A named sprint keeps `STATE.md`, `log.jsonl`, `STOP`, `ROTATE`, `BUSY` and `archive/` under
   `<home>/sprint/<id>/`, and has its own Stop card (the board's *Sprints* view shows it). A card names its sprint and stops
@@ -97,12 +116,21 @@ Each refusal is one sentence on the screen, nothing is launched, and the exit st
 - an `--orders` entry that is not an open work-order (resolved, parked or missing), named in the sentence;
 - an `--orders` entry marked `sprint: no`, named in the sentence; and, with no `--orders`, a repo with no open order marked
   `sprint: ready` (prepare orders in a normal orchestrator window, or pass `--orders`);
+- a folder order with no slice to dispatch: an `--orders` entry whose slices include none that is `ready` with every dependency
+  landed is refused, one line naming the order and the first blocker (`WO-N is refused: no slice is ready to dispatch (S3 proposed,
+  Scope to be written)`); without `--orders` such a marked order is skipped with `skipped WO-N: <the same reason>`, the sprint takes
+  the rest, and it is refused when none is left. A single-file order is unaffected;
 - a `--model` and `--effort` that leave the lead no worker below it under the repo's dispatch rule (a worker on the lead's
   model runs at lower effort, a lower model at up to `high`), for example haiku at low: the lead could dispatch nothing. Raise
   `--effort` or use a higher model;
 - a `GITOS_SPRINT_HOME` that is not a gitos home (no `INDEX.md` beside `work-orders/` or `sprint/`), so a log is never written
   into a repo root;
-- an `--add-dir` that is not a folder, a platform other than Windows, or no `claude.exe` on `PATH`.
+- an `--add-dir` that is not a folder, a platform other than Windows, or no `claude.exe` on `PATH`;
+- a gitos hook command in the repo's `.claude/settings.json` (`py`, or the absolute interpreter) that the session's `PATH` cannot
+  run: one sentence naming the command and how many `PATH` folders it looked in. The `PATH` is the inherited one, plus the registry
+  `Path` entries it lacks when you use `--window` (the window is given them). Re-run `scaffold.py` in the repo to rewrite an old
+  bare `python` entry to the `py` launcher. A registry `Path` near the 8191 characters after which Windows tools ignore an
+  inherited `PATH` prints one `advisory:` line first and refuses nothing; shorten the user `Path`.
 
 A file the driver reads that is malformed is refused the same way, before anything is launched: `worktrees.json`, `board/board.json`,
 `board-route.json`, `model-optimization.json`, `sprint-guard.json` (*The guard command*), or an order's `sprint:` value other than `ready` or `no`. The refusal names the file and
@@ -114,15 +142,16 @@ clears these first), then rerun. The canary also reports `sprint-mark-unknown` a
 
 A sprint is the middle of a loop: **prepare** the orders in a normal orchestrator window ("prepare for sprint": the orchestrator
 settles what is in flight, asks once what in this repo must stay operator-only and records it in the standing rules, checks each
-open order against the sprint criteria, offers fixes, and with your agreement marks the passing orders `sprint: ready`; it ends
-with the command to run, `references/orchestrator/sprint-prep.md`), **run** the script in a terminal, **watch** the `sprint` tab,
+open order against the sprint criteria, offers fixes, and with your agreement marks the passing orders `sprint: ready`; it then
+launches the sprint, `references/orchestrator/sprint-prep.md`), **watch** the sprint window and the `sprint` tab,
 then come back to a normal window to review what landed and push.
 
 The candidates are fixed when the sprint starts and named in the start prompt of every session and in the first log line
 (`orders=WO-253,WO-254`):
 
 - with `--orders`: exactly that list (an order you name need not be marked);
-- without `--orders`: only the open orders marked `sprint: ready` in their front matter. **An unmarked order is never taken
+- without `--orders`: only the open orders marked `sprint: ready` in their front matter that have something to dispatch (a folder
+  order needs a `ready` slice whose dependencies are landed). **An unmarked order is never taken
   unattended.** `sprint: no` marks an order that never runs in a sprint, for any reason: it is not a candidate, and naming it in
   `--orders` is refused.
 

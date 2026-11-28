@@ -94,12 +94,11 @@ Run in order; the detail of a step is in `orchestrator/first-action.md` (steps 6
 Report once, in this order, leaving out a line with nothing to say (a command that prints nothing means say nothing): the board
 line and what its new answers and notes say; engine drift (only if ahead); `git init` (only if run); the heartbeat line; the
 canary line (`canary: CLEAN`, or the findings with cause and correction; findings never block starting work, a red canary blocks
-resolving); `system_one.py status --brief`; `system_one.py drain status <repo-root>`; `worktree.py status` (reap a merged
+resolving); `system_one.py drain status <repo-root>`; `worktree.py status` (reap a merged
 leftover at once with `reap --merged`, raise an abandoned one); `loose_ends.py status <repo-root>` (a `loose-ends-stale` canary
 finding: drain before new work, `orchestrator/drain.md`); the intake lines; an assessment with no response (`orchestrator/first-action.md`); RESUME. If `<home>/model-optimization.json` exists,
 read `orchestrator/dispatch.md` (*Optional model optimization*). System One drains the loose-ends list and does nothing else. A
-dispatched helper drains it; a local model, where a repo runs one, may be down (the GPU is in use), and the drain waits or the helper drains. The orchestrator never drains by hand.
-Never raise it to the operator as a problem.
+dispatched helper drains it; the orchestrator never drains by hand.
 
 ## The work loop
 

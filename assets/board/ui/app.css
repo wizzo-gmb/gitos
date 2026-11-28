@@ -82,9 +82,11 @@
   .dc-warn { display: flex; gap: var(--s-2); align-items: baseline; color: var(--c-waiting); font-size: var(--t-sm); }
   .dc-fp { font: var(--t-xs)/1.4 var(--font-mono); color: var(--ink-3); }
   .dc-opts { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-1); }
-  .dc-opts .opt .rec { margin-left: var(--s-2); font-size: var(--t-2xs); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 6px; border-radius: var(--r-xs); background: var(--accent-soft); color: var(--accent-ink); }
+  .dc-opts .opt { height: auto; min-height: 34px; padding-block: 6px; max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; text-align: left; line-height: 1.35; }
+  .dc-opts .opt .rec { flex: none; margin-left: var(--s-2); font-size: var(--t-2xs); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 6px; border-radius: var(--r-xs); background: var(--accent-soft); color: var(--accent-ink); }
   .dc-opts .opt.sel .rec { background: color-mix(in oklab, var(--on-accent) 22%, transparent); color: var(--on-accent); }
-  .dc-opts .opt[disabled]:not(.sel) { opacity: .5; }
+  .dc-opts .opt[disabled] { pointer-events: none; }
+  .dc-opts .opt[disabled]:not(.sel) { opacity: .5; --b-bg: var(--surface); --b-fg: var(--ink); --b-line: var(--line-strong); border-color: var(--line-strong); box-shadow: var(--shadow-1); }
   .dc-opts .opt.sel[disabled] { opacity: 1; }
   .dc-note { display: flex; gap: var(--s-2); align-items: flex-start; }
   .dc-note .textarea { flex: 1; min-width: 0; min-height: 64px; resize: vertical; }
@@ -101,13 +103,13 @@
   .notice { padding: var(--s-3) var(--s-4); border-radius: var(--r-md); background: color-mix(in oklab, var(--c-waiting) 10%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--c-waiting) 45%, transparent); color: var(--ink); font-size: var(--t-sm); overflow-wrap: anywhere; }
   .notice[hidden] { display: none; }
   .page-body > section { display: flex; flex-direction: column; gap: var(--s-4); }
-  @media (max-width: 640px) { .dcard, .dc-free { padding: var(--s-4); } .dc-opts .btn { flex: 1 1 auto; } .dc-note { flex-direction: column; align-items: stretch; } }
+  @media (max-width: 640px) { .dcard, .dc-free { padding: var(--s-4); } .dc-opts .btn { flex: 1 1 auto; } .dc-opts .opt { min-height: 40px; } .dc-note .textarea { min-height: 88px; } .dc-note { flex-direction: column; align-items: stretch; } }
 
   /* ---------------------------------------------------------------- order drawer */
   .od { display: flex; flex-direction: column; min-height: 100%; }
-  .od-head { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-3) var(--s-5); background: color-mix(in oklab, var(--surface) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
-  .od-ids { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; min-width: 0; }
-  .od-btns { display: flex; align-items: center; gap: var(--s-1); flex: none; }
+  .od-head { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-1) var(--s-3); padding: var(--s-3) var(--s-5); background: color-mix(in oklab, var(--surface) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  .od-ids { display: flex; align-items: center; gap: var(--s-2) var(--s-3); flex: none; max-width: 100%; }   /* the id and every chip on one row; the buttons wrap under them when the two do not fit */
+  .od-btns { display: flex; align-items: center; gap: var(--s-1); flex: none; margin-left: auto; }
   .od-body { padding: var(--s-5) var(--s-6) var(--s-10); display: flex; flex-direction: column; gap: var(--s-6); }
   .od-title { font: 600 var(--t-lg)/1.25 var(--font-serif); letter-spacing: -.012em; text-wrap: balance; }
   .od-prog { display: flex; flex-direction: column; gap: var(--s-2); margin-top: calc(-1 * var(--s-2)); }
@@ -140,7 +142,7 @@
   .od-dl dt { color: var(--ink-3); font-weight: 600; } .od-dl dd { margin: 0; color: var(--ink-2); text-wrap: pretty; overflow-wrap: anywhere; }
   .od-path { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-1) var(--s-1) var(--s-1) var(--s-3); background: var(--sunken); border-radius: var(--r-sm); }
   .od-path .path { flex: 1; font-size: var(--t-xs); color: var(--ink-2); overflow-wrap: anywhere; }
-  @media (max-width: 640px) { .od-body { padding: var(--s-4) var(--s-4) var(--s-10); } .od-head { padding: var(--s-2) var(--s-4); } .od-dl { grid-template-columns: 1fr; gap: 0; } .od-dl dd { margin-bottom: var(--s-2); } }
+  @media (max-width: 640px) { .od-ids { flex: 0 1 auto; flex-wrap: wrap; } .od-body { padding: var(--s-4) var(--s-4) var(--s-10); } .od-head { padding: var(--s-2) var(--s-4); } .od-dl { grid-template-columns: 1fr; gap: 0; } .od-dl dd { margin-bottom: var(--s-2); } }
 
   /* ---------------------------------------------------------------- work list */
   .table-wrap { margin-top: var(--s-1); }
@@ -153,12 +155,13 @@
   .cell-sub.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: pretty; }
   .cell-title .sup { font-weight: 500; color: var(--ink-3); font-size: var(--t-xs); }
   .td.prog gb-strip { width: 100%; }
+  gb-table .td.status { flex-direction: column; align-items: flex-start; gap: var(--s-1); }   /* the status chip and a Pending chip stack inside their column instead of running into the next one */
   .td.prog gb-strip .segs { flex: 0 1 auto; width: 100%; }
   gb-table[static] .tr { cursor: default; }
   .hint-right { margin-left: auto; font-size: var(--t-xs); }
   .sort-select { display: none; min-width: 150px; }
   @media (max-width: 760px) {
-    gb-table .td.id { order: 1; } gb-table .td.status { order: 2; justify-content: flex-end; } gb-table .td.title { order: 3; } gb-table .td.prog { order: 4; }
+    gb-table .td.id { order: 1; } gb-table .td.status { order: 2; justify-content: flex-end; flex-direction: row; } gb-table .td.title { order: 3; } gb-table .td.prog { order: 4; }
     .sort-select { display: block; flex: 1; } .hint-right { display: none; }
     .toolbar { gap: var(--s-2); } .toolbar .chips { flex-wrap: nowrap; overflow-x: auto; margin: 0 calc(-1 * var(--s-4)); padding: 0 var(--s-4); scrollbar-width: none; }
     .toolbar .chips::-webkit-scrollbar { display: none; } .toolbar .chips .chip { flex: none; }
@@ -187,28 +190,68 @@
   @media (max-width: 760px) { .graph-body .toolbar { padding: 0 var(--s-4) var(--s-3); } }
 
   /* ---------------------------------------------------------------- sprints */
-  .sprint-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: var(--s-4); align-items: start; }
-  .sprint { padding: var(--s-5); display: flex; flex-direction: column; gap: var(--s-4); transition: opacity var(--d-slow), box-shadow var(--d-base); }
-  .sprint[data-state="stopped"] { opacity: .66; }
-  .sp-head { display: flex; justify-content: space-between; gap: var(--s-3); align-items: flex-start; flex-wrap: wrap; }
-  .sp-title { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
-  .sp-name { font: 600 var(--t-lg)/1.2 var(--font-serif); letter-spacing: -.01em; margin-right: var(--s-1); }
-  .sp-note { color: var(--ink-3); font-size: var(--t-sm); text-wrap: pretty; margin-top: calc(-1 * var(--s-2)); }
+  /* one list: a row per sprint (state, name, the order in hand, orders done, last activity, Stop) that opens in place to its orders
+     and recent activity. The name is a button stretched over the whole row, so the row is one target and Stop stays its own. */
+  .sp-list { display: flex; flex-direction: column; border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--line); background: var(--surface); overflow: hidden; min-width: 0; container-type: inline-size; }
+  .sp-none { color: var(--ink-3); font-size: var(--t-sm); }
+  .sprint { border-bottom: 1px solid var(--line); min-width: 0; }
+  .sprint:last-child { border-bottom: 0; }
+  .sp-row { position: relative; display: grid; grid-template-columns: 16px minmax(0, 16ch) 96px minmax(0, 1fr) auto; grid-template-areas: "chev name state sub stop"; align-items: center; column-gap: var(--s-3); padding: var(--s-2) var(--s-4); min-height: 48px; transition: background var(--d-fast); }
+  .sp-row:hover { background: var(--surface-2); }
+  .sp-chev { grid-area: chev; color: var(--ink-4); font-size: 16px; transition: rotate var(--d-base) var(--ease); }
+  .sprint[data-open="1"] .sp-chev { rotate: 90deg; }
+  .sp-row > gb-badge { grid-area: state; justify-self: start; }
+  .sp-toggle { grid-area: name; min-width: 0; appearance: none; background: none; border: 0; padding: 0; margin: 0; color: inherit; font: inherit; text-align: left; }
+  .sp-toggle::after { content: ""; position: absolute; inset: 0; cursor: pointer; }
+  .sp-toggle:focus-visible { outline: none; }
+  .sp-toggle:focus-visible::after { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: var(--r-xs); }
+  .sp-sub-line { grid-area: sub; min-width: 0; }
+  .sp-name { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sp-now, .sp-prog, .sp-when { color: var(--ink-3); font-size: var(--t-sm); white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+  .sp-row .btn { grid-area: stop; position: relative; z-index: 1; min-width: 8.5rem; justify-content: center; }
+  .sp-body { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-1) var(--s-4) var(--s-4) calc(var(--s-4) + 16px + var(--s-3)); min-width: 0; }
+  /* the three facts (the order in hand, orders done, time since activity) fill the one cell of the row as columns of their own */
+  @container (min-width: 761px) {
+    .sp-sub-line { display: grid; grid-template-columns: minmax(0, 1fr) 14ch 10ch; column-gap: var(--s-3); align-items: center; }
+    .sp-when { text-align: right; }
+    .sprint:not([data-live="1"]) .sp-row { grid-template-columns: 16px minmax(0, 16ch) 96px minmax(0, 1fr); grid-template-areas: "chev name state sub"; }
+  }
+  @container (max-width: 760px) {
+    .sp-row { grid-template-columns: 16px minmax(0, 1fr) auto auto; grid-template-areas: "chev name state stop" ". sub sub sub"; row-gap: 2px; column-gap: var(--s-2); padding: var(--s-2) var(--s-3); }
+    .sp-sub-line { display: flex; gap: var(--s-3); min-width: 0; }
+    .sp-now { flex: 0 1 auto; min-width: 0; }
+    .sp-row .btn { min-width: 0; }
+    .sp-body { padding: var(--s-1) var(--s-3) var(--s-3); }
+  }
+  /* two-line rows with room: the state is a column of its own and Stop a fixed width, so every badge starts on one left edge down a list */
+  @container (min-width: 481px) and (max-width: 760px) {
+    .sp-row { grid-template-columns: 16px minmax(0, 1fr) 96px auto; }
+    .sp-row .btn { min-width: 8.5rem; }
+  }
+  .sp-note { color: var(--ink-3); font-size: var(--t-sm); text-wrap: pretty; }
+  .sp-sub { font: 650 var(--t-xs)/1.3 var(--font-sans); color: var(--ink-3); letter-spacing: .02em; }
+
+  /* sprints that are not running: the same rows under their own heading, closed until opened */
+  .sp-idle-sec { display: flex; flex-direction: column; gap: var(--s-2); margin-top: var(--s-4); min-width: 0; }
+  .sp-idle-sec > h2 { font: 650 var(--t-sm)/1.3 var(--font-sans); color: var(--ink-3); letter-spacing: .02em; }
+  .sp-idle-sec > h2 .n { font-variant-numeric: tabular-nums; font-weight: 500; }
   .sp-orders { display: flex; flex-direction: column; border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--line); overflow: hidden; background: var(--surface); }
-  .sp-order gb-strip { grid-column: 4; width: 120px; } .sp-order gb-badge { grid-column: 5; justify-self: end; }
-  .sp-order { display: grid; grid-template-columns: 6px 64px minmax(0, 1fr) 120px auto; gap: var(--s-3); align-items: center; padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--line); cursor: pointer; transition: background var(--d-fast); position: relative; }
+  /* a row has two lines: dot, id, title (the flexible one, up to two lines) and the status pill; under the title the strip, in a
+     box of its own that shrinks, with its count inside it, so no part of the row sits under another. At phone width the id and
+     pill share the first line, the title has the second and the strip the third. */
+  .sp-order { display: grid; grid-template-columns: 6px 64px minmax(0, 1fr) auto; grid-template-areas: "dot oid title pill" ". . strip strip"; column-gap: var(--s-3); row-gap: var(--s-2); align-items: center; padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--line); cursor: pointer; transition: background var(--d-fast); position: relative; min-width: 0; }
+  .sp-order .dotline { grid-area: dot; } .sp-order .oid { grid-area: oid; } .sp-order .sp-otitle { grid-area: title; } .sp-order gb-badge { grid-area: pill; justify-self: end; }
+  .sp-order gb-strip { grid-area: strip; display: flex; width: 100%; max-width: 320px; min-width: 0; }
   .sp-order:last-child { border-bottom: 0; }
   .sp-order:hover { background: var(--surface-2); }
   .sp-order[data-cur="1"] { background: color-mix(in oklab, var(--accent) 6%, var(--surface)); }
   .sp-order .dotline { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
   .sp-order[data-cur="1"] .dotline { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 22%, transparent); animation: beacon 2s var(--ease-in-out) infinite; }
-  .sp-otitle { font-weight: 560; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sp-otitle { font-weight: 560; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; line-height: 1.3; }
   .sp-meta { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-4); font-size: var(--t-xs); color: var(--ink-3); font-variant-numeric: tabular-nums; }
-  @media (max-width: 560px) { .sp-order { grid-template-columns: 6px 56px minmax(0, 1fr) auto; } .sp-order gb-strip { display: none; } .sp-order gb-badge { grid-column: 4; } }
+  @media (max-width: 560px) { .sp-order { grid-template-columns: 6px minmax(0, 1fr) auto; grid-template-areas: "dot oid pill" ". title title" ". strip strip"; column-gap: var(--s-2); padding: var(--s-3); } .sp-order .oid { justify-self: start; } }
 
-  .sp-none { color: var(--ink-3); font-size: var(--t-sm); }
-  .sp-more summary { cursor: pointer; color: var(--ink-3); font-size: var(--t-sm); }
-  .sp-recent { display: flex; flex-direction: column; gap: 2px; margin-top: var(--s-2); font-size: var(--t-xs); color: var(--ink-2); }
+  .sp-recent { display: flex; flex-direction: column; gap: 2px; margin-top: var(--s-1); font-size: var(--t-xs); color: var(--ink-2); }
   .sp-recent li { display: grid; grid-template-columns: 112px 64px minmax(0, 1fr); gap: var(--s-2); }
   .sp-recent .rt { color: var(--ink-3); font-variant-numeric: tabular-nums; } .sp-recent .rk { font-weight: 600; } .sp-recent .rm { overflow-wrap: anywhere; }
   @media (max-width: 560px) { .sp-recent li { grid-template-columns: 1fr; gap: 0; } }
@@ -234,7 +277,7 @@
     .crumbs .dim, .crumbs .ic { display: none; }
     .palette-btn { width: 40px; padding: 0; justify-content: center; margin-left: auto; } .palette-btn span, .palette-btn .keys { display: none; }
     .top-spacer { display: none; }
-    gb-conn .lbl { display: none; } gb-conn { padding: 0 var(--s-2); }
+    gb-conn .lbl { display: none; } gb-conn { width: 28px; padding: 0; gap: 0; }
     gb-conn .age { display: none; }
   }
 }

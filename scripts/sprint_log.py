@@ -7,6 +7,13 @@ The log is append-only JSON lines `{"t", "kind", "ref", "msg"}` (plus `session` 
 start, done, note, stop, rotate, error, and a message is cut at 140 characters. The board's Sprints view
 reads the log; no page is written.
 
+    python sprint_log.py wait-stop [--id NAME ...] [--timeout S] [--since ISO-TIME]   read-only: block until a sprint stops
+
+`wait-stop` is the orchestrator's stop watch for the sprints it launched: it polls each named sprint's log (`--id` repeatable; none
+means the exclusive sprint's) and returns when any has a `stop` or `error` record, printing `<sprint> <time> <kind> <order> <message>`
+and exiting 0. It exits 3 with one line when `--timeout` seconds pass first. `--since` ignores records stamped before that
+time (an earlier sprint's log can still be there for a few seconds after the window opens). It writes nothing.
+
 The home comes from GITOS_SPRINT_HOME (the sprint driver sets it, so the orchestrator may call this from any directory,
 a worktree included), else from the working directory by the router's home detection. A GITOS_SPRINT_HOME that is not a gitos
 home (no `work-orders/` folder, no `INDEX.md` beside a `sprint/` folder: a repo root, say) is refused, and nothing is written.
@@ -219,6 +226,41 @@ def sprint_cost(root: Path, sessions: list, env=None) -> str:
         return ""
 
 
+END_KINDS = ("stop", "error")
+WAIT_POLL = 2.0
+EXIT_TIMEOUT = 3
+
+
+def ended_record(records: list, since: "datetime | None" = None) -> "dict | None":
+    """The first `stop` or `error` record (at or after `since` when given), or None. A record whose time cannot be read counts."""
+    for rec in records:
+        if rec.get("kind") not in END_KINDS:
+            continue
+        if since is not None:
+            try:
+                if datetime.fromisoformat(str(rec.get("t"))) < since:
+                    continue
+            except (TypeError, ValueError):
+                pass
+        return rec
+    return None
+
+
+def wait_stop(home: Path, sids: list, timeout: "float | None" = None, since: "datetime | None" = None,
+              poll: float = WAIT_POLL, sleep=time.sleep, clock=time.monotonic) -> "tuple[str, dict] | None":
+    """Block until one of the sprints (`sids`, "" for the exclusive one) has a stop or error record: -> (its id, the record), or
+    None when `timeout` seconds pass first. Read only."""
+    deadline = None if timeout is None else clock() + timeout
+    while True:
+        for sid in sids:
+            rec = ended_record(read_records(home, sid), since)
+            if rec is not None:
+                return sid, rec
+        if deadline is not None and clock() >= deadline:
+            return None
+        sleep(poll if deadline is None else max(0.0, min(poll, deadline - clock())))
+
+
 def state_of(records: list) -> str:
     if not records:
         return "no log yet"
@@ -245,6 +287,31 @@ def home_from_env_or_cwd() -> "tuple[Path, Path] | None":
     return locate(Path.cwd())
 
 
+def wait_stop_cli(home: Path, a) -> int:
+    bad = [i for i in a.ids if not valid_id(i)]
+    if bad:
+        print(f"sprint_log: {bad[0]!r} is not a sprint id", file=sys.stderr)
+        return 1
+    try:
+        since = datetime.fromisoformat(a.since) if a.since else None
+    except ValueError:
+        print(f"sprint_log: --since {a.since!r} is not an ISO time (2026-11-27T10:00:00+01:00)", file=sys.stderr)
+        return 1
+    if since is not None and since.tzinfo is None:
+        since = since.astimezone()
+    names = a.ids or [""]
+    try:
+        got = wait_stop(home, names, a.timeout, since, a.poll)
+    except KeyboardInterrupt:
+        return 130
+    if got is None:
+        print(f"sprint_log: no stop in {', '.join(i or 'exclusive' for i in names)} within {a.timeout:g} s", file=sys.stderr)
+        return EXIT_TIMEOUT
+    sid, rec = got
+    print(f"{sid or 'exclusive'} {rec['t']} {rec['kind']} {rec.get('ref', '')} {rec.get('msg', '')}".replace("  ", " ").rstrip())
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="sprint_log.py", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -253,6 +320,11 @@ def main(argv=None) -> int:
     add.add_argument("message")
     add.add_argument("--ref", default="", help="the order, WO-NNN")
     add.add_argument("--session", default="")
+    wait = sub.add_parser("wait-stop", help="block until one of the sprints has a stop or error record (read only)")
+    wait.add_argument("--id", action="append", default=[], dest="ids", metavar="NAME", help="a named sprint (repeatable); none: the exclusive one")
+    wait.add_argument("--timeout", type=float, default=None, metavar="S", help="give up after this many seconds (exit 3)")
+    wait.add_argument("--since", default="", metavar="ISO-TIME", help="ignore records stamped before this time")
+    wait.add_argument("--poll", type=float, default=WAIT_POLL, metavar="S", help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     try:
         found = home_from_env_or_cwd()
@@ -263,6 +335,8 @@ def main(argv=None) -> int:
         print(f"sprint_log: no gitos home here (set {HOME_ENV} or run inside the repo)", file=sys.stderr)
         return 1
     home, root = found
+    if a.cmd == "wait-stop":
+        return wait_stop_cli(home, a)
     sid = os.environ.get(ID_ENV, "")
     if sid and not valid_id(sid):
         print(f"sprint_log: {ID_ENV} {sid!r} is not a sprint id", file=sys.stderr)

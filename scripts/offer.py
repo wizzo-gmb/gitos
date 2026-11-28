@@ -12,8 +12,6 @@ An answered question is never asked again, because a question exists only while 
 
     model optimization   <home>/model-optimization.json has `preference: unasked` (or no file)   [model_optimization.py]
     lenses               no <home>/lenses.json, and a lens exists to turn on                      [lenses.py]
-    System One           no repo choice in <home>/system-one.json, and a server is configured
-                         on this machine or answers on the default endpoint                        [system_one.py]
     federation           `federation.py offer` says there is something to offer (declining stores
                          nothing, so it is computed fresh each time)                              [federation.py]
     legacy registers     a register file not yet imported or declined (two asked per round)       [loose_ends.py]
@@ -141,37 +139,6 @@ def check_lenses(root, home, **_) -> list:
                                 "Lenses", opts), apply, follow_up=follow)]
 
 
-def _so_detected() -> bool:
-    try:
-        r = subprocess.run([sys.executable, str(SCRIPTS / "system_one.py"), "setup", "--detect"],
-                           capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           timeout=SUBPROCESS_TIMEOUT_S)
-    except (OSError, subprocess.SubprocessError) as e:
-        raise NotRead(f"system_one setup --detect: {type(e).__name__}")
-    return bool(r.stdout.strip())
-
-
-def check_system_one(root, home, **_) -> list:
-    so = _mod("system_one")
-    state, _detail = so.repo_choice(home)
-    if state != "missing":
-        return []                       # on / off answered; malformed and retired are `migrate`'s and the canary's
-    configured = (so.system_home() / so.CONFIG_NAME).is_file()
-    if not configured and not _so_detected():
-        return []
-    yes = [_cmd("system_one.py", "repo", "on", root)]
-    if not configured:
-        yes.insert(0, _cmd("system_one.py", "setup", "--write"))
-    return [_entry(
-        "system-one",
-        _q("Use the local model for System One in this repo? System One drains the loose-ends list (routine "
-           "yes/no judgments for scripts, nothing else). By default a dispatched helper does this; with the local "
-           "model, the repo's text goes to the configured endpoint.", "System One",
-           [("No (default)", "Records off; a helper drains the list and nothing is sent."),
-            ("Yes", "Records on" + ("" if configured else " after setting up the server that answered") + ".")]),
-        {"No (default)": [_cmd("system_one.py", "repo", "off", root)], "Yes": yes})]
-
-
 def check_federation(root, home, registry=None, **_) -> list:
     cmd = [sys.executable, str(SCRIPTS / "federation.py"), "offer", str(root), "--json", "--home", str(home)]
     if registry:
@@ -285,7 +252,7 @@ def check_ccusage(root, home, claude_home=None, which=shutil.which, **_) -> list
 
 
 CHECKS = (("model-optimization", check_model_optimization), ("lenses", check_lenses),
-          ("system-one", check_system_one), ("federation", check_federation),
+          ("federation", check_federation),
           ("legacy-registers", check_legacy), ("harness", check_harness),
           ("ccusage", check_ccusage))
 

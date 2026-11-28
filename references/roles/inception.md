@@ -16,7 +16,7 @@ inception proceeds), **recomputed each reply**. Slipped / stale → the reinject
 
 ## Phase 1 — The interview (seven questions, conversational)
 
-The opt-ins (model optimization, lenses, System One, and federation, legacy registers and the harness popup where
+The opt-ins (model optimization, lenses, and federation, legacy registers and the harness popup where
 they apply) are **not** asked in this interview. They are asked once, together, in the offer round after the
 scaffold (**Phase 2**), so the operator answers one batch instead of one question per subsystem.
 
@@ -102,15 +102,12 @@ The script does NOT ingest — that is your job in Phase 3.
 
 **The one offer round.** Once the scaffold has laid the home, run
 `python <SKILL_DIR>/scripts/offer.py <ROOT>`. It computes every opt-in this repo has not answered (model
-optimization, lenses, System One, federation, legacy registers, the harness popup, ccusage once per machine) by calling each subsystem's own
+optimization, lenses, federation, legacy registers, the harness popup, ccusage once per machine) by calling each subsystem's own
 check, and prints **one question batch**, or **nothing** when nothing is unanswered (then say nothing and go on).
 Pass its `questions` to the harness's question UI (in Claude Code `AskUserQuestion`, in the groups its `calls` name;
 `--text` is for a harness with none), then run the commands its `apply` names for each answer. A question left
 unanswered runs its `if_unanswered` (model optimization is recorded as skipped, off) and nothing else. Defaults:
-model optimization Disabled, lenses off, System One no (the repo's text goes to the configured endpoint only on a
-yes), federation off. System One is asked only when `~/.claude/gitos-system-one/config.json` exists or
-`system_one.py setup --detect` prints a line (then `setup --write` runs first, only on a yes); the answer is stored with
-`system_one.py repo on|off <ROOT>`. Scaffolding alone enables none of them. A recorded answer is never asked again, on resume or at
+model optimization Disabled, lenses off, federation off. Scaffolding alone enables none of them. A recorded answer is never asked again, on resume or at
 upgrade (`references/upgrade.md` → *4q*). The batch's `follow_up` says what an answer leads to: the global lens pick
 (`lenses.py select`), model optimization's harness mapping (`references/model-optimization.md`), federation's group
 pick (`references/federation.md`).

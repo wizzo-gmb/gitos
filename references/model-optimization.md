@@ -216,8 +216,8 @@ or for evidence the lower route is inadequate. **Spec ambiguity caps the tier; i
 does not raise it.** An unpinned Option, an unrun Part-0 probe, or a scope naming no
 files is orchestrator-side work: pin the Option, run the probe, name the files, then
 route. Effort against an unsettled spec buys a more confident reading, not a better
-one. Use deterministic tools when sufficient. The loose-ends drain without a local
-model is **light**: one helper on the model `system_one.py helper` prints (this light choice, when enabled) answers a code-built question
+one. Use deterministic tools when sufficient. The loose-ends drain
+is **light**: one helper on the model `system_one.py helper` prints (this light choice, when enabled) answers a code-built question
 file and code applies the tables (`references/system-one.md`). Classify at dispatch/checkpoints, not
 per tool call. These are task tiers, not three mandatory distinct models.
 

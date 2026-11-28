@@ -153,7 +153,7 @@ WORKTREES_REL = ".claude/worktrees"
 IGNORE_LINE = ".claude/worktrees/"
 IGNORE_COMMENT = "# Agent worktrees (gitos worktree.py): one per work-order, never tracked."
 # `wo-NNN`, or `wo-NNN-sN` for slice N of a folder order (group 1 is the order either way)
-WO_BRANCH_RE = re.compile(r"^wo-(\d{3})(?:-s\d+)?$")
+WO_BRANCH_RE = re.compile(r"^wo-(\d{3})(?:-s\d+[a-z]?)?$")
 BUILTIN_PREFIX = "worktree-"
 # canary.WO_FILE_RE, restated (this file must not import the canary, which imports it); the selftest
 # gate asserts the two agree on a list of names.
@@ -1931,13 +1931,15 @@ def main(argv=None):
         target = pos.pop(0)
         if a.cmd == "new" and not re.fullmatch(r"\d{3}", target):
             ap.error("new needs a three-digit work-order number")
-        if a.slice and (a.cmd != "new" or not re.fullmatch(r"S\d+", a.slice)):
-            ap.error("--slice SN (e.g. S2) belongs to `new`")
+        if a.slice and (a.cmd != "new" or not re.fullmatch(r"S\d+[a-zA-Z]?", a.slice)):
+            ap.error("--slice SN (e.g. S2, or S9b between S9 and S10) belongs to `new`")
+        if a.slice:
+            a.slice = "S" + a.slice[1:].lower()
         if a.cmd == "reap" and target.startswith("-"):
             ap.error("reap needs NNN, a branch or worktree name, or --merged")
         if a.cmd == "reap" and re.fullmatch(r"wo-\d{3}", target):
             target = target[3:]
-        if a.cmd == "reap" and re.fullmatch(r"\d{3}-[sS]\d+", target):      # a slice named by order and number
+        if a.cmd == "reap" and re.fullmatch(r"\d{3}-[sS]\d+[a-zA-Z]?", target):      # a slice named by order and number
             target = f"wo-{target.lower()}"
     if len(pos) > 1:
         ap.error("too many arguments")

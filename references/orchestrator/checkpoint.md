@@ -65,7 +65,7 @@ running process that has no row. <!-- rule:background-sweep -->
    SKILL.md → *Canary* → *Slippage protocol*.)
 
 5. **A second compaction in the window.** Shipped, and measured by a hook: a `SessionStart`
-   hook matched on `compact|clear` (`scripts/compact_restore.py`) counts its own compaction runs per
+   hook matched on `compact|clear|resume` (`scripts/compact_restore.py`) counts its own compaction runs per
    session, which is the number of compactions that session has had, and at the second it prints the rotation
    line into the compacted context. The same hook restores `RESUME.md`, its freshness, the
    standing-rules pointer, live facts (branch, worktrees, open orders) and this repo's federation

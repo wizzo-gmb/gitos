@@ -283,7 +283,13 @@ WO_FORM_NAMES = ("<prefix><sep>NNN<sep><slug>.md — an optional letter prefix (
 WO_DIR_RE = re.compile(rf"^(?:[A-Za-z]+[-_.]?)?{IDENT_NNN}(?:[-_.][A-Za-z0-9][\w.-]*)?$")
 ORDER_FILE = "order.md"
 SPRINT_MARKS = ("ready", "no")     # the values of an order's `sprint:` front matter key (the sprint driver refuses any other)
-SLICE_HEAD_RE = re.compile(r"^###\s+S\d+(?!\d)")
+def _slice_label(no: str) -> str:
+    """A slice number as the ledger names it: digits as an integer, the letter lower-case (`09B` -> `9b`)."""
+    m = re.fullmatch(r"(\d+)([a-z]?)", no, re.IGNORECASE)
+    return f"{int(m.group(1))}{m.group(2).lower()}" if m else no
+
+
+SLICE_HEAD_RE = re.compile(r"^###\s+S\d+[a-z]?\b")   # a slice id is S<number><optional lowercase letter> (slice.py owns the pattern)
 NNN_RE = re.compile(r"\d{3}")
 EMDASH = "—"           # resolved rows may carry an em-dash NNN (no work-order number)
 # A prose/blockquote ledger row's IDENTITY position: the NNN at the head of the item, past
@@ -1729,7 +1735,7 @@ def resume_stale_item(home: Path) -> dict | None:
 # missed resolution. NOT detected, by construction: a fast-forward or squash merge (no merge
 # subject names the branch) and a repo with no git. Both stay silent rather than guess.
 # A `wo-NNN-sN` slice branch is one slice of a folder order, not the order: its merge says nothing about the rest.
-LANDED_MERGE_RE = re.compile(r"^Merge branch '(?:[^']*/)?wo[-_]?(\d{3})(?!\d)(?!-s\d+')[^']*'", re.IGNORECASE)
+LANDED_MERGE_RE = re.compile(r"^Merge branch '(?:[^']*/)?wo[-_]?(\d{3})(?!\d)(?!-s\d+[a-z]?')[^']*'", re.IGNORECASE)
 LANDED_SCAN = 400               # how many recent merge commits are read
 
 
@@ -2149,6 +2155,12 @@ def check_harness(home: Path, skill_dir: Path | None) -> tuple[list[dict], str |
 
 
 # --------------------------------------------------------------------------- run + report
+def _hook_args_key(args: object) -> list:
+    """A hook's identity is the last `args` element (the bootstrap text), whatever interpreter runs it: the same rule as
+    `model_optimization.hook_key`, mirrored because the canary runs standalone (WO-168)."""
+    return args[-1:] if isinstance(args, list) else []
+
+
 def check_dispatch_gate(root: Path, skill_dir: Path | None) -> tuple[list[dict], str | None]:
     """The dispatch tier gate in the repo's committed `.claude/settings.json`.
     -> (items, skip-reason | None-if-compared).
@@ -2163,7 +2175,7 @@ def check_dispatch_gate(root: Path, skill_dir: Path | None) -> tuple[list[dict],
     check that was never a check here - the category simply does not appear (see
     OPTIONAL_CATEGORIES). The caller decides applicability; this function only compares.
 
-    IDENTITY IS THE `args` LIST, read from the installed gate rather than restated here. That is
+    IDENTITY IS THE LAST `args` ELEMENT, read from the installed gate rather than restated here. That is
     the same identity rule the registration writer uses, so an operator who retitled the status
     message or reordered the file still has it registered - and there is no second copy of the
     bootstrap string in this repo to drift from the first.
@@ -2179,7 +2191,7 @@ def check_dispatch_gate(root: Path, skill_dir: Path | None) -> tuple[list[dict],
     if not guard_path.is_file():
         return items, "the installed skill ships no dispatch_guard.py"
     try:
-        expected = _load_module("_gitos_canary_dispatch_guard", guard_path).hook_entry()["args"]
+        expected = _load_module("_gitos_canary_dispatch_guard", guard_path).hook_entry()["args"][-1:]
     except Exception as e:
         return items, f"the installed dispatch_guard.py could not be read ({type(e).__name__})"
     settings = root / ".claude" / "settings.json"
@@ -2202,7 +2214,7 @@ def check_dispatch_gate(root: Path, skill_dir: Path | None) -> tuple[list[dict],
         return items, None
     hooks = doc.get("hooks") if isinstance(doc, dict) else None
     groups = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
-    found = any(isinstance(h, dict) and h.get("args") == expected
+    found = any(isinstance(h, dict) and _hook_args_key(h.get("args")) == expected
                 for g in (groups if isinstance(groups, list) else [])
                 if isinstance(g, dict) and isinstance(g.get("hooks"), list)
                 for h in g["hooks"])
@@ -2255,7 +2267,7 @@ def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict
     -> (items, skip-reason | None-if-compared).
 
     Same shape and the same applicability as `check_dispatch_gate`: the caller applies it only to
-    a repo carrying the anchor. Identity is the `args` list read from the installed hook. REPORTS,
+    a repo carrying the anchor. Identity is the last `args` element (the bootstrap text) read from the installed hook, whatever interpreter runs it. REPORTS,
     NEVER FIXES: laying it is `/gitos upgrade` work. Repo layer only, and hooks are switchable off
     by configuration (disableAllHooks), so this is a guardrail, not a proof.
     """
@@ -2266,7 +2278,7 @@ def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict
     if not hook_path.is_file():
         return items, "the installed skill ships no compact_restore.py"
     try:
-        expected = _load_module("_gitos_canary_compact_restore", hook_path).hook_entry()["args"]
+        expected = _load_module("_gitos_canary_compact_restore", hook_path).hook_entry()["args"][-1:]
     except Exception as e:
         return items, f"the installed compact_restore.py could not be read ({type(e).__name__})"
     settings = root / ".claude" / "settings.json"
@@ -2287,7 +2299,7 @@ def check_compact_restore(root: Path, skill_dir: Path | None) -> tuple[list[dict
         return items, None
     hooks = doc.get("hooks") if isinstance(doc, dict) else None
     groups = hooks.get("SessionStart") if isinstance(hooks, dict) else None
-    found = any(isinstance(h, dict) and h.get("args") == expected
+    found = any(isinstance(h, dict) and _hook_args_key(h.get("args")) == expected
                 for g in (groups if isinstance(groups, list) else [])
                 if isinstance(g, dict) and _matcher_covers(g.get("matcher"), "compact")
                 and isinstance(g.get("hooks"), list)
@@ -2363,7 +2375,7 @@ def open_notes_waiting(home: Path) -> list[dict]:
         rel = names[0]
         if rel.endswith("/" + ORDER_FILE):                       # a folder order: its slices carry the notes
             for sf in sorted((wdir / rel).parent.glob("slices/S*.md")):
-                m = re.match(r"^S(\d+)(?:-[^/]*)?\.md$", sf.name)
+                m = re.match(r"^S(\d+[a-z]?)(?:-[^/]*)?\.md$", sf.name)
                 text = _read(sf)
                 if not m or text is None:
                     continue
@@ -2373,7 +2385,7 @@ def open_notes_waiting(home: Path) -> list[dict]:
                     continue
                 notes = section_lines(text, NOTES_HEADING)
                 if notes and notes_filled(notes, True) and not _adjudication_given(_adjudication_text(notes, text)):
-                    out.append({"kind": "order-notes-waiting", "wo": f"WO-{nnn}/S{m.group(1)}",
+                    out.append({"kind": "order-notes-waiting", "wo": f"WO-{nnn}/S{_slice_label(m.group(1))}",
                                 "file": f"work-orders/{rel.rsplit('/', 1)[0]}/slices/{sf.name}"})
             continue
         text = _read(wdir / rel)
@@ -2842,14 +2854,14 @@ def check_slices(home: Path, skill_dir: "Path | None", today: "date | None" = No
             nnn = WO_DIR_RE.match(f.name).group(1)
             orders.append((nnn, f, resolved))
             for sf in sorted((f / "slices").glob("*.md")):
-                m = re.match(r"^S(\d+)(?:-[^/]*)?\.md$", sf.name)
+                m = re.match(r"^S(\d+[a-z]?)(?:-[^/]*)?\.md$", sf.name)
                 if not m:
                     continue
                 meta = li.parse_front_matter(_read(sf) or "")[0]
                 deps = meta.get("depends_on") or []
                 if isinstance(deps, str):
                     deps = [deps] if deps.strip() else []
-                slices[f"WO-{nnn}/S{int(m.group(1))}"] = {
+                slices[f"WO-{nnn}/S{_slice_label(m.group(1))}"] = {
                     "nnn": nnn, "path": sf, "status": str(meta.get("status", "")).strip(),
                     "commit": str(meta.get("commit", "")).strip(), "deps": deps, "resolved": resolved,
                     "file": sf.relative_to(home).as_posix()}
@@ -3045,68 +3057,6 @@ def check_loose_ends(home: Path, today: "date | None" = None) -> tuple[list[dict
                                                  "no Parked row -> park it as a loose end and route "
                                                  "the point `-> L<n>`"})
     return items, None
-
-
-# ------------------------------------------------- the system-one category (OPTIONAL, MACHINE-LOCAL)
-# An optional local decision model (scripts/system_one.py). Optional in the same sense as
-# `federation`: no machine config, or a repo that opted out, means the category is ABSENT from the
-# report entirely. The logic lives in system_one.py and is IMPORTED here by path, not copied; a
-# machine that has a config but no readable system_one.py gets a VISIBLE skip.
-# Only an engine defect gates: `question-registry-unparseable` (the question registry does not load: a table gap, a
-# duplicate id, ...) counts into `total` and fails the exit code. `endpoint-down` (configured, repo not
-# opted out, the health probe fails, or the config is unusable) is ADVISORY: printed and present in
-# `--json`, flagged `"advisory": true`, never counted, never changing the exit code. Down is the normal
-# state (the operator's GPU is in use); the drain waits.
-OPTIONAL_CATEGORIES = OPTIONAL_CATEGORIES + ("system-one",)
-SYSTEM_ONE_TOOL = "system_one.py"
-
-
-def system_one_module(skill_dir: "Path | None" = None):
-    candidates = [Path(__file__).resolve().parent / SYSTEM_ONE_TOOL]
-    if skill_dir is not None:
-        candidates.append(Path(skill_dir) / TOOL_SRC_DIR / SYSTEM_ONE_TOOL)
-    for cand in candidates:
-        if cand.is_file():
-            try:
-                return _load_module("_gitos_system_one", cand)
-            except Exception:
-                continue
-    return None
-
-
-def check_system_one(home: Path, skill_dir: "Path | None") -> tuple[list[dict], str | None, bool]:
-    """-> (items, skip-reason | None, applicable). Not applicable = no machine config, or opted out."""
-    mod = system_one_module(skill_dir)
-    if mod is None:
-        env = os.environ.get("GITOS_SYSTEM_ONE_HOME")
-        cfg = (Path(env) if env else Path(os.path.expanduser("~")) / ".claude" / "gitos-system-one")             / "config.json"
-        if cfg.is_file():
-            return [], f"{SYSTEM_ONE_TOOL} not found beside canary.py or in the skill", True
-        return [], None, False
-    if not mod.is_configured(home):
-        return [], None, False
-    items: list[dict] = []
-    try:
-        cfg = mod.load_config()
-        ok, detail = mod.health(cfg["endpoint"], cfg)
-        if not ok:
-            items.append({"kind": "endpoint-down", "advisory": True,
-                          "finding": f"System One is down ({detail}) -> nothing to fix here: the drain waits until "
-                                     f"it is back, or a dispatched helper drains it"})
-    except Exception as e:
-        items.append({"kind": "endpoint-down", "advisory": True,
-                      "finding": f"System One is down (config unusable: {e}) -> repair the config, or "
-                                 f"let the drain wait until it is back, or have a dispatched helper "
-                                 f"drain it"})
-    problems = mod.registry_problems()
-    for msg in problems:
-        items.append({"kind": "question-registry-unparseable",
-                      "finding": f"the System One question registry does not load: {msg} -> an engine "
-                                 "defect, not this repo's: run `/gitos upgrade` to refresh "
-                                 "the tool copies, and if it persists author a work-order "
-                                 "against scripts/system_one_questions.py"})
-    return items, None, True
-
 
 
 # ------------------------------------------------- the board category (OPTIONAL, WO-122)
@@ -3313,6 +3263,68 @@ def check_board(home: Path) -> tuple[list[dict], bool]:
         items += board_exposed(home) + board_legacy_pages(home) + board_ui_missing(home)
     return items, True
 
+
+# An owner action (a note, an unpark, a park...) the owner left on the board is a request the operator expects applied. Only a
+# fresh window's first action reads them; the restore hook names the open ones on compact, clear and resume
+# (`compact_restore.py`), and this advisory names one left open too long. Same data folder rule as the board's: this home's
+# `board/data/`, or, when `board-route.json` routes to a hub, the hub's data filtered to this home's tab (an action that
+# carries no tab is the hub's base tab, `decisions`). Read-only, mirrors `board.py read_actions` minimally; anything
+# unreadable is silence.
+OWNER_ACTION_MINUTES = 15
+OWNER_ACTION_BASE_TAB = "decisions"
+
+
+def _jsonl_dicts(path: Path) -> list[dict]:
+    out: list[dict] = []
+    for line in (_read(path) or "").splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict):
+            out.append(e)
+    return out
+
+
+def open_owner_actions(home: Path, now: "datetime | None" = None) -> list[dict]:
+    """The owner actions of this home not closed in `actions-done.jsonl`, oldest first: [{"id", "order", "kind", "age",
+    "tab"}] (`age` in whole minutes, from the board's local-time `at`; `tab` is the hub tab or None). [] when there is no board
+    data, the route is unusable or anything cannot be read."""
+    try:
+        route, why = board_route(home)
+        if why is not None:
+            return []
+        data = (Path(route["board"]) if route else home / BOARD_DIRNAME) / "data"
+        tab = route["tab"] if route else None
+        closed = {d.get("action") for d in _jsonl_dicts(data / "actions-done.jsonl")
+                  if d.get("outcome") in ("applied", "rejected")}
+        now = now or datetime.now()
+        out, seen = [], set()
+        for a in _jsonl_dicts(data / "actions.jsonl"):
+            aid, order, kind = a.get("id"), a.get("order"), a.get("kind")
+            if not (isinstance(aid, str) and isinstance(order, str) and isinstance(kind, str)) or aid in seen:
+                continue
+            seen.add(aid)
+            if aid in closed or (tab is not None and (a.get("tab") or OWNER_ACTION_BASE_TAB) != tab):
+                continue
+            try:
+                age = int((now - datetime.fromisoformat(str(a.get("at")))).total_seconds() // 60)
+            except ValueError:
+                continue
+            out.append({"id": aid, "order": order, "kind": kind, "age": max(age, 0), "tab": tab})
+        return out
+    except Exception:
+        return []
+
+
+def owner_action_items(home: Path, now: "datetime | None" = None) -> list[dict]:
+    """Advisory `owner-action-open` for each open owner action older than OWNER_ACTION_MINUTES."""
+    return [{"kind": "owner-action-open", "advisory": True, "wo": f"WO-{a['order']}", "action": a["id"], "age": a["age"],
+             "finding": f"WO-{a['order']} {a['kind']} left by the owner {a['age']} min ago is still open -> run "
+                        f"`board.py actions{' --tab ' + a['tab'] if a['tab'] else ''}`, apply it to the ledger, then "
+                        f"`board.py action-done {a['id']}{' --tab ' + a['tab'] if a['tab'] else ''}`"}
+            for a in open_owner_actions(home, now) if a["age"] > OWNER_ACTION_MINUTES]
+
 def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,
         registry: "str | None" = None, now: "datetime | None" = None) -> dict:
     r: dict = {"home": str(home), "skill_dir": str(skill_dir) if skill_dir else None,
@@ -3480,14 +3492,6 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,
             checked.add("harness")
         else:
             skip("harness", h_reason)
-    # system-one: optional, absent unless a machine config exists and this repo did not opt out.
-    so_items, so_reason, so_applicable = check_system_one(home, skill_dir)
-    if so_applicable:
-        r["system-one"] = so_items
-        if so_reason is None:
-            checked.add("system-one")
-        else:
-            skip("system-one", so_reason)
     # dispatch tier gate: the repo's committed `.claude/settings.json`. APPLICABLE only to a
     # repo the engine actually scaffolded, which the CLAUDE.md anchor is the evidence for - an
     # unscaffolded home never had the gate laid, so it gets no key and no line at all.
@@ -3508,7 +3512,7 @@ def run(home: Path, skill_dir: Path | None, today: date, stale_days: int = 90,
     # owner board: optional, absent for a home that has neither the board nor a pointer to one.
     b_items, b_applicable = check_board(home)
     if b_applicable:
-        r["board"] = b_items + check_board_copy(home, skill_dir)
+        r["board"] = b_items + check_board_copy(home, skill_dir) + owner_action_items(home)
         checked.add("board")
 
     active = CATEGORIES + tuple(k for k in OPTIONAL_CATEGORIES if k in r)
@@ -3657,9 +3661,6 @@ def print_report(r: dict) -> None:
         sections.append(("Harness (declared skills/plugins/MCP/hooks/agents vs visible)", "harness"))
     # Same rule, same reason: an unscaffolded repo never had the dispatch gate laid, so it gets
     # no line rather than a "skipped (not applicable)" one.
-    if "system-one" in r:
-        sections.append(("System One (optional local model: endpoint, registry, overrides)",
-                         "system-one"))
     if "dispatch" in r:
         sections.append(("Dispatch tier gate (repo .claude/settings.json)", "dispatch"))
     if "restore" in r:

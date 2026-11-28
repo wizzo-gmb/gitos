@@ -37,12 +37,15 @@ import sys
 from pathlib import Path
 
 STATUSES = ("proposed", "ready", "in-progress", "implemented", "landed", "dropped")
-SLICE_ID_RE = re.compile(r"^(?:WO-?)?(\d{3})/S(\d+)$", re.IGNORECASE)
+# A slice id is `S<number><optional lowercase letter>`: the letter inserts a slice between two numbered ones (S9 < S9b < S10).
+# This file owns the pattern, its parse (`slice_label`) and its sort key (`slice_key`); the other readers import or mirror it.
+SLICE_NO = r"\d+[a-z]?"
+SLICE_ID_RE = re.compile(rf"^(?:WO-?)?(\d{{3}})/S({SLICE_NO})$", re.IGNORECASE)
 DIR_RE = re.compile(r"^(?:[A-Za-z]+[-_.]?)?(\d{3})(?!\d)(?:[-_.][A-Za-z0-9][\w.-]*)?$")
 FILE_RE = re.compile(r"^(?:[A-Za-z]+[-_.]?)?(\d{3})(?!\d)[-_.][A-Za-z0-9][\w.-]*\.md$")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-SLICE_FILE_RE = re.compile(r"^S(\d+)(?:-[^/]*)?\.md$")
-SLICE_HEAD_RE = re.compile(r"^###\s+S(\d+)\b\s*[—–:-]*\s*(.*)$")
+SLICE_FILE_RE = re.compile(rf"^S({SLICE_NO})(?:-[^/]*)?\.md$")
+SLICE_HEAD_RE = re.compile(rf"^###\s+S({SLICE_NO})\b\s*[—–:-]*\s*(.*)$")
 MARKER = "gitos-slice"
 SCOPE_HEADINGS = ("## Proposed fix scope", "## Proposed scope")   # the second is the retired forward-form heading: read, never written
 NOTE_LABELS = ("Deviations", "Surprises", "Durable facts", "Process notes", "Follow-ups")
@@ -50,6 +53,22 @@ NOTE_LABELS = ("Deviations", "Surprises", "Durable facts", "Process notes", "Fol
 
 class SliceError(Exception):
     """One line for the operator; nothing was changed."""
+
+
+def slice_label(no) -> str:
+    """The canonical number of a slice, without the `S`: `9`, `9b` (digits as an integer, the letter lower-case). `S09B` -> `9b`.
+    Raises SliceError when `no` is not a slice number."""
+    m = re.fullmatch(r"S?(\d+)([a-z]?)", str(no).strip(), re.IGNORECASE)
+    if not m:
+        raise SliceError(f"'{no}' is not a slice number (digits and an optional letter: 9, 9b)")
+    return f"{int(m.group(1))}{m.group(2).lower()}"
+
+
+def slice_key(no) -> tuple:
+    """The sort key of a slice number or label (`9`, `S9b`): (digits as an integer, letter), so S9 < S9b < S10."""
+    label = slice_label(no)
+    digits = label.rstrip("abcdefghijklmnopqrstuvwxyz")
+    return int(digits), label[len(digits):]
 
 
 def _load_index():
@@ -105,7 +124,7 @@ def find_order(home: Path, nnn: str):
 
 
 def list_slices(folder: Path) -> list:
-    """[(number, path, meta)] sorted by number."""
+    """[(label, path, meta)] sorted by slice key; the label is the number without the `S` (`9`, `9b`)."""
     out = []
     sd = folder / "slices"
     if sd.is_dir():
@@ -113,12 +132,12 @@ def list_slices(folder: Path) -> list:
         for f in sd.glob("*.md"):
             m = SLICE_FILE_RE.match(f.name)
             if m:
-                out.append((int(m.group(1)), f, li.parse_front_matter(_read(f))[0]))
-    return sorted(out, key=lambda t: t[0])
+                out.append((slice_label(m.group(1)), f, li.parse_front_matter(_read(f))[0]))
+    return sorted(out, key=lambda t: slice_key(t[0]))
 
 
 def find_slice(home: Path, sid: str):
-    """-> (folder, number, path, meta) for `WO-NNN/SN`, or None."""
+    """-> (folder, label, path, meta) for `WO-NNN/SN`, or None."""
     m = SLICE_ID_RE.match(sid.strip())
     if not m:
         raise SliceError(f"'{sid}' is not a slice id (WO-NNN/SN)")
@@ -126,7 +145,7 @@ def find_slice(home: Path, sid: str):
     if not found or not found[2]:
         return None
     for num, path, meta in list_slices(found[0]):
-        if num == int(m.group(2)):
+        if num == slice_label(m.group(2)):
             return found[0], num, path, meta
     return None
 
@@ -153,7 +172,7 @@ def _slug(text: str, limit: int = 40) -> str:
     return s or "scope"
 
 
-def _slice_text(num: int, title: str, status: str, scope: str, depends_on=(), origin: str = "") -> str:
+def _slice_text(num, title: str, status: str, scope: str, depends_on=(), origin: str = "") -> str:
     dep = "[" + ", ".join(depends_on) + "]"
     notes = "\n\n".join(f"### {lab}\n" for lab in NOTE_LABELS)
     return (f"---\nstatus: {status}\ndepends_on: {dep}\ncommit:\norigin: {origin}\n---\n"
@@ -275,8 +294,8 @@ def slice_add(home: Path, wo: str, name: str, depends_on=(), origin: str = "", s
             raise SliceError(f"WO-{nnn}'s order.md is {lines} lines, over the {limit}-line limit: trim it (move detail "
                              f"into the slices) or author a new order; nothing was added")
     existing = list_slices(folder)
-    num = (existing[-1][0] if existing else 0) + 1
-    if any(re.sub(r"^S\d+-", "", p.stem) == name for _n, p, _m in existing):
+    num = max((slice_key(n)[0] for n, _p, _m in existing), default=0) + 1
+    if any(re.sub(rf"^S{SLICE_NO}-", "", p.stem) == name for _n, p, _m in existing):
         raise SliceError(f"WO-{nnn} already has a slice named '{name}'; nothing was added")
     dest = folder / "slices" / f"S{num}-{name}.md"
     _write(dest, _slice_text(num, name.replace("-", " "), "proposed", "", tuple(depends_on), origin))

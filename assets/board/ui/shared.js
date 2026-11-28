@@ -45,9 +45,10 @@ export function workSummary() {
 }
 
 /* ---------------------------------------------------------------- stopping a sprint
-   The sprint driver posts one Stop card per sprint (its id is `sprint.stopCard`). Stop answers that card through the board's
-   answer route, bound to the hash of the card shown, exactly as a card answered on the Decisions page. */
-export const stopCardOf = (sp) => store.state.cards.find((c) => c.id === sp.stopCard && c.status !== "closed" && c.tab === "sprint" && (c.options || []).some((o) => o.value === "stop")) || null;
+   The sprint driver posts one Stop card per sprint (its id is `sprint.stopCard`). The board keeps it out of the owner's cards (a
+   stop is a control, not a decision) and sends it as `controls`. Stop answers that card through the board's answer route, bound
+   to the hash of the card shown, exactly as a card answered on the Decisions page. */
+export const stopCardOf = (sp) => store.state.controls.find((c) => c.id === sp.stopCard && c.status !== "closed" && c.tab === "sprint" && (c.options || []).some((o) => o.value === "stop")) || null;
 export const stopRequested = (sp) => { const c = stopCardOf(sp); return !!(c && c.answer && c.answer.option === "stop"); };
 export async function stopSprint(sp) {
   const card = stopCardOf(sp);

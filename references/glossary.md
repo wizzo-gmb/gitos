@@ -118,8 +118,8 @@ The orchestrator handing one work-order or slice to an implementer, with its sco
 model optimization on, its tier.
 
 **Helper**
-The cheapest-tier agent that answers a drain export, the default answerer (a repo with an opt-in local model uses that
-instead while it is up): the drain is the helper's or the local model's, never the orchestrator's by hand. Not an implementer.
+The cheapest-tier agent that answers a drain export: the drain is the helper's, never the orchestrator's by hand. Not an
+implementer.
 
 **Lens**
 An operator-imported domain technique pack (`<home>/agents/`, or the global library `<skill>/agents/`) that a role
@@ -231,7 +231,7 @@ The implementer's own git checkout, `<parent>/<repo>.worktrees/wo-NNN` on branch
 clean. A **slice marker** in a slice worktree's git dir arms the `slice_guard` hook.
 
 **Named sprint**
-A sprint started with `--id NAME` and `--orders`. Several run in one home at once, each in its own terminal, state folder
+A sprint started with `--id NAME` and `--orders`. Several run in one home at once, each launched by the orchestrator in its own window (or by hand in its own terminal), state folder
 (`<home>/sprint/<id>/`) and *sprint worktree*, on disjoint orders. A sprint without an id is the exclusive sprint and runs alone.
 
 **Sprint worktree**
@@ -278,8 +278,8 @@ closed, it leaves the list: not on the list means routed. The canary says (advis
 the list holds more than 3 open rows or one older than 14 days.
 
 **Drain**
-The pass that turns `new` rows into proposals (a dispatched helper by default, or `system_one.py drain` on the local model
-where a repo runs one; never the orchestrator by hand): after an order
+The pass that turns `new` rows into proposals (a dispatched helper answers `system_one.py drain <home> --export`; never the
+orchestrator by hand): after an order
 resolves, at each checkpoint, on `loose-ends-stale`, or when the operator asks ("drain the loose ends").
 
 **Pile** (`<home>/drain/pending/`)
@@ -395,10 +395,9 @@ Claude Code hooks the engine installs: `SessionStart` and `Stop` (`compact_resto
 (`slice_guard.py`, `dispatch_guard.py`). A guardrail, not a proof: hooks can be switched off.
 
 **System One**
-A judgment step, answered by a helper by default or by an opt-in local decision model, that drains the loose-ends list and does nothing else; its *uses* are the
-questions it answers (`loose-end-state`, `loose-end-join`, `loose-end-bundle`, `loose-end-pick`, `probe`). A question
-has a type: `noul` (yes/no; the name is code's), `choice` or `score`; the endpoint's answer comes in one of two
-shapes, *typed* or *keyed*. A local model being down is a normal state; the helper drains instead.
+A judgment step, answered by a helper, that drains the loose-ends list and does nothing else; its *uses* are the
+questions it answers (`loose-end-state`, `loose-end-join`, `loose-end-bundle`). A question has a type: `noul` (yes/no; the
+name is code's) or `choice`; an answer is a word from the question's allowed list, `unsure` always allowed.
 
 **Federation**
 Opt-in, machine-local discovery between gitos repos (`<home>/federation.json`). A *tenant* is one repo's record in
@@ -441,7 +440,7 @@ names is resolved, or a date it names has passed), and the owner board's open ca
 read from its files. A view computed from the stores, never a store: RESUME's "Waiting on whom" points at it instead of restating it.
 
 **Offer** (the one consent round) (`scripts/offer.py`)
-Every opt-in the engine has (model optimization, lenses, System One, federation, legacy registers, the harness popup),
+Every opt-in the engine has (model optimization, lenses, federation, legacy registers, the harness popup),
 asked together in one question batch at inception and at upgrade. A question exists only while its store lacks the
 answer, so an answered one is never asked again; nothing unanswered prints nothing. `federation.py offer` is the
 federation part of it and still runs on its own.

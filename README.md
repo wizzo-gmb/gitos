@@ -186,10 +186,13 @@ The old sandboxed `local/*.html` pages are retired; a repo moves each one to a v
 ## Sprint mode — work the ledger while you are away
 
 A sprint works through a repo's open work-orders unattended, in a visible Claude session you can watch and step
-into. You start it with one command in a terminal (Windows only for now):
+into (Windows only for now). You ask for it; the orchestrator launches it. Say "start a sprint" in a normal
+orchestrator window and it opens the sprint in its own PowerShell window, with Claude's install folder and your
+registry PATH on that window's PATH, after a preflight that refuses (one sentence, nothing launched) when Python, the
+hooks' interpreter or `claude` cannot be found. The command it runs, if you want it by hand:
 
 ```bash
-python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --autocompact 500k --effort medium
+python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --window --autocompact 500k --effort medium
 ```
 
 - **Same orchestration as a normal window:** parallel implementers, one worktree per order, the same dispatch
@@ -200,9 +203,9 @@ python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --autocompact 500k 
 - **Rotates itself.** After the session compacts twice, the orchestrator checkpoints and the driver starts a
   fresh session, which resumes from the ledger. The sprint keeps its own state file; your next normal window
   folds it into the resume.
-- **Quiet.** Each reply is the role marker line alone; progress goes to the owner board's Sprints view (a
-  live log with a cost line), the commits and the ledger.
-- **Stops cleanly.** The board's Stop card stops after the current order; a malformed input is refused and
+- **Quiet.** Each reply is the role marker line alone; progress goes to the owner board's Sprints view (one list,
+  a row per sprint that opens to its orders, live log and cost line), the commits and the ledger.
+- **Stops cleanly.** The Stop control on the sprint's row stops after the current order; a malformed input is refused and
   reported back for your next normal window. Every stop writes the sprint state first.
 - **Your own safety check.** A repo with outside state (a running service, open positions, a live job) can name a
   guard command in `<home>/sprint-guard.json`; the driver runs it before every launch and after every close, and
@@ -212,7 +215,7 @@ python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --autocompact 500k 
 
 ### Several sprints at once
 
-Give each sprint a name and its own orders, one terminal each:
+Give each sprint a name and its own orders; each gets its own window:
 
 ```bash
 python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --id a --orders 12,14
@@ -228,7 +231,7 @@ python ~/.claude/skills/gitos/scripts/gitos-sprint.py [REPO] --id b --orders 15,
   runs the gate (the canary, plus your own command in `<home>/sprint-gate.json` if you name one; it is read from
   main, so a sprint cannot change it), then fast-forwards main. A refused land stops that sprint with a board card.
   Your own merges while sprints run take the same lock (`worktree.py lock acquire` / `release`).
-- **Its own Stop card.** Each sprint has its own card on the board and its own log; stopping one leaves the others
+- **Its own Stop.** Each sprint has its own row and Stop control on the board and its own log; stopping one leaves the others
   running. Each sprint's stuck check counts only its own commits.
 - **A sprint without `--id`** is the exclusive sprint: it still runs alone, and no named sprint starts beside it.
 
@@ -266,7 +269,7 @@ optimization preserves previous evidence and guidance.
 
 Configuration, harness support, and limits: [model optimization](references/model-optimization.md).
 
-## Loose ends and System One
+## Loose ends and the drain
 
 Loose ends pile up between work orders: a follow-up an implementer named, a remark that was not acted on, a
 small gap found while doing something else. gitos writes each one down on the repo's loose-ends list so the
@@ -293,38 +296,16 @@ The drain only does work the main model is not already doing. Decisions made whi
 routing implementer notes, what goes into the brain, which lenses apply, or reviewing a diff, stay with the
 orchestrator.
 
-### System One: connecting a local model (optional)
-
-If you have a local model, **System One** connects it to the engine and the drain runs on it instead of the cloud
-helper: free per call, and the same proposals through the same checks. When it is down (say, while your machine is busy) the drain falls back to the cloud
-helper or waits; that is reported once, never as a problem, and never blocks a commit.
+The drain's questions and decision tables live in `scripts/system_one.py` (the name is historical). There is no
+local model: one was optional up to v74 and was retired in v75; `/gitos upgrade` retires its per-repo setting.
 
 ```text
-system_one.py setup                  find and check a local server; --write saves the machine config
-system_one.py repo on|off|status     use it in this repo, or not
-system_one.py status --brief         one line: on, off, not chosen, or down
-system_one.py drain <home>           drain on the local server (drain accept|decline|defer|status)
-system_one.py drain <home> --export F / --answers F   the same drain, answered by the cloud helper
+system_one.py drain <home> --export F / --answers F   the drain, answered by the cloud helper
+system_one.py drain accept|decline|withdraw|defer ID  decide a proposal; drain status lists the pile
 system_one.py helper                 which model the cloud helper runs on
-system_one.py uses-check             check every question type against a server after a model change
 ```
 
-**What it takes.** Any model you can serve locally, behind a server that answers `POST /v1/systemone` (the engine
-sends it one small question at a time and checks every answer). The engine does not care which model or hardware
-you use; a small instruction-tuned model is enough. The repo ships a reference server
-(`assets/system-one/serve_general.py`) you can point at a model directory, or you can put the same endpoint in
-front of whatever you already run.
-
-**Connecting it, once per machine.**
-
-1. Start your server so it answers on a local address (the reference server listens on `127.0.0.1:8765`).
-2. Run `python scripts/system_one.py setup`, then `uses-check`. `setup` checks that the server is really a System
-   One server, shows what it would write, and writes the machine config (endpoint and model label) only with
-   `--write`. `uses-check` runs every question type against the server; run it again after any model change.
-3. Each repo is then asked once, at inception or on the next `/gitos upgrade`, whether to use it; `system_one.py
-   repo on` turns it on directly. A repo that has not chosen it uses the cloud helper.
-
-Auto-start, serving other machines on your network, and the full config: **`references/system-one.md`** → *Machine setup*.
+Detail: **`references/system-one.md`**.
 
 ## Federation — optional, off by default
 

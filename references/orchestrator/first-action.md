@@ -62,7 +62,7 @@ Bootstrap your state before doing anything:
 steps, report once, in this order. A line with nothing to say is left out (a command that prints
 nothing means say nothing); none of these blocks starting work, except where a line says so.
 
-0. **Owner board** (step 0): its one line, then what the new answers and notes say, then the owner's new actions (`board.py actions`: apply each to the ledger, commit, close it with `action-done ID` or `action-done ID --rejected "<reason>"`; on a hub repo, both take `--tab <tab>` (`actions --tab <tab>`, `action-done ID --tab <tab>`), and refuse without it; `references/owner-board.md` -> *Owner actions*). <!-- rule:board-summary-line -->
+0. **Owner board** (step 0): its one line, then what the new answers and notes say, then the owner's new actions (`board.py actions`: apply each to the ledger, commit, close it with `action-done ID` or `action-done ID --rejected "<reason>"`; on a hub repo, both take `--tab <tab>` (`actions --tab <tab>`, `action-done ID --tab <tab>`), and refuse without it; `references/owner-board.md` -> *Owner actions*); the restore hook (compact, clear, resume) and the canary's `owner-action-open` advisory also surface an open one mid-session. <!-- rule:board-summary-line -->
 1. **Engine drift** (step 4), only if the skill is ahead: *"engine vN available, this repo on vM — run the
    `upgrade` command (or this product's engine-sync bridge, if it has one) to adopt the latest
    directives"*. Do not auto-upgrade; let the operator decide.
@@ -71,26 +71,21 @@ nothing means say nothing); none of these blocks starting work, except where a l
 4. **Canary** (step 7): one line — `canary: CLEAN`, or the findings first, forward-positive, cause + correction
    ("counts.decisions=16, files=17 → set 17"). Findings never block starting work; a red canary does block
    resolving any work-order (work-loop step 7).
-5. **System One**: run `python ~/.claude/skills/gitos/scripts/system_one.py status --brief` and report its line if
-   it prints one (with no machine config it prints nothing: say nothing). **System One drains the loose-ends
-   list and does nothing else. A dispatched helper drains it; a local model, where a repo runs one, may be down
-   (the GPU is in use), and the drain waits or the helper drains. The orchestrator never drains by hand. Never raise it to the operator as a problem.** Its line is reported once,
-   plain: no colour, no follow-up.
-6. **Drain**: run `python ~/.claude/skills/gitos/scripts/system_one.py drain status <repo-root>` and report its line
+5. **Drain**: run `python ~/.claude/skills/gitos/scripts/system_one.py drain status <repo-root>` and report its line
    (`drain: N pending (J join, B new-order, Q ask, P park, C close, R read)`) the way the intake count is
    reported; with no `<home>/drain/pending/` it prints nothing, say nothing.
-7. **Worktrees**: run `python ~/.claude/skills/gitos/scripts/worktree.py status`: a reapable leftover is reaped at
+6. **Worktrees**: run `python ~/.claude/skills/gitos/scripts/worktree.py status`: a reapable leftover is reaped at
    once (`reap --merged`) and reported, an abandoned one is raised to the operator.
-8. **Loose ends and what waits on the operator**: run `python ~/.claude/skills/gitos/scripts/loose_ends.py status
+7. **Loose ends and what waits on the operator**: run `python ~/.claude/skills/gitos/scripts/loose_ends.py status
    <repo-root>` and report what it prints: the one-line count, then the waiting view when something waits (nothing
    waits and no list file: it prints nothing, say nothing). If the canary reported
    `loose-ends-stale`, drain the list **before new work** (*Draining the loose ends*).
-9. **Federation intake** (step 8, only if `<home>/intake/` exists): the **count and the metadata lines
+8. **Federation intake** (step 8, only if `<home>/intake/` exists): the **count and the metadata lines
    `federation.py intake` prints, verbatim**. Another repo has filed a finding here and it is waiting on this
    repo's operator.
-10. **Assessment** (below), only if the canary's `assessment-unanswered` advisory names a report: one line, the report's
-    path. It does not block starting work.
-11. **RESUME** (step 9): every sprint state you folded (one line each), any sprint worktree left behind, what you verified, and
+9. **Assessment** (below), only if the canary's `assessment-unanswered` advisory names a report: one line, the report's
+   path. It does not block starting work.
+10. **RESUME** (step 9): every sprint state you folded (one line each), any sprint worktree left behind, what you verified, and
     any claim found dead.
 
 ## Assessments

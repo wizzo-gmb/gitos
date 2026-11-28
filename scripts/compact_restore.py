@@ -1,6 +1,6 @@
 """Restore working state after a compaction or a `/clear`, and back-stop a missed resolution.
 
-Two hooks in one file, one entry: `SessionStart` matched on `compact|clear` restores, and `Stop`
+Two hooks in one file, one entry: `SessionStart` matched on `compact|clear|resume` restores, and `Stop`
 asks once when a work-order has landed unresolved, an implementer's notes wait for adjudication, or RESUME
 is behind the ledger (see `stop_output`). The text below describes the restore half.
 
@@ -18,6 +18,10 @@ window needs it. The client documents that a `SessionStart` hook whose matcher i
 source runs after compaction and that its plain stdout is added to the compacted context. This
 is that hook. It runs at EVERY compaction, not once, because what a hook added earlier is itself
 summarized away.
+
+OWNER ACTIONS. On all three sources the output names the owner actions open on the board for this home (a note, an unpark...;
+`canary.open_owner_actions`), because only a fresh window's first action reads them otherwise. A `resume` keeps its
+conversation, so it prints that one line and nothing else: no marker, RESUME or live facts, and no count.
 
 WHAT IT NEVER DOES. It does not trigger compaction, it does not read the transcript, and it does
 not estimate context size: none of those is documented as available to a hook or a model, and a
@@ -54,9 +58,11 @@ import time
 
 EVENT = "SessionStart"
 STOP_EVENT = "Stop"
-# A matcher of plain names is a list of exact strings, so this fires on exactly these two sources.
-MATCHER = "compact|clear"
-SOURCES = ("compact", "clear")
+# A matcher of plain names is a list of exact strings, so this fires on exactly these three sources.
+MATCHER = "compact|clear|resume"
+SOURCES = ("compact", "clear", "resume")
+OLD_MATCHERS = ("compact", "compact|clear")    # earlier registrations of this hook, widened in place by `_widen_matcher`
+OWNER_ACTION_CAP = 5
 HOOK_MATCHERS = {EVENT: MATCHER}
 STOP_MATCHERS = {STOP_EVENT: None}
 # The client truncates plain stdout over 10,000 characters; stay well under it.
@@ -204,6 +210,24 @@ def _worktree_lines(root, home):
         if parts:
             out.append("Branches with no worktree: " + "; ".join(parts) + ".")
     return out
+
+
+def owner_action_line(home):
+    """One line naming this home's open owner actions, or None when there are none (or they cannot be read)."""
+    canary = _canary()
+    if canary is None:
+        return None
+    try:
+        acts = canary.open_owner_actions(home)
+    except Exception:
+        return None
+    if not acts:
+        return None
+    shown = ", ".join(f"WO-{a['order']} {a['kind']}" for a in acts[:OWNER_ACTION_CAP])
+    more = len(acts) - OWNER_ACTION_CAP
+    tab = f" --tab {acts[0]['tab']}" if acts[0]["tab"] else ""
+    return (f"owner board: {len(acts)} open owner action(s) ({shown}{f', +{more} more' if more > 0 else ''}) - "
+            f"run board.py actions{tab}, apply, action-done")
 
 
 def live_facts(root, home):
@@ -581,6 +605,8 @@ def build_output(payload):
     if found is None:
         return None
     home, root = found
+    if source == "resume":
+        return owner_action_line(home)
 
     skill = Path(__file__).resolve().parent.parent
     why = ("this fresh window starts with neither the router nor the brief" if cleared else
@@ -614,6 +640,9 @@ def build_output(payload):
     elif resume_text is not None:
         tail.extend(freshness_lines(root, resume, resume_text, cleared))
     tail.extend(live_facts(root, home))
+    owner = owner_action_line(home)
+    if owner:
+        tail.append(owner)
     rules = home / STANDING_RULES_REL
     if rules.is_file():
         tail.append(f"Re-read the standing rules now: {rules}. \"Don't do X\" constraints are "
@@ -923,7 +952,10 @@ def hook_entry(event=EVENT):
     Neither `async` nor `onFailure` is set. The `Stop` entry carries no status message, which
     would flash at the end of every turn.
     """
-    entry = {"type": "command", "command": "python", "args": ["-I", "-c", HOOK_BOOTSTRAP],
+    engine = _engine()                     # the one interpreter choice all four hook writers share (WO-166)
+    command, args = engine.hook_python(["-c", HOOK_BOOTSTRAP]) if engine else (sys.executable or "python",
+                                                                               ["-I", "-c", HOOK_BOOTSTRAP])
+    entry = {"type": "command", "command": command, "args": args,
              "statusMessage": "gitos compact_restore: restoring working state after compaction or clear"}
     if event == STOP_EVENT:
         del entry["statusMessage"]
@@ -971,10 +1003,10 @@ def ensure_hook(root, engine=None):
 
 
 def _widen_matcher(root, engine):
-    """Upgrade an older `compact`-only registration of THIS hook in place. -> True if changed.
+    """Upgrade an older `compact` or `compact|clear` registration of THIS hook in place. -> True if changed.
 
     The engine's writer recognises an entry by its `args` and then leaves it alone, so an entry
-    registered before `clear` existed would stay on `compact` for ever. Rewriting its matcher here
+    registered before `clear` or `resume` existed would stay on its old matcher for ever. Rewriting its matcher here
     keeps it one entry firing once per event. If the old group also holds some other command, ours
     is moved into a group of its own so that command's scope does not widen with it.
     """
@@ -986,12 +1018,12 @@ def _widen_matcher(root, engine):
         return False
     if not isinstance(groups, list):
         return False
-    args = hook_entry()["args"]
+    entry = hook_entry()
     changed, result = False, []
     for group in groups:
-        mine = isinstance(group, dict) and group.get("matcher") == "compact" \
+        mine = isinstance(group, dict) and group.get("matcher") in OLD_MATCHERS \
             and isinstance(group.get("hooks"), list) \
-            and [h for h in group["hooks"] if isinstance(h, dict) and h.get("args") == args]
+            and [h for h in group["hooks"] if engine.same_hook(h, entry)]
         if not mine:
             result.append(group)
             continue

@@ -94,6 +94,8 @@ orchestrator's. The board writes nothing into a repo.
 Live data (WO-153): GET /api/state is the board's own state (cards, notes, tabs, problems) plus the ledger half, built through the
 engine's readers (ledger_index, slice, sprint_log, loose_ends): orders with their slices and `depends_on`, resolved orders, sprints,
 loose ends, the brain's decision records as metadata, and `errors` (a reader that raised, said and never thrown), with a `version`.
+A sprint's Stop card (sprint tab, a `stop` option) is a control: the page's state holds it in `controls`, not in `cards`, and counts and
+lists of the owner's cards leave it out; the CLI and the driver still see it as a card.
 GET /api/events is a text/event-stream of that state (event `state`, the version as its id, honouring Last-Event-ID), a comment
 every 15 s, at most 16 open and a seventeenth gets 503. One watcher thread notices changes in the files the state is built from.
 The readers are found beside this file's repo (the engine's own checkout) or in the installed skill; with none, `errors` says so.
@@ -138,10 +140,11 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-BOARD_VERSION = 8
+BOARD_VERSION = 9
 DEFAULT_HOST = "127.0.0.1"
 PORT_LO, PORT_HI = 8800, 8999
 BASE_TABS = ("decisions",)
+CONTROL_TAB = "sprint"     # the tab a sprint driver posts its Stop card to
 GROUPS = ("close", "decision", "action", "parked")
 KINDS = ("decision", "plan", "send")
 GO = {"plan": "apply", "send": "send"}
@@ -620,6 +623,24 @@ def load_cards(problems: list, tab_set: "tuple | None" = None) -> list:
     return sorted(cards, key=lambda c: (c["created"], c["id"]))
 
 
+def is_control(c: dict) -> bool:
+    """A sprint's Stop card: on the sprint tab, with a `stop` option. A stop is a control on the Sprints view, not a decision: it
+    stays a card (the driver reads its answer through `answer-for`) but is not one of the owner's open cards."""
+    return c.get("tab") == CONTROL_TAB and any(isinstance(o, dict) and o.get("value") == "stop" for o in c.get("options") or [])
+
+
+def hide_controls(s: dict) -> dict:
+    """The page's state: Stop cards move from `cards` to `controls` (the Sprints view answers them), so no count, tab or list of
+    the owner's cards holds one; the sprint tab goes when nothing but Stop cards was on it. The CLI and the driver read `state()`."""
+    cards = s["cards"]
+    s["controls"] = [c for c in cards if is_control(c)]
+    s["cards"] = [c for c in cards if not is_control(c)]
+    s["copy"] = copy_text(s["cards"])
+    if not any(c["tab"] == CONTROL_TAB for c in s["cards"]):
+        s["tabs"] = [t for t in s["tabs"] if t != CONTROL_TAB]
+    return s
+
+
 def copy_text(cards: list) -> str:
     """What Copy my answers puts on the clipboard: one `id -> option | note` line per open card with a valid answer.
     Never a title, never a closed card, never an answer the card no longer matches."""
@@ -697,6 +718,7 @@ def counts(tab: "str | None" = None) -> dict:
     it."""
     s = state()
     cards = [c for c in s["cards"] if tab in (None, c["tab"])]
+    cards = [c for c in cards if not is_control(c)]
     mark = read_mark()
     ap: list = []
     live = [a for a in acts_in_tab(read_actions(ap), tab) if not a["closed"]]
@@ -1239,7 +1261,7 @@ STREAM_TICK = 0.25       # seconds a stream waits on its socket before it looks 
 HEARTBEAT = 15           # seconds of silence before a stream sends a comment line
 WATCH_EVERY = 0.5        # seconds between the watcher's looks at the files
 RESOLVED_SHOWN = 20      # the newest resolved orders listed (their count is exact)
-SLICE_REF_RE = re.compile(r"(?:WO-?)?(\d{3})/(S\d+)", re.IGNORECASE)
+SLICE_REF_RE = re.compile(r"(?:WO-?)?(\d{3})/(S\d+[a-z]?)", re.IGNORECASE)
 CANARY_FIRST = 3         # seconds after the server starts before the first canary run
 CANARY_EVERY = 300       # seconds between canary runs: it reads the whole home, so the state shows its last answer
 CANARY_LIMIT = 120       # seconds a canary run may take before it is stopped and reported
@@ -1288,7 +1310,8 @@ def _dep(ref, nnn: str) -> str:
     m = SLICE_REF_RE.fullmatch(str(ref).strip())
     if not m:
         return clean(ref)
-    return m.group(2).upper() if m.group(1) == nnn else f"{m.group(1)}/{m.group(2).upper()}"
+    sid = "S" + m.group(2)[1:].lower()      # the letter of `S9b` stays lower-case, as the slice's own id has it
+    return sid if m.group(1) == nnn else f"{m.group(1)}/{sid}"
 
 
 def _listed(value) -> list:
@@ -1698,6 +1721,7 @@ def build_state(live: "Live | None" = None) -> dict:
     own tab's state (build_tab_state), never here."""
     s = state()
     s.update(work_state(home_dir(), s["cards"]))
+    hide_controls(s)
     s["problems"] = s["problems"] + s.pop("actionProblems")
     rt = routes()
     s.update(hub=bool(rt), tab=None, repos=[repo_row(t, rt[t], live.kid(t) if live is not None else None) for t in tabs() if t in rt])
@@ -1718,6 +1742,7 @@ def build_tab_state(tab: str) -> dict:
     else:
         why = f"{root} has no gitos home (.gitos, outputs/debug, .pipeline or docs/agents)"
     s.update(work_state(home, s["cards"], tab=tab, missing=why))
+    hide_controls(s)
     s["problems"] = s["problems"] + s.pop("actionProblems")
     rt = routes()
     s.update(hub=True, tab=tab, name=clean(root.name if root is not None else tab),

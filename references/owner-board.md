@@ -202,6 +202,10 @@ The orchestrator's side is one rule, three commands:
 
 A closed action never reopens. A note is read before the next step on its order.
 
+A fresh window's first action reads the open actions (step 0); the restore hook also names them on compact, clear and
+resume (`owner board: N open owner action(s) ...`), and the canary reports one left open over 15 minutes as the advisory
+`owner-action-open`, so an action left mid-session is not missed.
+
 ## Repo views
 
 A repo adds pages to the board, with its own data and look, by putting files under `<home>/board/` (committed; an upgrade

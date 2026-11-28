@@ -203,21 +203,34 @@ class GbSev extends HTMLElement {
   render() { const l = this.getAttribute("level") || ""; setText(this.querySelector("span"), l.charAt(0).toUpperCase() + l.slice(1)); this.setAttribute("aria-label", "Severity " + l); }
 }
 
-/* <gb-strip> one segment per slice, in the slice's state; .set(["landed","in-progress",...], "1/8 slices") */
+/* <gb-strip> one segment per slice, in the slice's state; .set(["landed","in-progress",...], "1/8 slices").
+   When the segments would each fall below STRIP_MIN px in the room the strip has (re-measured when that room changes), they become
+   one continuous bar: a run of equal states is one piece sized by its length, so the strip fits its container at any count and
+   the label beside it is never covered. */
+const STRIP_MIN = 6, STRIP_SEGS = 8;   // STRIP_SEGS: the count past which a strip is a bar while its room is still unknown
 class GbStrip extends HTMLElement {
+  #args = null;
   connectedCallback() {
     if (this.querySelector(".segs")) return;
-    this.append(h("span", { class: "segs", role: "img" }), h("span", { class: "num" }));
+    const segs = h("span", { class: "segs", role: "img" });
+    this.append(segs, h("span", { class: "num" }));
+    new ResizeObserver(() => { if (this.#args) this.set(...this.#args); }).observe(segs);
   }
   set(states, text, label) {
     this.connectedCallback();
-    const segs = this.querySelector(".segs");
-    while (segs.children.length < states.length) segs.append(h("i", { class: "seg" }));
-    while (segs.children.length > states.length) segs.lastChild.remove();
-    states.forEach((s, i) => {
+    this.#args = [states, text, label];
+    const segs = this.querySelector(".segs"), room = segs.clientWidth;
+    const bar = room ? states.length * (STRIP_MIN + 2) - 2 > room : states.length > STRIP_SEGS;
+    const items = [];
+    for (const s of states) { const last = items[items.length - 1]; if (bar && last && last[0] === s) last[1]++; else items.push([s, 1]); }
+    if (segs.hasAttribute("data-bar") !== bar) { segs.toggleAttribute("data-bar", bar); segs.replaceChildren(); }
+    while (segs.children.length < items.length) segs.append(h("i", { class: "seg" }));
+    while (segs.children.length > items.length) segs.lastChild.remove();
+    items.forEach(([s, n], i) => {
       const seg = segs.children[i];
       const was = seg.dataset.s;
-      if (was !== s) { seg.dataset.s = s; if (was && s === "landed") { seg.classList.remove("pop"); void seg.offsetWidth; seg.classList.add("pop"); } }
+      if (bar) seg.style.flexGrow = n; else seg.style.removeProperty("flex-grow");
+      if (was !== s) { seg.dataset.s = s; if (!bar && was && s === "landed") { seg.classList.remove("pop"); void seg.offsetWidth; seg.classList.add("pop"); } }
     });
     const num = this.querySelector(".num"); setText(num, text || ""); num.hidden = !text;
     segs.setAttribute("aria-label", label || states.map((s) => LABELS[s] || s).join(", "));
@@ -311,7 +324,7 @@ class GbOrderCard extends HTMLElement {
     const o = this._order, r = this.refs;
     setText(r.id, "WO-" + o.id);
     setAttr(r.sev, "level", o.sev);
-    setText(r.title, o.title);
+    setText(r.title, o.title); setAttr(r.title, "title", o.title);
     r.pend.hidden = !o.pending;
     r.strip.hidden = r.foot.hidden = !o.total;
     if (o.total) r.strip.set(o.slices.map((s) => s.state), o.awaiting ? "acceptance open" : `${o.done}/${o.total}`, `${o.done} of ${o.total} slices landed`);
@@ -509,8 +522,8 @@ class GbConn extends HTMLElement {
   }
   static observedAttributes = ["state"];
   attributeChangedCallback() { if (this.firstChild) this.render(); }
-  render() { setText(this.querySelector(".lbl"), this.getAttribute("state") === "reconnecting" ? "Reconnecting" : "Live"); }
-  age(text) { const a = this.querySelector(".age"); if (a) setText(a, this.getAttribute("state") === "reconnecting" ? "" : text); }
+  render() { setText(this.querySelector(".lbl"), { reconnecting: "Reconnecting", down: "Offline" }[this.getAttribute("state")] || "Live"); }
+  age(text) { const a = this.querySelector(".age"); if (a) setText(a, this.getAttribute("state") === "live" ? text : ""); }
 }
 
 /* ---------------------------------------------------------------- <gb-palette> (command palette)

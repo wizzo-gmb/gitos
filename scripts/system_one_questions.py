@@ -17,20 +17,20 @@ HOW TO ADD A USE (one registry entry, then a CLI subcommand in the caller's scri
         outcomes={"merge": CONFIRM, "keep": REVERSIBLE, "escalate": REVERSIBLE},
     )
 
-  * `questions`: a list of `question(...)` dicts. `type` is `noul` (a yes/no; `p` is P(true)) or
-    `choice` (`criteria` maps each choice name to when it applies).
-  * `table(inputs)`: a pure function from the SETTLED inputs `{question_id: value}` to an outcome
-    name. A noul input is `"yes"`, `"no"` or `"unsure"`. A choice input is the chosen name, or
-    `"unsure"` when the top probability is under the `yes` threshold.
+  * `questions`: a list of `question(...)` dicts. `type` is `noul` (a yes/no) or `choice`
+    (`criteria` maps each choice name to when it applies).
+  * `table(inputs)`: a pure function from the answers `{question_id: value}` to an outcome
+    name. A noul answer is `"yes"`, `"no"` or `"unsure"`. A choice answer is the chosen name or
+    `"unsure"`. An answer that is missing or not one of those words counts as `"unsure"`.
   * `outcomes`: every outcome the table can return, flagged `REVERSIBLE` (a script may apply it)
     or `CONFIRM` (it is only ever REPORTED; a person or the reasoning model confirms it by reading
-    the item). `escalate` is reserved: always reversible, meaning "hand it up the cascade".
+    the item). `escalate` is reserved: always reversible, meaning "hand it to the reasoning model".
   * EVERY combination of inputs is enumerated at load time (including `unsure`). A combination the
     table raises on, or maps to an unlisted outcome, is a load-time error (`RegistryError`), and
     a combination with an `unsure` input the decision reads must map to `escalate` (`reads(inputs)`
     names the answers a decision uses; the default is all of them, `loose-end-state` narrows it).
-  * Bump `REGISTRY_VERSION` when a question's wording or a table changes: the call log records it,
-    so a log row is comparable only to rows of the same version.
+  * Bump `REGISTRY_VERSION` when a question's wording or a table changes: the export records it,
+    so an answers file is comparable only to the registry version it was exported under.
 
 WORDING RULES (the vendor's, kept here because they are the part that rots):
   * ONE judgment per question. Two ideas in one question is two questions.
@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import itertools
 
-REGISTRY_VERSION = 15
+REGISTRY_VERSION = 16
 
 REVERSIBLE = "reversible"
 CONFIRM = "confirm"
@@ -81,7 +81,7 @@ def input_domain(q: dict) -> tuple:
 
 def register(name: str, questions: list, table, outcomes: dict, reads=None) -> None:
     """`reads(inputs) -> [question ids]` (default: all) names the answers a decision actually uses;
-    only an unsure answer among them must map to `escalate` and costs a second pass (WO-094)."""
+    only an unsure answer among them must map to `escalate`."""
     reads = reads or (lambda i: list(i))
     if name in USES:
         raise RegistryError(f"use {name!r} registered twice")
@@ -123,27 +123,8 @@ def register(name: str, questions: list, table, outcomes: dict, reads=None) -> N
 
 
 # ------------------------------------------------------------------------------------- the uses
-# `probe`: used by `system_one.py status` and the selftest gate. It judges nothing real.
-register(
-    "probe",
-    questions=[
-        question("is_greeting", "noul",
-                 "The text is a greeting.",
-                 {"true": "The text greets someone, such as hello or good morning.",
-                  "false": "The text is anything else."}),
-    ],
-    table=lambda i: {"yes": "greeting", "no": "other"}.get(i["is_greeting"], ESCALATE),
-    outcomes={"greeting": REVERSIBLE, "other": REVERSIBLE},
-)
-
-
-# ------------------------------------------------------------------ loose-ends helper
-def _name_or_escalate(qid: str):
-    return lambda i: ESCALATE if i[qid] == "unsure" else i[qid]
-
-
 # ------------------------------------------------------------------ loose-ends uses (WO-093)
-# Candidates are chosen by code (`loose_ends.py candidates`); the model only confirms a pair. `join`
+# Candidates are chosen by code (`loose_ends.py candidates`); the helper only confirms a pair. `join`
 # and `bundle` are reversible: the orchestrator still writes the order (or the new one) itself.
 register(
     "loose-end-join",
@@ -155,20 +136,6 @@ register(
                          "false": "B concerns a different feature or area; order A's work would not touch it."})],
     table=lambda i: {"yes": "join", "no": "separate"}.get(i["joins"], ESCALATE),
     outcomes={"join": REVERSIBLE, "separate": REVERSIBLE},
-)
-
-# `loose-end-pick`: the model's title pick for what words cannot find. The options are the open orders' titles,
-# named by their WO id; `system_one.pick_orders` builds them per call, so the registry carries a sample (it is what
-# `uses-check` sends). It only proposes candidates: `loose-end-join` still decides.
-PICK_SAMPLE = {"WO-001": "Sample order about sorting a list.", "WO-002": "Sample order about a settings page.",
-               "WO-003": "Sample order about uploading files."}
-register(
-    "loose-end-pick",
-    questions=[question("order", "choice",
-                        "Which of these work-orders is about the same part of the product as this item?",
-                        PICK_SAMPLE)],
-    table=_name_or_escalate("order"),
-    outcomes={n: REVERSIBLE for n in PICK_SAMPLE},
 )
 
 register(

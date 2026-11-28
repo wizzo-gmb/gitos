@@ -275,9 +275,14 @@ def _hooks_from(settings: dict, scope: str) -> list:
 
 def _project_key(cj: dict, root: Path) -> "str | None":
     projects = _dict(cj.get("projects"))
-    for cand in (root.as_posix(), str(root), root.resolve().as_posix(), str(root.resolve())):
+    cands = (root.as_posix(), str(root), root.resolve().as_posix(), str(root.resolve()))
+    for cand in cands:
         if cand in projects:
             return cand
+    want = {os.path.normcase(os.path.normpath(c)) for c in cands}
+    for key in projects:
+        if isinstance(key, str) and os.path.normcase(os.path.normpath(key)) in want:
+            return key
     return None
 
 

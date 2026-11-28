@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 
@@ -785,9 +786,80 @@ HOOK_BOOTSTRAP = (
 HOOK_MATCHERS = {"ConfigChange": None, "PostModelSwitch": None, "PreToolUse": "Agent"}
 
 
+def hook_python(tail, find=None, executable=None, platform=None):
+    """The `command` and `args` every gitos hook writer registers, so the four agree. -> (command, args).
+
+    A bare `python` is only as good as the PATH the session starts with, and a PATH can lose its Python entries (a long user
+    PATH is dropped whole, see `path_advisory`), after which the hook fails or goes silent. So: on Windows the `py` launcher
+    (`py -3`; the Windows folder is always on PATH) when `find("py")` finds it at write time; otherwise the absolute path of
+    the interpreter running the writer. `find`, `executable` and `platform` are parameters so a test injects the lookup.
+    `tail` is the invariant end of the args (`["-c", BOOTSTRAP]`); the hook's identity is its last element, never the
+    interpreter part, so a rewrite of the interpreter is not a second hook.
+    """
+    platform = sys.platform if platform is None else platform
+    find = shutil.which if find is None else find
+    if platform == "win32" and find("py"):
+        return "py", ["-3", "-I", *tail]
+    exe = sys.executable if executable is None else executable
+    return (str(exe) if exe else "python"), ["-I", *tail]
+
+
+# The length at which Windows tools stop reading an inherited PATH. Microsoft's command-prompt article (learn.microsoft.com,
+# troubleshoot/windows-client/shell-experience/command-line-string-limitation) says an environment variable inherited from a
+# parent process is ignored by Cmd.exe past 8191 characters, "even though the Win32 limitation for environment variables is 32,767
+# characters"; the registry's own parse of the Environment key had a 2048 limit on older Windows (Raymond Chen, "What is the
+# maximum length of an environment variable?"). 8191 is the one that applies to a modern session. The advisory starts a little
+# before it, so a PATH that is about to be dropped is named while it still works.
+PATH_LIMIT = 8191
+PATH_NEAR = 7500
+
+
+def registry_paths():
+    """(Machine Path, User Path) from the Windows registry, `%VAR%` expanded, each "" when absent or off Windows."""
+    if sys.platform != "win32":
+        return "", ""
+    try:
+        import winreg
+    except ImportError:
+        return "", ""
+    got = []
+    for hive, sub in ((winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+                      (winreg.HKEY_CURRENT_USER, "Environment")):
+        try:
+            with winreg.OpenKey(hive, sub) as key:
+                value, _kind = winreg.QueryValueEx(key, "Path")
+        except OSError:
+            value = ""
+        got.append(os.path.expandvars(value) if isinstance(value, str) else "")
+    return got[0], got[1]
+
+
+def path_advisory(paths=None, near=PATH_NEAR):
+    """One advisory line when the PATH a new process inherits (Machine then User Path, joined by `;`) is near the length
+    Windows drops, else "". `paths` is `(machine, user)`; the default reads the registry. Never a refusal."""
+    machine, user = registry_paths() if paths is None else paths
+    machine, user = machine or "", user or ""
+    total = len(machine) + len(user) + (1 if machine and user else 0)
+    if total < near:
+        return ""
+    return (f"advisory: the registry PATH is {total} characters (user {len(user)}, machine {len(machine)}); a PATH over "
+            f"{PATH_LIMIT} is dropped from new processes by Windows tools, which leaves hooks and tools unfound - shorten the "
+            "user Path (System Properties, Environment Variables)")
+
+
+def hook_key(args):
+    """What names a hook entry, whatever interpreter it runs under: the last element of its `args` (the bootstrap text)."""
+    return args[-1] if isinstance(args, list) and args else None
+
+
+def same_hook(found, entry):
+    return isinstance(found, dict) and hook_key(found.get("args")) is not None         and hook_key(found.get("args")) == hook_key(entry.get("args"))
+
+
 def hook_entry():
     """The one hook entry the engine owns, identical on every event it registers."""
-    return {"type": "command", "command": "python", "args": ["-I", "-c", HOOK_BOOTSTRAP],
+    command, args = hook_python(["-c", HOOK_BOOTSTRAP])
+    return {"type": "command", "command": command, "args": args,
             "async": True,
             "statusMessage": "gitos: keep the model/effort baseline current"}
 
@@ -804,7 +876,8 @@ def ensure_settings_hook(root, entry=None, matchers=None):
     Other top-level keys, other events, other matcher groups, and other commands inside an
     event this one also uses are all preserved - a sibling change that wants another event or
     another hook beside this one APPENDS its own group and rewrites none of this. Append-only
-    and idempotent; it never removes or rewrites an entry it finds.
+    and idempotent; it never removes an entry it finds. The one rewrite: an entry it recognises (`hook_key`) whose
+    command is a bare `python` takes this entry's command and args, in place and once (WO-166).
 
     A file that is unreadable, not an object, or shaped unexpectedly is LEFT UNTOUCHED and
     reported, because clobbering an operator's hook configuration in order to install a safety
@@ -831,7 +904,7 @@ def ensure_settings_hook(root, entry=None, matchers=None):
     hooks = settings.get("hooks", {})
     if not isinstance(hooks, dict):
         return "skipped", f"{path} has a non-object `hooks`; left untouched"
-    added = []
+    added, rewritten = [], []
     for event, matcher in matchers.items():
         groups = hooks.get(event, [])
         if not isinstance(groups, list):
@@ -839,21 +912,29 @@ def ensure_settings_hook(root, entry=None, matchers=None):
         # Identity is the ARGS, not the whole entry: an operator who retitled the status
         # message or made the hook synchronous still has it registered, and a second run must
         # not install a duplicate beside their edit.
-        if any(isinstance(group, dict) and isinstance(group.get("hooks"), list) and
-               any(isinstance(h, dict) and h.get("args") == entry["args"] for h in group["hooks"])
-               for group in groups):
+        mine = [h for group in groups if isinstance(group, dict) and isinstance(group.get("hooks"), list)
+                for h in group["hooks"] if same_hook(h, entry)]
+        if mine:
+            # Registered. An entry still on a bare `python` (an older writer's) takes this writer's interpreter in place: the
+            # same entry, one fewer way to fail, nothing else in it touched. Any other command is the operator's or another
+            # machine's and stays.
+            for h in mine:
+                if h.get("command") == "python" and entry.get("command") != "python":
+                    h["command"], h["args"] = entry["command"], list(entry["args"])
+                    rewritten.append(event)
             continue
         group = {"hooks": [copy.deepcopy(entry)]}
         if matcher is not None:
             group = {"matcher": matcher, **group}
         hooks[event] = [*groups, group]
         added.append(event)
-    if not added:
+    if not added and not rewritten:
         return "present", f"the hook is registered on {', '.join(matchers)}"
     settings["hooks"] = hooks
     path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(path, settings)
-    return ("created" if created else "appended"), ", ".join(added)
+    notes = [*added, *(f"{e}: bare `python` -> `{entry['command']}`" for e in rewritten)]
+    return ("created" if created else "appended"), ", ".join(notes)
 
 
 def report_settings_hook(root, status, detail):

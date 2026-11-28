@@ -124,13 +124,13 @@ Then read `~/.claude/skills/gitos/VERSION` (the current `ENGINE_VERSION`) and th
 **3. If already current → run the one offer round, then stop (idempotent).**
 If the repo's stamp equals the skill's `ENGINE_VERSION`, report **"engine up to date
 (vN)"**, run **4q** on its own (`python <SKILL_DIR>/scripts/offer.py <repo-root>`; ask what it prints and apply
-the answers as 4q says), and then stop. An opt-in that became available after the last upgrade (a machine config
-for System One, a new federation group) is offered this way. With nothing on offer 4q is silent, and running again
+the answers as 4q says), and then stop. An opt-in that became available after the last upgrade (a new federation group)
+is offered this way. With nothing on offer 4q is silent, and running again
 with no upstream change is the same no-op as before: nothing else in step 4 runs and nothing is re-stamped.
 
 **4. Adopt the latest directives.**
 Direct the running orchestrator to:
-- **ask every opt-in in ONE round, not one subsystem at a time** — model optimization, lenses, System One,
+- **ask every opt-in in ONE round, not one subsystem at a time** — model optimization, lenses,
   federation, legacy registers and the harness popup are never asked separately. **4q** computes which are
   still unanswered and asks them once, after the other steps have run; a step below that used to ask its own
   question says so and points there;
@@ -227,13 +227,10 @@ Direct the running orchestrator to:
   **report-and-ask** to refresh the repo copy from the global (never silently clobber — a deliberately-forked
   local variant survives by declining). Update the repo registry to match what was accepted. No global lenses / no
   `<home>/agents/` → skip, no-op;
-- **System One is offered in the one round (4q)**, never here. Do run the data migration below first, so a repo
-  with retired keys is not asked about a setting it already has;
-- **migrate System One data** — run `python <SKILL_DIR>/scripts/system_one.py migrate <ROOT> --write`.
-  It is the upgrade, so there is no question to ask. It removes the keys the engine no longer reads
-  (`RETIRED_KEYS` in `system_one.py`) from the machine config and from the repo's `system-one.json`, keeping
-  every other key. (A `waiting: user — <question>` row is a valid `waiting:` State again since v57, and carried
-  boxes move with `ledger_migrate.py`, step 4m.) It prints nothing when there is nothing to do. Report what it did in one line; with no output, say nothing. Until it has run, System One reports itself down with the retired keys named;
+- **migrate System One data** — `ledger_migrate.py` (step 4m below) retires the repo's `<home>/system-one.json` (the local
+  model was retired in v75; the drain runs on a helper) and does nothing else; there is no `system_one.py migrate` any more
+  and no question to ask. The machine config `~/.claude/gitos-system-one/` is the operator's, never touched by upgrade, and may
+  be deleted;
 - **federation is offered in the one round (4q)** — the tool computes the ask (`federation.py offer`, which
   `offer.py` calls), you ask it. Federation lets independent gitos instances **on one machine** reach each other,
   so work that belongs to a sibling repo can go there instead of crossing the gap by copy-paste. Its rules
@@ -280,9 +277,9 @@ when an env var turns updates off. Never edit `known_marketplaces.json`.
 
 **4i. Post-compaction restore hook.**
 Run `python <SKILL_DIR>/scripts/compact_restore.py install <repo-root>` (scaffold lays the same
-entry). It registers a `SessionStart` hook matched on `compact|clear` and a `Stop` hook in the repo's
+entry). It registers a `SessionStart` hook matched on `compact|clear|resume` and a `Stop` hook in the repo's
 `.claude/settings.json`, beside whatever is already there, and is idempotent. A repo holding the older
-`compact`-only entry has that entry's matcher widened in place (one entry, firing once per event) and
+`compact` or `compact|clear` entry has that entry's matcher widened in place (one entry, firing once per event) and
 the `Stop` entry added. The canary's `restore` category reports it missing in a scaffolded repo; this
 step is the fix. Claude Code only, and `disableAllHooks` switches it off.
 
@@ -373,7 +370,7 @@ closed `P<n>` goes) and the INDEX becomes the generated board (4n), whose Parked
 columns `NNN | Title | Restart trigger | Evidence`;
 each open carried box of an open order goes back on the list as `new` and the box is ticked `-> L<n>`;
 `drain/declined/`, `drain/accepted/` and `drain/routed.txt` are removed (a declined item is already a `declined:`
-row, an accepted or routed one is off the list); the front-matter key `landed:` of an order becomes `released:`.
+row, an accepted or routed one is off the list); the front-matter key `landed:` of an order becomes `released:`; the repo's `<home>/system-one.json` is retired (removed, `git rm` when tracked; the local model was retired in v75).
 What it cannot move with confidence is printed as `LEFT` and stays (a Parked row with no trigger, a pile item whose
 row is in another state); settle those by hand, then run it again. A second run prints `not-now: nothing to move`.
 Until it has run, the canary prints the advisory `loose-ends-migration`; a fact left in two stores afterwards is the
@@ -437,8 +434,7 @@ after the data migrations and the home tools, and skip it when step 3 found the 
 Run `python <SKILL_DIR>/scripts/offer.py <repo-root>` **last in step 4**, after the data migrations, the home
 tools and the audits of 4v, so every question is computed against the repo as upgraded. It asks each subsystem's own check which
 opt-in is still unanswered (model optimization has no recorded preference; lenses have no `lenses.json` and a lens
-exists; System One has no repo choice in `<home>/system-one.json` and a machine config exists or
-`system_one.py setup --detect` prints a line; federation has something to offer;
+exists; federation has something to offer;
 a legacy register is unanswered; the harness audit holds removal candidates; ccusage is not installed, npm is, and this machine has no answer yet) and prints **one question batch**,
 or **nothing** when nothing is unanswered. **If it prints nothing, this step is over: say nothing.** It writes
 nothing itself. A line `offer: X not read (reason)` on stderr means that check could not run and its question was
@@ -452,10 +448,10 @@ exactly the commands its entry's `apply` names for the chosen label; a question 
 option leads to (the lens pick, federation's group pick and exposure flags, the drain after a register import).
 
 **An answered question is never asked again**, because a question exists only while its store lacks the answer:
-`model-optimization.json`, `lenses.json`, `system-one.json`, the `<!-- legacy: ... -->` line in the list header.
+`model-optimization.json`, `lenses.json`, the `<!-- legacy: ... -->` line in the list header.
 Declining federation stores nothing, by its own rule, so it is computed fresh each round; the harness popup is
-computed from the audit. The answers are the operator's alone: a repo that came back federated, or with System One
-on, because somebody asked for a directive refresh would have spent a consent nobody gave.
+computed from the audit. The answers are the operator's alone: a repo that came back federated
+because somebody asked for a directive refresh would have spent a consent nobody gave.
 
 **4r. Consolidate the backlog (once, on the upgrade to v58).**
 List every open order, parked order and loose end, group them by scope of work (the same subsystem, the same

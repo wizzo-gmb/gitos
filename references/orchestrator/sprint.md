@@ -1,6 +1,6 @@
 # Orchestrator step: sprint mode
 
-Read this when your start prompt says **sprint mode**: an unattended run started by the sprint driver, with the operator away.
+Read this when your start prompt says **sprint mode**: an unattended run started by the sprint driver (launched by an interactive orchestrator at the operator's request, or by hand), with the operator away.
 Sprint mode is never entered on your own initiative, and a session whose start prompt does not say it is interactive: none of
 this applies, and the work loop reads as written. The design and its reasons: `.gitos/brain/wiki/decisions/sprint-mode.md`.
 

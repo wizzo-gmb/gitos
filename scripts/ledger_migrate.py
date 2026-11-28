@@ -19,7 +19,10 @@ It is idempotent: run again after a crash, or after `--write`, it finds what is 
     the box is ticked `-> L<n>`;
   * `drain/declined/`, `drain/accepted/` and `drain/routed.txt` are removed: a declined item is already a
     `declined:` row, an accepted or routed one is off the list (git keeps the files);
-  * the front-matter key `landed:` (the engine version an order resolved in) is renamed `released:`.
+  * `<home>/system-one.json` is removed (v75 retired the local model; the file held its per-repo choice, nothing the
+    drain reads; the machine config under `~/.claude/gitos-system-one/` is the operator's and is never touched);
+  * the front-matter key `landed:` holding an engine version (`vN` or a bare integer: the version an order resolved in) is
+    renamed `released:`; `landed: <commit sha>` (merged, awaiting accept) is the current meaning and is left alone.
 
 **The board (WO-124).** An INDEX that is not yet the generated board (no `<!-- gitos:index board -->` line) is replaced by it
 (`ledger_index.py` writes the whole file from the order files). Nothing is dropped silently:
@@ -74,6 +77,15 @@ SHA_RE = re.compile(r"(?<![0-9A-Za-z])([0-9a-f]{7,40})(?![0-9A-Za-z])")
 ADJ_RE = re.compile(r"(?i)^\s*(?:#{1,6}\s*|\*\*|[-*]\s+\*\*)\s*adjudicat")
 DEPS_RE = re.compile(r"(?im)^\W*depends[ _-]on\b\W*(.*)$")
 NO_DEPS_RE = re.compile(r"(?i)^\W*(?:none|nothing|no\b.*|independent.*|n/a)\W*$")
+# the legacy key: `landed:` holding an engine version (`v12`, `12`); a commit sha (`0c907dd`) is the v74 meaning, not renamed
+LANDED_VERSION_RE = re.compile(r"(?m)^landed:(?=[ 	]*[\"']?(?:v\d+|\d{1,5})(?![0-9A-Za-z]))")
+
+
+def _landed_version(meta: dict) -> str:
+    v = meta.get("landed")
+    return v if isinstance(v, str) and re.fullmatch(r"[\"']?(?:v\d+|\d{1,5})[\"']?", v.strip()) else ""
+
+
 POINTER_RE = re.compile(r"^\s*[-*]\s+(?P<tok>.+?)\s+landed\s+(?P<sha>[0-9a-f]{7,40})\b"
                         r"(?:\s*:\s*history/WO-(?P<h>\d{3})\.md(?:#(?P<anc>[\w-]+))?)?")
 
@@ -152,7 +164,7 @@ def plan_order(sl, cn, home: Path, nnn: str, path: Path, hist_path: "Path | None
         for k, i in enumerate(heads):
             m = sl.SLICE_HEAD_RE.match(lines[i])
             end = heads[k + 1] if k + 1 < len(heads) else e
-            live.append({"n": int(m.group(1)), "title": m.group(2).strip() or f"slice {m.group(1)}",
+            live.append({"n": sl.slice_label(m.group(1)), "title": m.group(2).strip() or f"slice {m.group(1)}",
                          "head": i, "end": end, "body": lines[i + 1:end]})
     h = next((i for i, ln in enumerate(lines) if ln.strip() == "## History"), None)
     pointers: list = []
@@ -173,8 +185,8 @@ def plan_order(sl, cn, home: Path, nnn: str, path: Path, hist_path: "Path | None
         x.update(commit="", hist=None, only_history=False)
     for m in pointers:
         tok = m.group("tok").strip()
-        tn = re.match(r"(?i)S(\d+)\b\W*(.*)$", tok)
-        target = by_n.get(int(tn.group(1))) if tn else None
+        tn = re.match(rf"(?i)S({sl.SLICE_NO})\b\W*(.*)$", tok)
+        target = by_n.get(sl.slice_label(tn.group(1))) if tn else None
         if target is None and not tn:
             slug = sl._slug(tok)
             hits = [x for x in live if slug in (sl._slug(x["title"]), x["title"].lower())]
@@ -200,7 +212,7 @@ def plan_order(sl, cn, home: Path, nnn: str, path: Path, hist_path: "Path | None
                      (re.sub(r"\s*\([0-9a-f]{7,40}\)\s*$", "", sections[sec][0]) if sec is not None else ""))
             if not title:
                 raise Skip(f"the History pointer '{tok}' has no live section and no history heading to name it")
-            n = int(tn.group(1))
+            n = sl.slice_label(tn.group(1))
             target = {"n": n, "title": title, "head": None, "end": None, "body": [], "commit": "", "hist": None,
                       "only_history": True}
             by_n[n] = target
@@ -212,7 +224,7 @@ def plan_order(sl, cn, home: Path, nnn: str, path: Path, hist_path: "Path | None
             target["hist"] = "\n".join(sections[sec][2]).strip("\n")
     if len(live) < 2:
         return {}
-    live.sort(key=lambda x: x["n"])
+    live.sort(key=lambda x: sl.slice_key(x["n"]))
     for x in live:
         if not x["commit"] and not x["only_history"]:
             a = next((i for i, ln in enumerate(x["body"]) if ADJ_RE.match(ln)), None)
@@ -229,10 +241,10 @@ def plan_order(sl, cn, home: Path, nnn: str, path: Path, hist_path: "Path | None
         m = DEPS_RE.search("\n".join(x["body"]))
         if m:
             rest = m.group(1).strip()
-            refs = re.findall(r"(?:WO-?\d{3}/)?S(\d+)\b", rest)
+            refs = re.findall(rf"(?:WO-?\d{{3}}/)?S({sl.SLICE_NO})\b", rest)
             if refs:
-                deps = [f"WO-{nnn}/S{r}" for r in refs]
-                bad = [r for r in refs if int(r) not in by_n or int(r) >= x["n"]]
+                deps = [f"WO-{nnn}/S{sl.slice_label(r)}" for r in refs]
+                bad = [r for r in refs if sl.slice_label(r) not in by_n or sl.slice_key(r) >= sl.slice_key(x["n"])]
                 if bad:
                     raise Skip(f"slice S{x['n']} depends on S{bad[0]}, which is no earlier slice of this order")
             elif NO_DEPS_RE.match(rest):
@@ -446,12 +458,16 @@ def migrate_not_now(home: Path, write: bool, out=print, report: "dict | None" = 
         for lid in both:
             out(f"not-now: LEFT {lid}: drain/routed.txt says routed while it is still a row; drop it or keep it by hand")
         retired.append(routed_file)
+    sysone = home / "system-one.json"
+    if sysone.is_file():
+        say("system-one.json retired (the local model was retired in v75; the drain runs on a helper)")
+        retired.append(sysone)
     # 5. the version key of resolved orders
     keyed = []
     for f in sorted(wod.rglob("*.md")) if wod.is_dir() else []:
         raw = _read(f)
         m = re.match(r"---\r?\n(.*?\n)---\r?\n", raw, re.S)
-        if m and re.search(r"(?m)^landed:", m.group(1)) and not re.search(r"(?m)^released:", m.group(1)):
+        if m and LANDED_VERSION_RE.search(m.group(1)) and not re.search(r"(?m)^released:", m.group(1)):
             keyed.append(f)
             say(f"{f.relative_to(home).as_posix()}: front matter `landed:` -> `released:`")
     if not write or not moves:
@@ -479,7 +495,7 @@ def migrate_not_now(home: Path, write: bool, out=print, report: "dict | None" = 
     for f in keyed:
         raw = f.read_bytes().decode("utf-8")
         head, sep, rest = raw.partition("\n---")
-        f.write_bytes((re.sub(r"(?m)^landed:", "released:", head, count=1) + sep + rest).encode("utf-8"))
+        f.write_bytes((LANDED_VERSION_RE.sub("released:", head, count=1) + sep + rest).encode("utf-8"))
     for f in retired:
         _rm(f)
     for sub in ("declined", "accepted"):
@@ -624,7 +640,7 @@ def migrate_board(home: Path, write: bool, out=print, report: "dict | None" = No
                         cells = [c.strip() for c in ln.strip().strip("|").split("|")] if ln.strip().startswith("|") else []
                         vers = [int(v) for v in cn.VERSION_IN_CELL_RE.findall(cells[2])] if len(cells) > 2 else []
                         meta = cn.parse_frontmatter(_read(f) or "") or {}
-                        if vers and max(vers) >= cn.LOOSE_ENDS_FROM_VERSION and not (meta.get("released") or meta.get("landed")):
+                        if vers and max(vers) >= cn.LOOSE_ENDS_FROM_VERSION and not (meta.get("released") or _landed_version(meta)):
                             stamps.append((f, max(vers)))
                     elif rid:
                         extra.append(ln)

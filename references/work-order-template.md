@@ -41,7 +41,8 @@ correctly and needs no retrofit. New work-orders use the `<home>/work-orders/` c
 An order with one slice is the single file above. **The second slice makes it a folder**, never by hand: run
 `python <SKILL_DIR>/scripts/slice.py add WO-NNN NAME <home>`, which converts the file with `git mv` (the existing scope
 becomes `S1`, the rest stays `order.md`) and writes the new slice as `proposed`. The canary gates a single file with
-more than one `### S<n>` slice section and names this fix.
+more than one `### S<n>` slice section and names this fix. A slice number may carry one lower-case letter to insert a slice
+between two numbered ones (`S9b` sorts after `S9` and before `S10`; its file is `S9b-<name>.md`, its worktree branch `wo-NNN-s9b`).
 
     <home>/work-orders/WO-NNN/order.md              the spec, frozen at accept; amended only by appended, dated amendments
     <home>/work-orders/WO-NNN/slices/SN-<name>.md   one slice: front matter, scope, verification, notes, adjudication

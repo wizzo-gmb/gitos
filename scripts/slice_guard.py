@@ -47,7 +47,7 @@ from pathlib import Path
 EVENT = "PreToolUse"
 TOOLS = "Edit|Write|MultiEdit|NotebookEdit"
 MARKER = "gitos-slice"
-MARKER_RE = re.compile(r"^WO-(\d{3})/S(\d+)$")
+MARKER_RE = re.compile(r"^WO-(\d{3})/S(\d+[a-z]?)$")   # a slice id is S<number><optional lowercase letter> (slice.py owns the pattern)
 FOLDER_PATH_RE = re.compile(r"(?:^|/)work-orders/(?:resolved/)?([^/]+)/(order\.md|slices/([^/]+\.md))$")
 NNN_RE = re.compile(r"(\d{3})(?!\d)")
 TERMINAL = ("landed", "dropped")
@@ -313,7 +313,10 @@ HOOK_MATCHERS = {EVENT: TOOLS}
 def hook_entry() -> dict:
     """Neither `async` nor `onFailure` is set: an async hook's decision has no effect, and `onFailure: block`
     would make the hook's own breakage a refusal."""
-    return {"type": "command", "command": "python", "args": ["-I", "-c", HOOK_BOOTSTRAP],
+    engine = _engine()                     # the one interpreter choice all four hook writers share (WO-166)
+    command, args = engine.hook_python(["-c", HOOK_BOOTSTRAP]) if engine else (sys.executable or "python",
+                                                                               ["-I", "-c", HOOK_BOOTSTRAP])
+    return {"type": "command", "command": command, "args": args,
             "statusMessage": "gitos slice_guard: a slice implementer edits only its own slice file"}
 
 

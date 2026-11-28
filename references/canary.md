@@ -69,13 +69,18 @@ too, so the block stays short and the operator's glance remains the final backst
 
 ## The restore hook
 
-A `SessionStart` hook matched on `compact|clear` (`scripts/compact_restore.py`, laid by scaffold and
+A `SessionStart` hook matched on `compact|clear|resume` (`scripts/compact_restore.py`, laid by scaffold and
 `upgrade`) restores state after every compaction and every `/clear`: the marker line, `RESUME.md` with
 its freshness, live facts (branch, worktrees, open orders), the standing-rules pointer, a per-session
-compaction count (compaction only) and this repo's federation heartbeat. A `Stop` entry of the same hook
+compaction count (compaction only), this repo's federation heartbeat and one line naming the owner actions open on the
+board (`owner board: N open owner action(s) ...`; on a `resume` that line is all it prints). The `board` category adds the
+advisory `owner-action-open` for an owner action left open more than 15 minutes (order, kind, age; fix: `board.py actions`,
+apply, `action-done`). A `Stop` entry of the same hook
 asks once when a work-order has landed unresolved, an implementer's notes wait for adjudication, or `RESUME.md` is behind the ledger, and only after an
 orchestrator-marked reply. Claude Code only, and hooks can be switched off (`disableAllHooks`), so it is
-a guardrail, not a proof.
+a guardrail, not a proof. Every gitos hook runs the `py` launcher (`py -3 -I -c ...`) on Windows when it exists, else the
+absolute interpreter that wrote it, never a bare `python`, which a session whose `PATH` lost its Python entries cannot find;
+scaffold and `upgrade` rewrite an older bare-`python` entry in place, once.
 
 ## Opting out of the marker
 

@@ -14,16 +14,17 @@ const s = (tag, attrs, ...kids) => {
   return el;
 };
 const SIZE = { order: { w: 196, h: 68 }, slice: { w: 160, h: 50 } };
+const MIN_K = .05;   // the lowest zoom, for Fit and for the buttons, wheel and keys alike
+const LOD_K = .5;    // below this zoom a node's text would be under 7 px: nodes draw as state blocks and a hover or focus names the node
+const WRAP = 12;     // a layer of more nodes than this (one order with dozens of parallel slices) is laid out as several rows
 
 /* ---------------------------------------------------------------- layered layout */
-export function layoutDag(nodes, edges, { dir = "TB" } = {}) {
+/* One connected component, laid out in layers. -> { pos, width, height } */
+function layoutCore(nodes, edges, dir) {
   const TB = dir !== "LR", gMain = TB ? 38 : 70, gCross = TB ? 22 : 20;
-  let ids = nodes.map((n) => n.id); const byId = new Map(nodes.map((n) => [n.id, n]));
+  const ids = nodes.map((n) => n.id); const byId = new Map(nodes.map((n) => [n.id, n]));
   const out = new Map(ids.map((i) => [i, []])), inn = new Map(ids.map((i) => [i, []]));
   for (const e of edges) if (byId.has(e.from) && byId.has(e.to)) { out.get(e.from).push(e.to); inn.get(e.to).push(e.from); }
-  // orders with no dependency either way go on a shelf beside the graph instead of widening it
-  const lone = ids.filter((i) => !out.get(i).length && !inn.get(i).length), loneSet = new Set(lone);
-  ids = ids.filter((i) => !loneSet.has(i));
 
   // 1. layers: longest path from a source
   const layer = new Map(), deg = new Map(ids.map((i) => [i, inn.get(i).length]));
@@ -54,38 +55,71 @@ export function layoutDag(nodes, edges, { dir = "TB" } = {}) {
   };
   for (let it = 0; it < 3; it++) { for (let L = 1; L <= maxL; L++) sweep(L, inn); for (let L = maxL - 1; L >= 0; L--) sweep(L, out); }
 
-  // 4. coordinates: along the flow by layer, across it by relaxation towards neighbours, then overlap removal
+  // 4. coordinates: along the flow by layer, across it by relaxation towards neighbours, then overlap removal.
+  //    A layer of more than WRAP nodes is first cut into rows of equal length that follow each other closely (`more[i]`: row i
+  //    continues the layer of row i-1); every other layer is one row, as before.
   const size = (id) => SIZE[byId.get(id).kind] || SIZE.order;
-  const mainExt = (id) => (TB ? size(id).h : size(id).w), crossExt = (id) => (TB ? size(id).w : size(id).h);
+  const mainExt = (id) => (TB ? size(id).h : size(id).w), crossExt = (id) => (TB ? size(id).w : size(id).h), gRow = TB ? 14 : 24;
+  const rows = [], more = [];
+  for (const c of cols) { const k = Math.max(1, Math.ceil(c.length / WRAP)), per = Math.ceil(c.length / k); for (let i = 0; i < k; i++) { rows.push(c.slice(i * per, (i + 1) * per)); more.push(i > 0); } }
   const main = new Map(); let cm = 0;
-  cols.forEach((c) => { const m = Math.max(0, ...c.map(mainExt)); c.forEach((id) => main.set(id, cm)); cm += m + gMain; });
-  const cross = new Map(); cols.forEach((c) => { let cc = 0; c.forEach((id) => { cross.set(id, cc); cc += crossExt(id) + gCross; }); });
+  rows.forEach((c, i) => { const m = Math.max(0, ...c.map(mainExt)); c.forEach((id) => main.set(id, cm)); cm += m + (more[i + 1] ? gRow : gMain); });
+  const cross = new Map(); rows.forEach((c) => { let cc = 0; c.forEach((id) => { cross.set(id, cc); cc += crossExt(id) + gCross; }); });
   const cen = (id) => cross.get(id) + crossExt(id) / 2;
   for (let it = 0; it < 8; it++) {
-    const order = it % 2 ? [...cols.keys()].reverse() : [...cols.keys()];
+    const order = it % 2 ? [...rows.keys()].reverse() : [...rows.keys()];
     for (const L of order) {
-      for (const id of cols[L]) { const nb = [...inn.get(id), ...out.get(id)]; if (nb.length) cross.set(id, nb.reduce((a, n) => a + cen(n), 0) / nb.length - crossExt(id) / 2); }
+      for (const id of rows[L]) { const nb = [...inn.get(id), ...out.get(id)]; if (nb.length) cross.set(id, nb.reduce((a, n) => a + cen(n), 0) / nb.length - crossExt(id) / 2); }
       let floor = -Infinity;
-      for (const id of cols[L]) { if (cross.get(id) < floor) cross.set(id, floor); floor = cross.get(id) + crossExt(id) + gCross; }
+      for (const id of rows[L]) { if (cross.get(id) < floor) cross.set(id, floor); floor = cross.get(id) + crossExt(id) + gCross; }
     }
   }
-  const minC = Math.min(...ids.map((i) => cross.get(i)), 0);
+  const minC = Math.min(...ids.map((i) => cross.get(i)));   // the block starts at 0 however far the relaxation drifted it (a 0 here kept the drift as empty width)
   const res = new Map(); let maxX = 0, maxY = 0;
   for (const id of ids) {
     const z = size(id), c = cross.get(id) - minC, m = main.get(id);
     const p = { x: TB ? c : m, y: TB ? m : c, w: z.w, h: z.h, layer: layer.get(id) };
     res.set(id, p); maxX = Math.max(maxX, p.x + p.w); maxY = Math.max(maxY, p.y + p.h);
   }
-  let shelf = null;
-  if (lone.length) {
-    const n = Math.min(TB ? 2 : 3, lone.length), x0 = TB ? (ids.length ? maxX + 64 : 0) : 0, y0 = TB ? 0 : (ids.length ? maxY + 60 : 0), lab = 30;
-    lone.forEach((id, i) => {
-      const z = size(id), p = { x: x0 + (i % n) * (SIZE.order.w + 22), y: y0 + lab + Math.floor(i / n) * (SIZE.order.h + 22), w: z.w, h: z.h, layer: 0 };
-      res.set(id, p); maxX = Math.max(maxX, p.x + p.w); maxY = Math.max(maxY, p.y + p.h);
-    });
-    shelf = { x: x0, y: y0 + 8 };
+  return { pos: res, width: maxX, height: maxY };
+}
+
+/* The whole graph: each connected component is laid out on its own, orders with no dependency either way go on a shelf, and the
+   blocks are packed into rows (largest first) so the drawing stays roughly screen-shaped however many orders the ledger holds. */
+export function layoutDag(nodes, edges, { dir = "TB" } = {}) {
+  const TB = dir !== "LR", byId = new Map(nodes.map((n) => [n.id, n])), adj = new Map(nodes.map((n) => [n.id, []]));
+  for (const e of edges) if (byId.has(e.from) && byId.has(e.to)) { adj.get(e.from).push(e.to); adj.get(e.to).push(e.from); }
+  const lone = nodes.filter((n) => !adj.get(n.id).length).map((n) => n.id), seen = new Set(lone), groups = [];
+  for (const n of nodes) {
+    if (seen.has(n.id)) continue;
+    const g = [n.id], st = [n.id]; seen.add(n.id);
+    while (st.length) for (const v of adj.get(st.pop())) if (!seen.has(v)) { seen.add(v); g.push(v); st.push(v); }
+    groups.push(g);
   }
-  return { pos: res, width: maxX, height: maxY, shelf };
+  groups.sort((a, b) => b.length - a.length);
+  const blocks = groups.map((g) => {
+    const set = new Set(g), L = layoutCore(nodes.filter((n) => set.has(n.id)), edges.filter((e) => set.has(e.from) && set.has(e.to)), dir);
+    return { pos: L.pos, w: L.width, h: L.height };
+  });
+  if (lone.length) {
+    const base = TB ? 2 : 3, cols = Math.min(lone.length, lone.length > 8 ? Math.max(base, Math.ceil(Math.sqrt(lone.length * 1.6))) : base), lab = 30, pos = new Map();
+    lone.forEach((id, i) => {
+      const z = SIZE[byId.get(id).kind] || SIZE.order;
+      pos.set(id, { x: (i % cols) * (SIZE.order.w + 22), y: lab + Math.floor(i / cols) * (SIZE.order.h + 22), w: z.w, h: z.h, layer: 0 });
+    });
+    blocks.push({ pos, w: cols * (SIZE.order.w + 22) - 22, h: lab + Math.ceil(lone.length / cols) * (SIZE.order.h + 22) - 22, shelf: true });
+  }
+  const gx = 64, gy = 48, area = blocks.reduce((a, b) => a + (b.w + gx) * (b.h + gy), 0);
+  const rowW = Math.max(1400, ...blocks.map((b) => b.w), Math.sqrt(area * 2.8));
+  const res = new Map(); let x = 0, y = 0, rowH = 0, width = 0, height = 0, shelf = null;
+  for (const b of blocks) {
+    if (x > 0 && (x + b.w > rowW || (b.shelf && !TB))) { y += rowH + gy; x = 0; rowH = 0; }
+    for (const [id, p] of b.pos) res.set(id, { ...p, x: p.x + x, y: p.y + y });
+    if (b.shelf) shelf = { x, y: y + 8 };
+    width = Math.max(width, x + b.w); height = Math.max(height, y + b.h);
+    x += b.w + gx; rowH = Math.max(rowH, b.h);
+  }
+  return { pos: res, width, height, shelf };
 }
 
 /* ---------------------------------------------------------------- <gb-graph> */
@@ -108,9 +142,10 @@ class GbGraph extends HTMLElement {
       h("button", { class: "btn icon sm ghost", type: "button", "aria-label": "Zoom in", onclick: () => this.zoomBy(1.25) }, icon("plus")),
       h("button", { class: "btn icon sm ghost", type: "button", "aria-label": "Fit to view", title: "Fit to view (0)", onclick: () => this.fit(true) }, icon("fit")));
     this.legend = h("div", { class: "g-legend", "aria-hidden": "true" },
-      h("span", null, h("i", { class: "lg-dep" }), "slice waits on slice"), h("span", null, h("i", { class: "lg-link" }), "order waits on order"));
+      h("span", null, h("i", { class: "lg-dep" }), "slice waits on slice"), h("span", null, h("i", { class: "lg-link" }), "order waits on order"), h("span", { class: "lg-lod" }, "Hover a node for its title"));
+    this.tip = h("div", { class: "g-tip", role: "tooltip", hidden: true }, h("div", { class: "gt-top" }, h("span", { class: "gt-dot" }), h("b", { class: "gt-code" }), h("span", { class: "gt-state" })), h("div", { class: "gt-title" }));
     this.panel = h("div", { class: "g-panel", hidden: true, "aria-live": "polite" });
-    this.append(this.svg, this.legend, this.tools, this.panel);
+    this.append(this.svg, this.legend, this.tools, this.panel, this.tip);
 
     this.svg.addEventListener("wheel", (e) => { e.preventDefault(); const r = this.svg.getBoundingClientRect(); this.zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * (e.ctrlKey ? .01 : .0016))); }, { passive: false });
     this.svg.addEventListener("pointerdown", (e) => this.#down(e));
@@ -118,6 +153,10 @@ class GbGraph extends HTMLElement {
     this.svg.addEventListener("pointerup", (e) => this.#up(e));
     this.svg.addEventListener("pointercancel", (e) => this.#up(e));
     this.svg.addEventListener("keydown", (e) => this.#key(e));
+    this.svg.addEventListener("pointerover", (e) => this.#name(e.target.closest?.(".gn")));
+    this.svg.addEventListener("pointerout", () => this.#name(null));
+    this.svg.addEventListener("focusin", (e) => this.#name(e.target.closest?.(".gn")));
+    this.svg.addEventListener("focusout", () => this.#name(null));
     this.ro = new ResizeObserver(() => { if (!this.#fitted && this.svg.clientWidth) this.fit(false); }); this.ro.observe(this);
     if (this.#data.nodes.length) this.data = this.#data;
   }
@@ -184,6 +223,7 @@ class GbGraph extends HTMLElement {
     const g = s("g", { class: "gn " + n.kind, tabindex: 0, role: "button", "data-id": n.id });
     g.append(s("rect", { class: "gn-bg", width: z.w, height: z.h, rx: n.kind === "order" ? 12 : 9 }),
       s("rect", { class: "gn-bar", x: 11, y: 12, width: 3.5, height: z.h - 24, rx: 1.75 }),
+      s("rect", { class: "gn-lod", x: 5, y: 5, width: z.w - 10, height: z.h - 10, rx: n.kind === "order" ? 8 : 6 }),
       s("text", { class: "gn-id", x: 25, y: n.kind === "order" ? 25 : 23 }),
       s("text", { class: "gn-t", x: 25, y: n.kind === "order" ? 44 : 41 }),
       s("g", { class: "gn-strip", transform: `translate(25 ${z.h - 17})` }),
@@ -280,7 +320,22 @@ class GbGraph extends HTMLElement {
   }
 
   /* ---- pan and zoom */
+  /* Below LOD_K the node text is mush: the nodes draw as state blocks (CSS, `.lod`) and the node under the pointer or the focus is
+     named in a tooltip at a readable size, whatever the zoom. */
+  #name(g) {
+    const rec = g && this.#nodes.get(g.dataset.id), tip = this.tip;
+    if (!rec || this.#k >= LOD_K) { tip.hidden = true; return; }
+    const n = rec.data, set = (sel, text) => { const el = tip.querySelector(sel); if (el.textContent !== text) el.textContent = text; };
+    set(".gt-code", n.code); set(".gt-state", LABELS[n.state] || n.state); set(".gt-title", n.label);
+    tip.style.setProperty("--c", getComputedStyle(g).getPropertyValue("--c"));
+    tip.hidden = false;
+    const host = this.getBoundingClientRect(), b = g.getBoundingClientRect(), w = tip.offsetWidth, hgt = tip.offsetHeight;
+    const left = Math.max(8, Math.min(host.width - w - 8, b.left - host.left + b.width / 2 - w / 2));
+    const above = b.top - host.top - hgt - 8;
+    tip.style.left = Math.round(left) + "px"; tip.style.top = Math.round(above >= 8 ? above : b.bottom - host.top + 8) + "px";
+  }
   #apply(animate) {
+    this.classList.toggle("lod", this.#k < LOD_K); this.tip.hidden = true;
     this.vp.style.transition = animate && !reduced() ? "transform .45s cubic-bezier(.2,.8,.2,1)" : "none";
     this.vp.style.transform = `translate(${this.#tx}px, ${this.#ty}px) scale(${this.#k})`;
     this.zoomLabel.textContent = Math.round(this.#k * 100) + "%";
@@ -288,18 +343,19 @@ class GbGraph extends HTMLElement {
   fit(animate) {
     if (!this.#lay || !this.svg.clientWidth) return;
     const W = this.svg.clientWidth, H = this.svg.clientHeight, narrow = innerWidth < 700, pad = narrow ? 20 : 48;
+    // always lands on the drawing's own bounding box: as small as it takes to show all of it (down to MIN_K), centred
     const fitK = Math.min((W - pad * 2) / this.#lay.width, (H - pad * 2) / this.#lay.height);
-    const k = Math.min(1.1, Math.max(narrow ? .55 : .35, fitK));
+    const k = Math.min(1.1, Math.max(MIN_K, fitK));
     this.#k = k;
-    this.#tx = k > fitK + .001 ? pad : Math.round((W - this.#lay.width * k) / 2);
-    this.#ty = k > fitK + .001 ? pad + 30 : Math.round(Math.max(pad * .8, (H - this.#lay.height * k) / 2));
+    this.#tx = Math.round((W - this.#lay.width * k) / 2);
+    this.#ty = Math.round(k > fitK ? (H - this.#lay.height * k) / 2 : Math.max(pad * .8, (H - this.#lay.height * k) / 2));
     this.#fitted = true; this.#apply(animate);
   }
   zoomAt(px, py, f) {
-    const k = Math.max(.2, Math.min(2.4, this.#k * f)); f = k / this.#k;
+    const k = Math.max(MIN_K, Math.min(2.4, this.#k * f)); f = k / this.#k;
     this.#tx = px - (px - this.#tx) * f; this.#ty = py - (py - this.#ty) * f; this.#k = k; this.#apply(false);
   }
-  zoomBy(f) { const W = this.svg.clientWidth, H = this.svg.clientHeight; const k = Math.max(.2, Math.min(2.4, this.#k * f)); const r = k / this.#k; this.#tx = W / 2 - (W / 2 - this.#tx) * r; this.#ty = H / 2 - (H / 2 - this.#ty) * r; this.#k = k; this.#apply(true); }
+  zoomBy(f) { const W = this.svg.clientWidth, H = this.svg.clientHeight; const k = Math.max(MIN_K, Math.min(2.4, this.#k * f)); const r = k / this.#k; this.#tx = W / 2 - (W / 2 - this.#tx) * r; this.#ty = H / 2 - (H / 2 - this.#ty) * r; this.#k = k; this.#apply(true); }
   #down(e) {
     if (e.target.closest(".gn")) return;
     this.svg.setPointerCapture(e.pointerId); this.#pts.set(e.pointerId, { x: e.clientX, y: e.clientY });

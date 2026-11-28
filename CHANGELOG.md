@@ -18,10 +18,27 @@ version exists in the range `(min_compatible_engine, target_version]`.
 
 ---
 
+## v75 — 2026-11-28
+breaking: yes
+
+- Board UI polish: long decision options and completion strips wrap; the graph fits a large ledger; UI-lens fixes (WO-158)
+- The orchestrator launches a requested sprint in its own PowerShell window with Claude's install folder on PATH (`gitos-sprint.py --window`) (WO-159)
+- Sprints view: two-line order rows, a Not running section; a sprint's Stop is a board control, no longer a decision card (WO-160)
+- Sprint launch preflight refuses a bad slice set; `sprint_log.py wait-stop` watches for a stop (WO-161)
+- Windows path case: the project key and tests compare paths case-insensitively (WO-162)
+- Sprints view is one list with expandable rows (WO-163)
+- The local System One model is retired: the drain runs on a dispatched helper; `system-one.json` is retired by the migration and the removed commands refuse (WO-164)
+- Lettered slice ids (`S9b`, between S9 and S10) are read, sorted and referenced everywhere (WO-165)
+- Hooks run `py -3` (or the absolute interpreter), not a bare `python`; sprint preflight checks hook python and claude; a PATH-length advisory (WO-166)
+- The migration renames only a legacy `landed: vN`, never `landed: <sha>` (WO-167)
+- The canary finds a hook by its bootstrap text, whatever interpreter runs it (WO-168)
+- Board follow-ups: Live pill centred with a border, readable large graph, legible disabled buttons, aligned Sprints rows, the Pending chip (WO-169)
+- Open owner actions are named on compact, clear and resume, and by a canary advisory past 15 minutes (WO-170)
+
 ## v74 — 2026-11-27
 breaking: yes
 
-- Owner board as a realtime web app: live work views, owner actions, the Awaiting accept status, repo views and providers, a hub overview; the sandboxed `local/*.html` pages are retired, and a repo migrates per `references/owner-board.md` -> *Migrating a page* (WO-153)
+- Owner board as a realtime web app (live views, owner actions, Awaiting accept, repo views, hub overview); `local/*.html` pages retired, see `references/owner-board.md` -> *Migrating a page* (WO-153)
 - Parallel sprints follow-ups: review findings and live-run notes from WO-150 (WO-152)
 - Sprint transcript path follows the CLI's real project-log encoding (WO-149)
 - Brain or RESUME: one short test, and RESUME notes that expire (WO-154)

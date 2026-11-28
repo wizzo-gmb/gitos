@@ -154,7 +154,9 @@ def open_rows(home: Path) -> list[str]:
 
 def released(meta: dict) -> str:
     """The engine version a resolved order records (`released:`, else the older `landed:`); "" when neither."""
-    return next((meta[k] for k in RELEASED_KEYS if isinstance(meta.get(k), str) and meta.get(k)), "")
+    # `landed: <commit sha>` (v74: merged, awaiting accept) is not a version; only `vN` or a bare integer is the older key
+    return next((meta[k] for k in RELEASED_KEYS if isinstance(meta.get(k), str) and meta.get(k)
+                 and (k != "landed" or re.fullmatch(r"v?\d{1,5}", meta[k].strip()))), "")
 
 
 def parked_rows(home: Path) -> list[str]:

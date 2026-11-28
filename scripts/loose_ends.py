@@ -16,7 +16,7 @@ lives (WO-115); a row's State is one of four:
 
     new                   written down, not looked at (the drain asks only these)
     proposed: <kind>      the drain proposed join | new-order | close | ask | park | read; the pile file
-                          `<home>/drain/pending/<id>.md` is its attachment (what the model saw), not its home
+                          `<home>/drain/pending/<id>.md` is its attachment (what the helper saw), not its home
     waiting: <question>   needs the operator
     declined: <reason>    looked at and refused; never proposed again
 
@@ -71,10 +71,8 @@ JOIN_TOP = 3                      # open orders offered to an item as a join
 MAX_JOIN_PAIRS = 60               # join pairs asked per run
 ORDER_BODY_CHARS = 4000           # an order with no Implementer notes heading is read this far
 BM25_K1, BM25_B = 1.2, 0.75       # the word part of the join score
-PICK_OPTIONS = 26                 # open orders offered to the title pick (the best by BM25)
-PICK_TOP = 2                      # orders the pick adds to an item's candidates
 JOIN_MIN_COVER = 0.0              # share of the item's words an order must hold when nothing is shared; none
-DEST_RE = re.compile(r"(?:WO-(\d{3,})(?:/S(\d+))?|brain:\s*(\S.*)|closed:\s*(\S.*))")
+DEST_RE = re.compile(r"(?:WO-(\d{3,})(?:/S(\d+[a-z]?))?|brain:\s*(\S.*)|closed:\s*(\S.*))")
 SETTABLE = {"new": "", "waiting": "question", "declined": "reason"}   # `proposed:` is the drain's
 DONE_CELL_RE = re.compile(r"^[\s*_`~>\-]*(?:done|fixed|closed|merged|superseded|resolved)\b", re.IGNORECASE)
 UNESC_PIPE = re.compile(r"(?<!\\)\|")
@@ -588,20 +586,16 @@ def _bm25(query: set, docs: list) -> list:
     return out
 
 
-def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = MAX_JOIN_PAIRS,
-                    pick=None) -> dict:
+def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = MAX_JOIN_PAIRS) -> dict:
     """The one reader of the open work-orders for any item text, on the list or not.
     `items` is [(ref, text)]. Each item is offered its `top` best orders: a shared reference or path
     ranks first, then BM25 of the item's words over the order (its title counted twice, read up to its
     Implementer notes; its Proposed fix scope need not exist), so a long order gains nothing from its length.
-    `pick(item_ref, item_text, [(order ref, title)]) -> [(order ref, probability)]` (best first), when given,
-    is a model's title pick for what words cannot find: it sees the best PICK_OPTIONS orders by BM25 and its
-    top PICK_TOP orders are added to the candidates (unique). No minimum: the model's `loose-end-join`
-    question decides. At most `cap` pairs, taken best first across the items in turn, each pair once.
+    No minimum: the helper's `loose-end-join` answer decides. At most `cap` pairs, taken best first across the items in turn, each pair once.
     Every open order is a candidate, dispatched or not: the drain only proposes, the orchestrator decides.
     An order is in progress ("dispatched") when a worktree exists for it or its Implementer notes have
     content; that is information on the order and on each pair, never a filter.
-    -> {"join": [{item, wo, shared, score, picked, dispatched, wo_title, wo_text, item_text}], "orders":
+    -> {"join": [{item, wo, shared, score, dispatched, wo_title, wo_text, item_text}], "orders":
     [every open order, each with "dispatched": why | None}]}."""
     sm = sm or _system_one()
     home = Path(home)
@@ -623,20 +617,11 @@ def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = 
             shared = _shared(sig, count, ref, o["ref"], sm)
             cover = len(words & set(d)) / len(words) if words else 0.0
             if shared or cover >= JOIN_MIN_COVER:
-                mine.append({"item": ref, "wo": o["ref"], "shared": shared, "score": round(sc, 3), "picked": None,
+                mine.append({"item": ref, "wo": o["ref"], "shared": shared, "score": round(sc, 3),
                              "dispatched": o["dispatched"], "wo_title": o["title"], "wo_text": o["text"],
                              "item_text": text})
         mine.sort(key=lambda x: (-len(x["shared"]), -x["score"], x["wo"]))
         chosen = mine[:top]
-        if pick is not None and mine:
-            offered = mine[:PICK_OPTIONS]
-            got = pick(ref, text, [(x["wo"], x["wo_title"]) for x in offered])
-            have = {x["wo"] for x in chosen}
-            by_wo = {x["wo"]: x for x in offered}
-            for wo, prob in got[:PICK_TOP]:
-                if wo in by_wo and wo not in have:
-                    chosen.append({**by_wo[wo], "picked": round(prob, 3)})
-                    have.add(wo)
         per_item.append(chosen)
     pairs = []
     for rank in range(max((len(c) for c in per_item), default=0)):       # best of every item first
@@ -647,7 +632,7 @@ def join_candidates(home, items: list, sm=None, top: int = JOIN_TOP, cap: int = 
     return {"join": pairs, "orders": orders}
 
 
-def candidates(home, sm=None, pick=None) -> dict:
+def candidates(home, sm=None) -> dict:
     """For each `new` item: its best open work-orders (`join_candidates`); and the pairs
     of `new` items that could be bundled, chosen by code with System One's signals: a shared reference or
     path (one shared by more than HUB_LIMIT texts is no signal) or word overlap (OVERLAP).
@@ -655,7 +640,7 @@ def candidates(home, sm=None, pick=None) -> dict:
     sm = sm or _system_one()
     home = Path(home)
     items = [r for r in rows_of(home) if r["state"].strip() == STATE_NEW and ID_RE.fullmatch(r["id"])]
-    jc = join_candidates(home, [(r["id"], r["item"]) for r in items], sm, pick=pick)
+    jc = join_candidates(home, [(r["id"], r["item"]) for r in items], sm)
     pool = [(r["id"], r["item"]) for r in items] + [(o["ref"], o["text"]) for o in jc["orders"]]
     sig, count = _signal_table(pool, sm)
     bundle = []

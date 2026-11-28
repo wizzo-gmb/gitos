@@ -182,13 +182,17 @@
   }
   .btn:hover { --b-bg: var(--surface-2); border-color: var(--ink-4); }
   .btn:active { transform: translateY(1px) scale(.985); }
-  .btn[disabled] { opacity: .5; pointer-events: none; }
   .btn.primary { --b-bg: var(--accent); --b-fg: var(--on-accent); --b-line: var(--accent); }
   .btn.primary:hover { --b-bg: color-mix(in oklab, var(--accent) 88%, var(--ink)); border-color: transparent; }
   .btn.danger { --b-fg: var(--c-held); }
   .btn.danger:hover { --b-bg: color-mix(in oklab, var(--c-held) 10%, var(--surface)); border-color: var(--c-held); }
   .btn.ghost { --b-bg: transparent; --b-line: transparent; box-shadow: none; color: var(--ink-2); }
   .btn.ghost:hover { --b-bg: color-mix(in oklab, var(--ink) 7%, transparent); border-color: transparent; color: var(--ink); }
+  /* disabled: a flat, quiet button whose label still reads (ink-3 on surface-2 clears 4.5:1 in both themes); no pointer-events:none, so its title can say why */
+  .btn[disabled] { cursor: not-allowed; }
+  .btn[disabled]:active { transform: none; }
+  .btn[disabled]:not(.primary), .btn[disabled]:not(.primary):hover { --b-bg: var(--surface-2); --b-fg: var(--ink-3); --b-line: var(--line); border-color: var(--line); box-shadow: none; }
+  .btn.primary[disabled] { opacity: .5; }
   .btn.sm { height: 28px; padding: 0 var(--s-2); font-size: var(--t-xs); }
   .btn.icon { width: 34px; padding: 0; } .btn.icon.sm { width: 28px; }
   .btn .ic { font-size: 16px; }
@@ -271,7 +275,7 @@
   gb-badge[state="answered"] { --c: var(--c-landed); }
   gb-badge[state="record"] { --c: var(--c-ready); }
   gb-badge[state="pending"] { --c: var(--c-closing); }
-  gb-badge[state="pending"]::before { background: none; border: 1.5px solid currentColor; border-top-color: transparent; animation: spin .8s linear infinite; }
+  gb-badge[state="pending"]::before { width: 10px; height: 10px; background: none; border: 1.5px solid currentColor; border-top-color: transparent; animation: spin .8s linear infinite; }   /* 10 in a 22 chip: a whole pixel above and below, so the ring turns on the text's middle line */
   gb-badge[state="confirmed"], gb-badge[state="applied"] { --c: var(--c-landed); }
   gb-badge[state="rejected"] { --c: var(--c-held); }
   gb-badge[state="sample"] { --c: var(--ink-3); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
@@ -294,14 +298,17 @@
 
   /* ---- the slice strip: one segment per slice, the board's signature mark */
   gb-strip { --h: 8px; display: inline-flex; align-items: center; gap: 8px; vertical-align: middle; min-width: 0; }
-  gb-strip .segs { display: flex; gap: 2px; flex: 1; min-width: 36px; }
-  gb-strip .seg { flex: 1; height: var(--h); min-width: 4px; max-width: 28px; border-radius: 2px; background: var(--line-strong); transition: background var(--d-slow) var(--ease), transform var(--d-slow) var(--ease); position: relative; }
+  gb-strip .segs { display: flex; gap: 2px; flex: 1; min-width: 48px; }
+  gb-strip .seg { flex: 1; height: var(--h); min-width: 0; max-width: 28px; border-radius: 2px; background: var(--line-strong); transition: background var(--d-slow) var(--ease), transform var(--d-slow) var(--ease); position: relative; }
   gb-strip .seg[data-s="landed"] { background: var(--c-landed); }
   gb-strip .seg[data-s="implemented"] { background: var(--c-implemented); }
   gb-strip .seg[data-s="in-progress"] { background: var(--c-active); animation: seg-live 2s var(--ease-in-out) infinite; }
   gb-strip .seg[data-s="ready"] { background: color-mix(in oklab, var(--c-ready) 35%, var(--line-strong)); }
   gb-strip .seg[data-s="waiting"], gb-strip .seg[data-s="proposed"] { background: var(--line); box-shadow: inset 0 0 0 1px var(--line-strong); }
   gb-strip .seg.pop { animation: pop .6s var(--ease); }
+  gb-order-card .oc-foot gb-strip { flex: 1; }
+  gb-strip .segs[data-bar] { gap: 0; border-radius: 3px; overflow: hidden; }
+  gb-strip .segs[data-bar] .seg { flex: 1 1 0; max-width: none; border-radius: 0; }
   gb-strip .num { font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
   gb-strip[size="lg"] { --h: 12px; }
   gb-strip[size="lg"] .seg { border-radius: 3px; max-width: none; }
@@ -443,12 +450,16 @@
   gb-palette .foot span { display: inline-flex; gap: 6px; align-items: center; }
 
   /* ---- connection indicator */
-  gb-conn { --c: var(--c-ready); display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 var(--s-3) 0 var(--s-2); border-radius: var(--r-pill); font-size: var(--t-xs); font-weight: 620; color: var(--ink-2); background: var(--surface); box-shadow: 0 0 0 1px var(--line); transition: color var(--d-base), box-shadow var(--d-base); white-space: nowrap; }
+  /* the dot and the word sit centred in the pill: equal padding both sides and a 1px border; the age is out of the layout while it is empty */
+  gb-conn { --c: var(--c-ready); display: inline-flex; align-items: center; justify-content: center; gap: var(--s-2); height: 28px; padding: 0 var(--s-3); border: 1px solid var(--line-strong); border-radius: var(--r-pill); font-size: var(--t-xs); font-weight: 620; line-height: 1; color: var(--ink-2); background: var(--surface); transition: color var(--d-base), border-color var(--d-base); white-space: nowrap; }
   gb-conn .pip { width: 8px; height: 8px; border-radius: 50%; background: var(--c); position: relative; transition: background var(--d-base); }
   gb-conn .pip::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--c); opacity: 0; animation: ping 2.6s var(--ease) infinite; }
-  gb-conn[state="reconnecting"] { --c: var(--c-waiting); box-shadow: 0 0 0 1px color-mix(in oklab, var(--c) 45%, transparent); }
+  gb-conn[state="reconnecting"] { --c: var(--c-waiting); border-color: color-mix(in oklab, var(--c) 60%, var(--surface)); }
+  gb-conn[state="down"] { --c: var(--c-held); border-color: color-mix(in oklab, var(--c) 60%, var(--surface)); }
   gb-conn[state="reconnecting"] .pip::after { animation-duration: 1s; }
+  gb-conn[state="down"] .pip::after { animation: none; }
   gb-conn .age { color: var(--ink-4); font-variant-numeric: tabular-nums; font-weight: 500; }
+  gb-conn .age:empty { display: none; }
 
   /* ---- empty state and skeleton */
   gb-empty { display: grid; place-items: center; text-align: center; gap: var(--s-2); padding: var(--s-8) var(--s-4); color: var(--ink-3); }
@@ -543,6 +554,21 @@
   .gn.is-down .gn-bg { stroke: color-mix(in oklab, var(--accent) 70%, transparent); stroke-width: 1.6; }
   .gn.is-dim { opacity: .3; }
   .gn.changed .gn-bg { animation: node-flash 1.8s var(--ease-in-out); }
+  /* zoomed out (`.lod`, see graph.js): no text, the state is a block, strokes keep their screen width, and the tooltip names the node */
+  .gn-lod { display: none; fill: var(--c); }
+  .lod .gn-lod { display: inline; }
+  .lod .gn[data-state="ready"] .gn-lod, .lod .gn[data-state="proposed"] .gn-lod, .lod .gn[data-state="waiting"] .gn-lod { fill: color-mix(in oklab, var(--c) 38%, var(--surface)); }
+  .lod .gn-id, .lod .gn-t, .lod .gn-sub, .lod .gn-foot, .lod .gn-strip, .lod .gn-bar, .lod .gn-pend { display: none; }
+  .lod .gn-bg { filter: none; vector-effect: non-scaling-stroke; }
+  .lod .gn:hover .gn-bg, .lod .gn:focus-visible .gn-bg { stroke: var(--ink); stroke-width: 2px; }
+  .lod .g-edge { vector-effect: non-scaling-stroke; stroke-width: 1px; }
+  .lod .g-edge.up, .lod .g-edge.down { stroke-width: 2px; }
+  .g-legend .lg-lod { display: none; } .lod .g-legend .lg-lod { display: inline-flex; color: var(--ink-2); }
+  .g-tip { position: absolute; z-index: 2; max-width: min(280px, calc(100% - 16px)); padding: var(--s-2) var(--s-3); display: flex; flex-direction: column; gap: var(--s-1); pointer-events: none; background: var(--surface); color: var(--ink); border-radius: var(--r-sm); box-shadow: var(--shadow-3), 0 0 0 1px var(--line-strong); font-size: var(--t-xs); line-height: 1.35; }
+  .gt-top { display: flex; align-items: center; gap: var(--s-2); }
+  .gt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--ink-3)); flex: none; }
+  .gt-code { font-weight: 700; } .gt-state { color: var(--ink-2); font-weight: 560; }
+  .gt-title { color: var(--ink-2); overflow-wrap: anywhere; text-wrap: pretty; }
   .gn.enter { animation: node-in .55s var(--ease) both; }
   .gn.leave { opacity: 0; pointer-events: none; }
   @keyframes node-flash { 0%, 30% { stroke: var(--accent); stroke-width: 3; filter: drop-shadow(0 0 8px color-mix(in oklab, var(--accent) 60%, transparent)); } 100% { } }

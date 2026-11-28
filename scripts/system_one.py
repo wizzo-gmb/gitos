@@ -1,480 +1,50 @@
 #!/usr/bin/env python3
-"""System One client: an optional LOCAL decision model the engine's scripts can ask.
+"""System One: the typed questions and decision tables the loose-ends drain runs on, answered by a helper.
 
-Stdlib only. Library plus CLI. Detail, config reference and the "how to add a use" recipe:
-`references/system-one.md`. Question wording and decision tables live ONLY in
-`system_one_questions.py` (the registry).
+Stdlib only. Library plus CLI. Detail and the "how to add a use" recipe: `references/system-one.md`. Question
+wording and decision tables live ONLY in `system_one_questions.py` (the registry).
 
-THE CASCADE:  code rules -> this local model -> the reasoning model -> the operator.
-Judgments come from the model, decisions come from a table in code. A failed call is an error
-(`Unavailable`), never a "no".
+THE DRAIN: `drain <home> --export FILE` writes the questions of every `new` loose end; a helper dispatched on the
+cheapest tier answers the file; `drain <home> --answers FILE` applies each use's table to the answers and writes the
+proposals. Judgments come from the helper, decisions come from a table in code. An answer that is missing or not an
+allowed word counts as `unsure`, never as a "no". Nothing here calls a model or opens a network connection.
 
-INVISIBLE WHEN OFF. With no machine config every function reports off, no file is created and no
-network call is made. A repo is on only with `<home>/system-one.json` `{"enabled": true}`; no file
-means it has not chosen, which is off.
+The local model backend was retired in v75: a call to a removed command exits 2 with one sentence.
 
 PUBLIC API (everything a use needs; later work-orders extend the registry, not this file)
 
-    available(home=None) -> bool                 config present, repo not opted out, health ok
-    is_configured(home=None) -> bool             config present and repo not opted out (no network)
-    ask(state, questions, *, home=None, local_only=False) -> {id: {type, value, probabilities, p}}
-    settle(p, thresholds=None) -> "yes" | "no" | "unsure"
-    decide(use, item, state, second_state=None, *, home=None, local_only=False) -> result
-        result = {"outcome", "confirm", "pass": 1|2, "inputs": {...}}   (outcome may be "escalate")
+    helper_export(items) -> dict                 the export document of a list state
+    helper_apply(items, doc) -> {"outcomes": {ref: {"outcome", "confirm", "inputs"}}, "defaulted", "unknown"}
+    drain_export(home, path) / drain_answers(home, doc)    the two steps of the drain
     require_reversible(result)                   raises ConfirmRequired on a `confirm` outcome
-    log_summary(use=None, *, home=None) -> {use: stats}
     registry_problems() -> [str]
-    scrub(state) -> state
 
-Exceptions: `Unavailable` (any failed call, or off), `Off`, `Refused` (remote endpoint not
-allowed, or `local_only`), `ConfirmRequired`. All but `ConfirmRequired` are `Unavailable`s, so
-one `except system_one.Unavailable` is the whole fall-through.
-
-ADDING A USE = one `register(...)` entry in the registry plus a CLI subcommand in the calling
-script that builds the state, calls `decide` and applies only `reversible` outcomes (guard with
+ADDING A USE = one `register(...)` entry in the registry plus a CLI subcommand in the calling script that builds the
+state, applies the table to the helper's answers and applies only `reversible` outcomes (guard with
 `require_reversible`).
-
-ANSWER SHAPES, both normalized by `normalize_answer`:
-  * typed (OpenAPI `SystemOneResponse`): `{"model", "answers": {id: {"type": "noul", "noul": 0.98}
-    | {"type": "choice", "choice": "x", "confidence": .9, "probabilities": {...}}
-    | {"type": "score", "score": 1.7, "confidence": .9, "probabilities": {...}}}, "usage": {...}}`
-  * keyed: `{"answers": {id: {"choice"|"noul"|"score": ..., "probabilities": ..., ...}}, "usage": {...}}`
-    (the answer's type is the key it carries; `type` may be absent).
-  A noul's `p` is P(true); a choice's or score's `p` is P(top). A shape that is neither raises.
 """
 
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import hashlib
-import ipaddress
-import contextlib
 import json
 import os
 import re
-import statistics
 import sys
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from importlib import util as importlib_util
 from pathlib import Path
 
-RETIRED_KEYS = ("group", "questions_per_request", "assists")   # config keys no longer read; `migrate` removes them
-CONFIG_NAME = "config.json"
-OPTOUT_NAME = "system-one.json"
-FEDERATION_NAME = "federation.json"
-HEALTH_TIMEOUT_S = 2.0
-RETRIES = 3
-BACKOFF_S = 0.25                  # doubled per retry; a test sets it to 0
-DEFAULTS = {"timeout_s": 20, "thresholds": {"yes": 0.7, "no": 0.3}, "workers": 4, "keep_examples": True, "allow_remote": False, "trusted_hosts": []}
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_DIGITS = re.compile(r"\d{7,}")
-
-
-class Unavailable(Exception):
-    """A call could not be made or did not return a usable answer. Never defaulted to an answer."""
-
-
-class Off(Unavailable):
-    """System One is not configured here (or this repo opted out)."""
-
-
-class Refused(Unavailable):
-    """The endpoint is not allowed for this call (remote without `allow_remote`, or `local_only`)."""
-
-
-class RetiredKeys(Unavailable):
-    """The machine config or the repo's system-one.json carries a key this engine no longer reads."""
+RETIRED_SENTENCE = ("the local model was retired in v75; the drain runs on a helper: "
+                    "system_one.py drain <home> --export FILE, then --answers FILE")
+RETIRED_COMMANDS = ("status", "repo", "setup", "uses-check", "ask", "log", "migrate")
+HELPER_MODEL = "helper"           # the `model:` line of a proposal answered by a dispatched helper
 
 
 class ConfirmRequired(Exception):
     """A `confirm` outcome reached a caller that writes."""
 
-
-# ------------------------------------------------------------------------------------- locations
-def system_home() -> Path:
-    """The machine dir `~/.claude/gitos-system-one` (HOME-relative; `GITOS_SYSTEM_ONE_HOME` wins)."""
-    env = os.environ.get("GITOS_SYSTEM_ONE_HOME")
-    if env:
-        return Path(env)
-    return Path(os.path.expanduser("~")) / ".claude" / "gitos-system-one"
-
-
-def find_home(start: "str | os.PathLike | None" = None) -> "Path | None":
-    """The nearest `.gitos` directory at or above `start` (default: the cwd), or None."""
-    p = Path(start or os.getcwd()).resolve()
-    for d in (p, *p.parents):
-        if (d / ".gitos").is_dir():
-            return d / ".gitos"
-    return None
-
-
-def _home(home) -> "Path | None":
-    return Path(home) if home is not None else find_home()
-
-
-def repo_key(home: "Path | None") -> str:
-    """The federation id when `<home>/federation.json` carries one, else a sha1 of the repo root."""
-    if home is not None:
-        try:
-            fid = json.loads((Path(home) / FEDERATION_NAME).read_text(encoding="utf-8")).get("id")
-            if isinstance(fid, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", fid):
-                return fid
-        except (OSError, ValueError, AttributeError):
-            pass
-    root = Path(home).resolve().parent if home is not None else Path(os.getcwd()).resolve()
-    return hashlib.sha1(str(root).encode("utf-8")).hexdigest()
-
-
-def log_path(home: "Path | None") -> Path:
-    return system_home() / "log" / f"{repo_key(home)}.jsonl"
-
-
-# ------------------------------------------------------------------------------------- config
-def load_config() -> "dict | None":
-    """The machine config with defaults applied, or None when there is none. Raises Unavailable
-    when the file exists but cannot be used."""
-    path = system_home() / CONFIG_NAME
-    if not path.is_file():
-        return None
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        raise Unavailable(f"config unreadable ({type(e).__name__})")
-    if not isinstance(raw, dict) or not isinstance(raw.get("endpoint"), str) or not raw["endpoint"]:
-        raise Unavailable("config needs an `endpoint` string")
-    retired = [k for k in RETIRED_KEYS if k in raw]
-    if retired:
-        raise RetiredKeys(retired_line(retired))
-    cfg = {**DEFAULTS, **raw}
-    cfg["thresholds"] = {**DEFAULTS["thresholds"],
-                         **(raw.get("thresholds") if isinstance(raw.get("thresholds"), dict) else {})}
-    sec = cfg.get("second")
-    if sec is not None and not (isinstance(sec, dict) and isinstance(sec.get("endpoint"), str)):
-        raise Unavailable("config `second` needs an `endpoint` string")
-    return cfg
-
-
-def retired_line(names) -> str:
-    return f"config has retired keys: {', '.join(names)}; run /gitos upgrade"
-
-
-REPO_REASONS = {
-    "retired": "this repo's system-one.json has retired keys; run /gitos upgrade",
-    "missing": "this repo has not chosen (run upgrade or `system_one.py repo on`)",
-    "off": "this repo turned System One off",
-    "malformed": "this repo's system-one.json is malformed",
-}
-
-
-def repo_choice(home: "Path | None") -> "tuple[str, str]":
-    """This repo's own choice, `<home>/system-one.json`: (`on` | `off` | `missing` | `malformed` | `retired`, detail).
-    Only a literal `enabled: true` is on; a missing file is `missing` (not chosen, so off)."""
-    if home is None:
-        return "on", ""
-    path = Path(home) / OPTOUT_NAME
-    if not path.is_file():
-        return "missing", ""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        return "malformed", f"unreadable ({type(e).__name__})"
-    if not isinstance(data, dict):
-        return "malformed", "not a JSON object"
-    retired = [k for k in RETIRED_KEYS if k in data]
-    if retired:
-        return "retired", ", ".join(retired)
-    if "enabled" not in data:
-        return "missing", "no `enabled` key"
-    en = data.get("enabled")
-    if en is True:
-        return "on", ""
-    if en is False:
-        return "off", ""
-    return "malformed", "`enabled` must be true or false"
-
-
-def _active_config(home) -> dict:
-    """The config for a call. Raises Off when there is none or this repo is not on."""
-    cfg = load_config()
-    if cfg is None:
-        raise Off("System One is not configured on this machine")
-    state, detail = repo_choice(_home(home))
-    if state == "retired":
-        raise RetiredKeys(retired_line(detail.split(", ")))
-    if state != "on":
-        raise Off(REPO_REASONS[state])
-    return cfg
-
-
-def is_configured(home=None) -> bool:
-    try:
-        _active_config(home)
-        return True
-    except Unavailable:
-        return False
-
-
-def _key(cfg: dict) -> "str | None":
-    name = cfg.get("key_env")
-    return os.environ.get(name) if isinstance(name, str) and name else None
-
-
-def _clean(text: str, cfg: dict) -> str:
-    """A message safe to show: the key never appears."""
-    k = _key(cfg)
-    return text.replace(k, "[key]") if k else text
-
-
-# ------------------------------------------------------------------------------------- privacy
-def is_loopback(endpoint: str) -> bool:
-    host = (urllib.parse.urlsplit(endpoint).hostname or "").lower()
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-def scrub(state):
-    """E-mail addresses and digit runs of 7 or more replaced, in every string of a state."""
-    if isinstance(state, str):
-        return _DIGITS.sub("[number]", _EMAIL.sub("[email]", state))
-    if isinstance(state, dict):
-        return {k: scrub(v) for k, v in state.items()}
-    if isinstance(state, list):
-        return [scrub(v) for v in state]
-    return state
-
-
-def is_trusted(endpoint: str, cfg: dict) -> bool:
-    """The literal host of the URL matches `trusted_hosts` (exact hosts or CIDR ranges). An IP host is
-    matched with `ipaddress`; a hostname only by exact string. No DNS lookup ever decides trust."""
-    host = urllib.parse.urlsplit(endpoint).hostname or ""
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        ip = None
-    for entry in cfg.get("trusted_hosts") or []:
-        if not isinstance(entry, str):
-            continue
-        if ip is None:
-            if entry == host:
-                return True
-            continue
-        try:
-            if ip in ipaddress.ip_network(entry, strict=False):
-                return True
-        except ValueError:
-            continue
-    return False
-
-
-def endpoint_class(endpoint: str, cfg: dict) -> str:
-    """`loopback`, `trusted-lan` or `remote`. The first two are *local*."""
-    if is_loopback(endpoint):
-        return "loopback"
-    return "trusted-lan" if is_trusted(endpoint, cfg) else "remote"
-
-
-def _prepare(endpoint: str, cfg: dict, state, local_only: bool):
-    """Gate one endpoint. Loopback: as is. Trusted LAN: as is, but only with a key (never printed).
-    Remote: refused unless `allow_remote` (and always under `local_only`); scrubbed when allowed."""
-    cls = endpoint_class(endpoint, cfg)
-    if cls == "loopback":
-        return state
-    if cls == "trusted-lan":
-        if not _key(cfg):
-            name = cfg.get("key_env") or "key_env"
-            raise Refused(f"a trusted non-loopback endpoint requires a key: set the environment "
-                          f"variable named by `key_env` ({name})")
-        return state
-    if local_only:
-        raise Refused("this call is local-only and the endpoint is not loopback or trusted")
-    if not cfg.get("allow_remote"):
-        raise Refused("the endpoint is not loopback or trusted and `allow_remote` is not set")
-    return scrub(state)
-
-
-# ------------------------------------------------------------------------------------- transport
-def _endpoint_url(endpoint: str) -> str:
-    sp = urllib.parse.urlsplit(endpoint)
-    return endpoint if sp.path not in ("", "/") else endpoint.rstrip("/") + "/v1/systemone"
-
-
-def _headers(cfg: dict) -> dict:
-    h = {"Content-Type": "application/json", "Accept": "application/json"}
-    k = _key(cfg)
-    if k:
-        h["Authorization"] = f"Bearer {k}"
-    return h
-
-
-def health(endpoint: str, cfg: dict) -> "tuple[bool, str]":
-    """Probe `<origin>/health` within 2 s (WO-096: a server runs a real decision there, so a dead GPU is
-    seen). A 503 or a `model-failed` status is down with the reason `model-failed`; another 5xx is down.
-    A server with no `/health` (404) falls back to `/v1/models`: any answer below 500 means it is up."""
-    sp = urllib.parse.urlsplit(endpoint)
-    origin = f"{sp.scheme}://{sp.netloc}"
-    try:
-        req = urllib.request.Request(origin + "/health", headers=_headers(cfg), method="GET")
-        with urllib.request.urlopen(req, timeout=HEALTH_TIMEOUT_S) as resp:
-            try:
-                body = json.loads(resp.read(1 << 16).decode("utf-8"))
-            except ValueError:
-                body = None
-            if isinstance(body, dict) and body.get("status") == "model-failed":
-                return False, "model-failed"
-            return True, "ok"
-    except urllib.error.HTTPError as e:
-        if e.code == 503:
-            return False, "model-failed"
-        if e.code != 404:
-            return (e.code < 500), f"HTTP {e.code}"
-    except Exception as e:
-        return False, _clean(type(e).__name__, cfg)
-    req = urllib.request.Request(origin + "/v1/models", headers=_headers(cfg), method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=HEALTH_TIMEOUT_S):
-            return True, "ok"
-    except urllib.error.HTTPError as e:
-        return (e.code < 500), f"HTTP {e.code}"
-    except Exception as e:
-        return False, _clean(type(e).__name__, cfg)
-
-
-def available(home=None) -> bool:
-    try:
-        cfg = _active_config(home)
-    except Unavailable:
-        return False
-    return health(cfg["endpoint"], cfg)[0]
-
-
-def _post(endpoint: str, cfg: dict, model: str, state, questions: dict) -> "tuple[dict, int]":
-    """One request, with 3 tries on 429/5xx. -> (response json, input tokens)."""
-    body = json.dumps({"model": model, "state": state, "questions": questions}).encode("utf-8")
-    last = "no attempt"
-    for attempt in range(RETRIES):
-        req = urllib.request.Request(_endpoint_url(endpoint), data=body, headers=_headers(cfg),
-                                     method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=float(cfg["timeout_s"])) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            last = f"HTTP {e.code}"
-            if e.code == 429 or e.code >= 500:
-                if attempt < RETRIES - 1:
-                    time.sleep(BACKOFF_S * (2 ** attempt))
-                continue
-            raise Unavailable(_clean(f"the model refused the request ({last})", cfg))
-        except (urllib.error.URLError, OSError, TimeoutError) as e:
-            raise Unavailable(_clean(f"the model is unreachable ({type(e).__name__})", cfg))
-        except ValueError:
-            raise Unavailable("the model answered with something that is not JSON")
-        usage = data.get("usage") if isinstance(data, dict) else None
-        tokens = usage.get("input_tokens", 0) if isinstance(usage, dict) else 0
-        return data, tokens if isinstance(tokens, int) else 0
-    raise Unavailable(_clean(f"the model kept failing ({last}, {RETRIES} tries)", cfg))
-
-
-# ------------------------------------------------------------------------------------- answers
-def _num(v, what: str) -> float:
-    if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0.0 <= float(v) <= 1.0:
-        raise Unavailable(f"unreadable answer: {what} is not a probability")
-    return float(v)
-
-
-def normalize_answer(qid: str, raw) -> dict:
-    """One per-answer object of either shape -> {type, value, probabilities, p}."""
-    if not isinstance(raw, dict):
-        raise Unavailable(f"unreadable answer for {qid!r}: not an object")
-    kind = raw.get("type")
-    if kind not in ("noul", "choice", "score"):
-        kind = next((k for k in ("noul", "choice", "score") if k in raw), None)
-    if kind is None:
-        raise Unavailable(f"unreadable answer for {qid!r}: no noul, choice or score")
-    probs = raw.get("probabilities")
-    probs = {str(k): float(v) for k, v in probs.items()
-             if isinstance(v, (int, float)) and not isinstance(v, bool)} \
-        if isinstance(probs, dict) else {}
-    if kind == "noul":
-        v = raw.get("noul")
-        if isinstance(v, dict):
-            v = next((v[k] for k in ("p", "probability", "true", "yes") if k in v), None)
-        if v is None:
-            v = next((probs[k] for k in ("true", "yes", "True", "Yes") if k in probs), None)
-        if isinstance(v, bool):
-            v = 1.0 if v else 0.0
-        p = _num(v, f"noul of {qid!r}")
-        return {"type": "noul", "value": p > 0.5, "probabilities": probs or {"true": p, "false": 1 - p},
-                "p": p}
-    if kind == "choice":
-        choice = raw.get("choice")
-        if not isinstance(choice, str):
-            raise Unavailable(f"unreadable answer for {qid!r}: choice is not a name")
-        p = probs.get(choice, raw.get("confidence"))
-        return {"type": "choice", "value": choice, "probabilities": probs,
-                "p": _num(p, f"probability of {choice!r} for {qid!r}")}
-    value = raw.get("score")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise Unavailable(f"unreadable answer for {qid!r}: score is not a number")
-    p = max(probs.values()) if probs else raw.get("confidence")
-    return {"type": "score", "value": float(value), "probabilities": probs,
-            "p": _num(p, f"top probability for {qid!r}")}
-
-
-def normalize_response(data, ids: list) -> dict:
-    answers = data.get("answers") if isinstance(data, dict) else None
-    if not isinstance(answers, dict):
-        raise Unavailable("unknown response shape: no `answers` object")
-    missing = [i for i in ids if i not in answers]
-    if missing:
-        raise Unavailable(f"the response lacks an answer for {missing[0]!r}")
-    return {i: normalize_answer(i, answers[i]) for i in ids}
-
-
-def _model_ask(endpoint: str, model: str, cfg: dict, state, questions: dict,
-               local_only: bool, meta: "dict | None" = None) -> "tuple[dict, int]":
-    """Ask one model all `questions`: each question is its own request with the same state, sent
-    concurrently (at most one thread per question). `meta["requests"]` counts the requests made.
-    -> (normalized answers, tokens). Any one failed request raises `Unavailable`."""
-    state = _prepare(endpoint, cfg, state, local_only)
-    ids = list(questions)
-    if len(ids) == 1:
-        if meta is not None:
-            meta["requests"] = meta.get("requests", 0) + 1
-        data, tok = _post(endpoint, cfg, model, state, questions)
-        return normalize_response(data, ids), tok
-    if meta is not None:
-        meta["requests"] = meta.get("requests", 0) + len(ids)
-    workers = max(1, min(int(cfg["workers"]), len(ids)))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {i: ex.submit(_post, endpoint, cfg, model, state, {i: questions[i]}) for i in ids}
-        out, total = {}, 0
-        for i, f in futs.items():
-            data, tok = f.result()          # re-raises Unavailable
-            out.update(normalize_response(data, [i]))
-            total += tok
-    return out, total
-
-
-def ask(state, questions: dict, *, home=None, local_only: bool = False) -> dict:
-    """Ask the configured model. -> {id: {type, value, probabilities, p}}. Raises Unavailable."""
-    cfg = _active_config(home)
-    return _model_ask(cfg["endpoint"], cfg.get("model", ""), cfg, state, questions, local_only)[0]
-
-
-# ------------------------------------------------------------------------------------- cascade
-def settle(p: float, thresholds: "dict | None" = None) -> str:
-    """Above `yes` reads yes, below `no` reads no, between is `unsure`."""
-    th = {**DEFAULTS["thresholds"], **(thresholds or {})}
-    return "yes" if p > th["yes"] else "no" if p < th["no"] else "unsure"
 
 
 def _registry():
@@ -500,98 +70,6 @@ def registry_problems() -> list:
         return [f"{type(e).__name__}: {e}"]
 
 
-def _inputs(use: dict, answers: dict, th: dict) -> dict:
-    """Settled input per question: yes/no/unsure for a noul; the choice or unsure for a choice."""
-    out = {}
-    for q in use["questions"]:
-        a = answers[q["id"]]
-        if q["type"] == "noul":
-            out[q["id"]] = settle(a["p"], th)
-        else:
-            out[q["id"]] = a["value"] if a["p"] > th["yes"] else "unsure"
-    return out
-
-
-def _result(reg, use: dict, outcome: str, inputs: dict, n: int) -> dict:
-    return {"outcome": outcome, "confirm": use["outcomes"][outcome] == reg.CONFIRM,
-            "pass": n, "inputs": inputs}
-
-
-def decide(use: str, item, state, second_state=None, *, home=None, local_only: bool = False,
-           fresh: bool = False) -> dict:
-    """Run a use's questions, apply its table, and on any unsure input run ONE second pass.
-
-    Pass 2 re-asks only the unsure questions: the primary model with `second_state` (when given)
-    and the configured `second` model (with `second_state`, else `state`). When two answers settle
-    differently the input stays unsure. Anything still unsure escalates. Never more than two passes.
-
-    WO-094: before a request, an earlier settled `call` row of this repo's log with the same use,
-    registry, model and state text (its `sha`) is returned as it was logged, with `cached: True`; no
-    request is made and no row is written. `fresh=True` skips that. An earlier `escalate` or `error`
-    row is never reused.
-    """
-    reg = _registry()
-    u = reg.USES[use]
-    cfg = _active_config(home)
-    th = cfg["thresholds"]
-    qs = reg.request_questions(use)
-    if not fresh:
-        hit = _cache_lookup(_home(home), cfg, use, reg.REGISTRY_VERSION, state)
-        if hit is not None:
-            res = _result(reg, u, hit["outcome"], hit["inputs"], hit["pass"])
-            res["cached"] = True
-            return res
-    t0 = time.monotonic()
-    meta = {"p": {}, "tokens": 0, "models": [cfg.get("model", "")]}
-    h = _home(home)
-
-    def finish(result: dict) -> dict:
-        _log_call(h, cfg, use, item, result, meta, state, int((time.monotonic() - t0) * 1000))
-        return result
-
-    try:
-        answers, tok = _model_ask(cfg["endpoint"], cfg.get("model", ""), cfg, state, qs, local_only,
-                                  meta)
-        meta["tokens"] += tok
-        meta["p"] = {i: a["p"] for i, a in answers.items()}
-        inputs = _inputs(u, answers, th)
-        unsure = [i for i in u["reads"](dict(inputs)) if inputs[i] == "unsure"]
-        if not unsure:
-            return finish(_result(reg, u, u["table"](dict(inputs)), inputs, 1))
-        sec = cfg.get("second")
-        if second_state is None and sec is None:
-            return finish(_result(reg, u, reg.ESCALATE, inputs, 1))
-        sub = {i: qs[i] for i in unsure}
-        asked = []                      # list of (answers) from the second pass
-        if second_state is not None:
-            a, tok = _model_ask(cfg["endpoint"], cfg.get("model", ""), cfg, second_state, sub,
-                                local_only, meta)
-            asked.append(a)
-            meta["tokens"] += tok
-        if sec is not None:
-            scfg = {**cfg, "model": sec.get("model", "")}
-            a, tok = _model_ask(sec["endpoint"], sec.get("model", ""), scfg,
-                                second_state if second_state is not None else state, sub, local_only,
-                                meta)
-            asked.append(a)
-            meta["tokens"] += tok
-            meta["models"].append(sec.get("model", ""))
-        meta["p2"] = {i: [a[i]["p"] for a in asked] for i in unsure}
-        merged = dict(inputs)
-        sub_use = {"questions": [q for q in u["questions"] if q["id"] in sub]}
-        settled = [_inputs(sub_use, a, th) for a in asked]
-        for i in unsure:
-            vals = {s[i] for s in settled}
-            merged[i] = vals.pop() if len(vals) == 1 else "unsure"
-        if any(merged[i] == "unsure" for i in u["reads"](dict(merged))):
-            return finish(_result(reg, u, reg.ESCALATE, merged, 2))
-        return finish(_result(reg, u, u["table"](dict(merged)), merged, 2))
-    except Unavailable as e:
-        meta["error"] = str(e)
-        _log_call(h, cfg, use, item, {"outcome": "error", "pass": 0}, meta, state,
-                  int((time.monotonic() - t0) * 1000))
-        raise
-
 
 def require_reversible(result: dict) -> None:
     """For callers that write: a `confirm` outcome is only ever reported, never applied."""
@@ -600,196 +78,16 @@ def require_reversible(result: dict) -> None:
                               f"do not apply it")
 
 
-# ------------------------------------------------------------------------------------- the log
-LOCK_WAIT_S = 2.0
-
-
-@contextlib.contextmanager
-def _log_lock(path: Path):
-    """An exclusive lock on `<log>.lock` (msvcrt on Windows, else fcntl), waited for at most
-    LOCK_WAIT_S. Yields True when held, False when it could not be taken in time."""
-    lock = path.with_name(path.name + ".lock")
-    fd = os.open(str(lock), os.O_RDWR | os.O_CREAT, 0o644)
-    held = False
-    try:
-        deadline = time.monotonic() + LOCK_WAIT_S
-        while True:
-            try:
-                os.lseek(fd, 0, os.SEEK_SET)
-                if os.name == "nt":
-                    import msvcrt
-                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                held = True
-                break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    break
-                time.sleep(0.005)
-        yield held
-    finally:
-        if held:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-            except OSError:
-                pass
-        os.close(fd)
-
-
-def _append(home: "Path | None", row: dict) -> bool:
-    """Append one JSON line. One process at a time (`_log_lock`), the whole line in one `os.write`
-    to an `O_APPEND` descriptor. -> False when the lock could not be taken in time (not written)."""
-    path = log_path(home)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
-    with _log_lock(path) as held:
-        if not held:
-            return False
-        fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0),
-                     0o644)
-        try:
-            view = memoryview(line)
-            while view:
-                view = view[os.write(fd, view):]
-        finally:
-            os.close(fd)
-    return True
-
-
-HELPER_MODEL = "helper"           # the call-log model of an answer that came from a dispatched helper (WO-101)
-_CACHE: dict = {}                 # log path -> {"pos", "head", "map"}: an incremental read of the log
-
-
-def _cache_map(path: Path) -> dict:
-    """{(use, registry, model, sha): latest settled call row} of the log at `path`, read
-    incrementally (only complete lines past the last position)."""
-    try:
-        size = path.stat().st_size
-        with open(path, "rb") as f:
-            head = f.read(64)
-            ent = _CACHE.get(str(path))
-            if ent is None or size < ent["pos"] or ent["head"] != head:
-                ent = _CACHE[str(path)] = {"pos": 0, "head": head, "map": {}}
-            f.seek(ent["pos"])
-            data = f.read()
-    except OSError:
-        return {}
-    end = data.rfind(b"\n") + 1
-    for raw in data[:end].splitlines():
-        try:
-            r = json.loads(raw.decode("utf-8"))
-        except ValueError:
-            continue
-        if (isinstance(r, dict) and r.get("kind") == "call" and r.get("sha")
-                and r.get("outcome") not in (None, "escalate", "error") and r.get("model") != HELPER_MODEL
-                and isinstance(r.get("inputs"), dict) and r.get("pass") in (1, 2)):
-            ent["map"][(r.get("use"), r.get("registry"), r.get("model"), r["sha"])] = r
-    ent["pos"] += end
-    return ent["map"]
-
-
-def _state_sha(state) -> str:
-    text = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _cache_lookup(h, cfg: dict, use: str, registry, state) -> "dict | None":
-    path = log_path(h)
-    if not path.is_file():
-        return None
-    sha = _state_sha(state)
-    primary, sec = cfg.get("model", ""), cfg.get("second")
-    models = [primary] + ([primary + "+" + sec.get("model", "")] if sec else [])
-    table = _cache_map(path)
-    for m in models:
-        row = table.get((use, registry, m, sha))
-        if row is not None:
-            return row
-    return None
-
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _log_call(home, cfg, use, item, result, meta, state, latency_ms) -> None:
-    row = {"kind": "call", "t": _now(), "use": use, "item": str(item),
-           "registry": _registry().REGISTRY_VERSION, "pass": result["pass"],
-           "p": meta["p"], "outcome": result["outcome"], "model": "+".join(meta["models"]),
-           "latency_ms": latency_ms, "input_tokens": meta["tokens"], "sha": _state_sha(state)}
-    if result.get("inputs"):
-        row["inputs"] = result["inputs"]
-    if meta.get("requests"):
-        row["requests"] = meta["requests"]
-    if "p2" in meta:
-        row["p2"] = meta["p2"]
-    if "error" in meta:
-        row["error"] = _clean(meta["error"], cfg)
-    if cfg.get("keep_examples"):
-        row["state"] = state
-    try:
-        _append(home, row)
-    except OSError:
-        pass                    # the log never breaks a decision (a busy lock skips the write too)
-
-
-def log_rows(home=None, skipped: "list | None" = None) -> list:
-    """Every valid row. Lines that are not valid JSON are skipped; `skipped`, a list, gets one entry
-    per skipped line."""
-    path = log_path(_home(home))
-    rows = []
-    if path.is_file():
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                row = None
-            if isinstance(row, dict):
-                rows.append(row)
-            elif skipped is not None:
-                skipped.append(line)
-    return rows
-
-
-def log_summary(use: "str | None" = None, *, home=None) -> dict:
-    stats: dict = {}
-    lat: dict = {}
-    for r in log_rows(home):
-        u = r.get("use")
-        if r.get("kind") != "call" or (use and u != use):
-            continue                # only decisions count; `check` rows (uses-check) are not
-        s = stats.setdefault(u, {"calls": 0, "settled_pass1": 0, "settled_pass2": 0,
-                                 "escalated": 0, "errors": 0, "median_latency_ms": None})
-        s["calls"] += 1
-        if r.get("outcome") == "error":
-            s["errors"] += 1
-        elif r.get("outcome") == "escalate":
-            s["escalated"] += 1
-        elif r.get("pass") == 1:
-            s["settled_pass1"] += 1
-        else:
-            s["settled_pass2"] += 1
-        if isinstance(r.get("latency_ms"), (int, float)):
-            lat.setdefault(u, []).append(r["latency_ms"])
-    for u, vals in lat.items():
-        stats[u]["median_latency_ms"] = statistics.median(vals)
-    return stats
-
 
 # ------------------------------------------------------------------------------------- loose-ends items
 # Code gathers the loose-ends items and the candidate pairs; the registry's `loose-end-*` uses judge them.
 # The drain below is the only reader of the answers.
-MAX_STATE = 1500                  # characters per item sent to the model: small items are fast
+MAX_STATE = 1500                  # characters per item sent to the helper: small items are fast
 MAX_PAIRS = 40
 HUB_LIMIT = 4                     # a reference or path shared by more items than this is no signal
 OVERLAP = 0.5                     # word-overlap (Jaccard) above which a pair becomes a candidate
@@ -886,46 +184,13 @@ def _join_item(j: dict) -> dict:
                      f"Item B ({j['item']}): {_cap(j['item_text'], 300)}"}
 
 
-def pick_orders(home, item_ref: str, item_text: str, options: list) -> list:
-    """The model's title pick: which open orders are about the same part of the product as the item. One `choice`
-    question over the orders' titles (named by WO id, at most 26); asked twice, the second time with the options
-    in reverse order, and the probabilities per order averaged (a choice leans to the option listed first).
-    -> [(order ref, probability)], best first. A server that does not answer a choice gives []."""
-    reg = _registry()
-    cfg = _active_config(home)
-    q = reg.USES["loose-end-pick"]["questions"][0]
-    state = _cap(f"Item {item_ref}: {item_text}", 500)
-    names = [r for r, _t in options]
-    sums = {n: 0.0 for n in names}
-    meta = {"p": {}, "tokens": 0, "models": [cfg.get("model", "")]}
-    t0 = time.monotonic()
-    passes = 0
-    for opts in (options, list(reversed(options))):
-        qs = {"order": {"type": "choice", "instructions": q["instructions"],
-                        "criteria": {r: _cap(t, 200) for r, t in opts}}}
-        answers, tok = _model_ask(cfg["endpoint"], cfg.get("model", ""), cfg, state, qs, False, meta)
-        meta["tokens"] += tok
-        a = answers["order"]
-        if a["type"] != "choice":
-            return []
-        probs = a["probabilities"] or {a["value"]: a["p"]}
-        for n in names:
-            sums[n] += float(probs.get(n, 0.0))
-        passes += 1
-    ranked = sorted(((n, v / passes) for n, v in sums.items()), key=lambda x: (-x[1], x[0]))
-    meta["p"] = {"order": ranked[0][1]} if ranked else {}
-    _log_call(_home(home), cfg, "loose-end-pick", item_ref,
-              {"outcome": ranked[0][0] if ranked else "escalate", "pass": 2, "inputs": {"order": ranked[0][0]} if ranked else {}},
-              meta, state, int((time.monotonic() - t0) * 1000))
-    return ranked
 
 
-def _loose_end_items(home: Path, pick: bool = True) -> tuple:
+def _loose_end_items(home: Path) -> tuple:
     """-> (items, new rows, open orders). Read from `<home>/loose-ends.md` with no flag. Each `new` item is
-    asked `loose-end-state` (a row in any other state, or one whose State cannot be read, is asked nothing); the (item, open order) join pairs (the item's best three open orders by BM25, in progress or not, plus the model's title pick)
+    asked `loose-end-state` (a row in any other state, or one whose State cannot be read, is asked nothing); the (item, open order) join pairs (the item's best three open orders by BM25, in progress or not, from references, paths and words)
     and the (item, item) bundle pairs are chosen by code (`loose_ends.candidates`). A `new` row a pile file already
-    holds (a crash between the pile write and the row write) is asked nothing: the next write marks it `proposed:`. `pick=False` skips the title pick (it needs a model): the candidates then come
-    from references, paths and BM25 only."""
+    holds (a crash between the pile write and the row write) is asked nothing: the next write marks it `proposed:`."""
     le = _loose_ends()
     if not le.list_path(home).is_file():
         return [], [], []
@@ -934,8 +199,7 @@ def _loose_end_items(home: Path, pick: bool = True) -> tuple:
             if r["state"].strip() == le.STATE_NEW and le.ID_RE.fullmatch(r["id"]) and r["id"] not in piled]
     if not rows:
         return [], [], []
-    cand = le.candidates(home, sm=sys.modules[__name__],
-                         pick=(lambda ref, text, opts: pick_orders(home, ref, text, opts)) if pick else None)
+    cand = le.candidates(home, sm=sys.modules[__name__])
     items = [{"group": "loose-ends", "use": "loose-end-state", "ref": r["id"], "text": _cap(r["item"], 300),
               "state": _loose_state(r["id"], r["item"], r["source"], le.age_days(r["added"]))} for r in rows]
     for j in cand["join"]:
@@ -1040,7 +304,7 @@ def _cause(r: dict, use: "str | None" = None) -> str:
 
 
 # ------------------------------------------------------------------ the drain proposals (WO-098, WO-115)
-# `drain` is the one System One command that writes in the home. The list row is the authority: a proposed item's
+# `drain --answers` is the one System One command that writes in the home. The list row is the authority: a proposed item's
 # row reads `proposed: <kind>`, and one file per proposal under `<home>/drain/pending/` is its attachment (what was
 # asked and found). Accept, decline and withdraw change the row and remove the file (git keeps it). No sentence is
 # model-written: each is an item's own text or built by code from the answers.
@@ -1242,24 +506,8 @@ def release_items(home, ids) -> dict:
     return done
 
 
-def drain(home, fresh: bool = False) -> dict:
-    """Ask the loose-end uses (state, joins, bundles) of the `new` rows, write one file per proposal under
-    `<home>/drain/pending/`, then mark each proposed row `proposed: <kind>`. A run never deletes a pending file:
-    only `accept`, `decline` and `withdraw` do. Raises `Unavailable` (nothing written) when System One is off or a
-    call fails. -> {"counts", "written", "proposed"}."""
-    home = Path(home)
-    cfg = _active_config(home)
-    items, loose_rows, orders = _loose_end_items(home)
-    results = []
-    for it in items:
-        r = decide(it["use"], it["ref"], it["state"], home=home, fresh=fresh)
-        results.append({"group": it["group"], "use": it["use"], "ref": it["ref"], "outcome": r["outcome"],
-                        "text": it["text"], "cause": _cause(r, it["use"])})
-    return _drain_write(home, cfg.get("model", ""), loose_rows, orders, results)
-
-
 def _drain_write(home: Path, model: str, loose_rows: list, orders: list, results: list) -> dict:
-    """The proposals of the answered items: the same path for a server's answers and a helper's."""
+    """The proposals of the answered items, from the helper's answers."""
     c = _canary()
     le = _loose_ends()
     bundles = _bundle_groups(results)
@@ -1318,14 +566,12 @@ def _drain_write(home: Path, model: str, loose_rows: list, orders: list, results
     return {"counts": counts, "written": written, "proposed": proposed}
 
 
-# ------------------------------------------------------------------ the drain by a helper, the default (WO-101)
-# The same questions and tables, with the answers read from a file a dispatched helper wrote. Nothing here
-# calls a model or handles a key: `--export` writes the questions, `--answers` reads the words and applies
-# each use's table. The export and the answers belong to one list state, tied by a fingerprint.
+# ------------------------------------------------------------------ the drain by a helper
+# The questions and tables, with the answers read from a file a dispatched helper wrote. Nothing here calls a
+# model or handles a key: `--export` writes the questions, `--answers` reads the words and applies each use's
+# table. The export and the answers belong to one list state, tied by a fingerprint.
 EXPORT_FORMAT = "gitos-drain-export"
 ANSWERS_FORMAT = "gitos-drain-answers"
-TITLE_PICK_NOTE = ("skipped: the title pick needs a model; join candidates come from references, paths and "
-                   "BM25 only")
 
 
 def _fingerprint(items: list) -> str:
@@ -1346,7 +592,7 @@ def helper_export(items: list) -> dict:
     """The export document: every item to be answered, its questions and the allowed answers."""
     fp = _fingerprint(items)
     return {"format": EXPORT_FORMAT, "version": 1, "registry": _registry().REGISTRY_VERSION,
-            "fingerprint": fp, "title_pick": TITLE_PICK_NOTE,
+            "fingerprint": fp,
             "answers_file": {"format": ANSWERS_FORMAT, "fingerprint": fp,
                              "answers": {"<ref>": {"<question id>": "<one of its allowed answers>"}}},
             "items": [_export_item(it) for it in items]}
@@ -1361,7 +607,8 @@ def helper_apply(items: list, doc) -> dict:
     """Apply each use's table to a helper's answers. `doc` is `{"fingerprint": F, "answers": {ref: {qid: word}}}`.
     An answer that is missing, not a string or not allowed counts as `unsure` for that question (counted,
     never an error). A document that is not of this list state raises ValueError before anything is applied.
-    -> {"outcomes": {ref: {"outcome", "inputs"}}, "defaulted": n, "unknown": [refs not in the list]}."""
+    -> {"outcomes": {ref: {"outcome", "confirm", "inputs"}}, "defaulted": n, "unknown": [refs not in the list]}.
+    `confirm` is true for an outcome a script only reports (see `require_reversible`)."""
     if not isinstance(doc, dict) or not isinstance(doc.get("answers"), dict) \
             or not isinstance(doc.get("fingerprint"), str):
         raise ValueError("the answers file needs a `fingerprint` and an `answers` object: nothing was written, "
@@ -1383,23 +630,10 @@ def helper_apply(items: list, doc) -> dict:
             if v != raw:
                 defaulted += 1
             inputs[q["id"]] = v
-        out[it["ref"]] = {"outcome": u["table"](dict(inputs)), "inputs": inputs}
+        outcome = u["table"](dict(inputs))
+        out[it["ref"]] = {"outcome": outcome, "confirm": u["outcomes"][outcome] == reg.CONFIRM, "inputs": inputs}
     known = {it["ref"] for it in items}
     return {"outcomes": out, "defaulted": defaulted, "unknown": sorted(k for k in doc["answers"] if k not in known)}
-
-
-def _helper_log(home: Path, items: list, applied: dict) -> None:
-    """One call-log row per applied item, model `helper`."""
-    reg = _registry()
-    for it in items:
-        o = applied["outcomes"][it["ref"]]
-        try:
-            _append(home, {"kind": "call", "t": _now(), "use": it["use"], "item": it["ref"],
-                           "registry": reg.REGISTRY_VERSION, "pass": 1, "p": {}, "outcome": o["outcome"],
-                           "model": HELPER_MODEL, "latency_ms": 0, "input_tokens": 0,
-                           "sha": _state_sha(it["state"]), "inputs": o["inputs"]})
-        except OSError:
-            pass                    # the log never breaks a decision
 
 
 def _write_export(path, doc: dict) -> None:
@@ -1416,26 +650,24 @@ def _read_answers(path) -> dict:
 
 
 def drain_export(home, path) -> dict:
-    """Write the export file for the loose-ends items the drain would ask. No model call; works with System
-    One off, unconfigured or down. -> {"items": n, "fingerprint": F}."""
-    items = _loose_end_items(Path(home), pick=False)[0]
+    """Write the export file for the loose-ends items the drain would ask. -> {"items": n, "fingerprint": F}."""
+    items = _loose_end_items(Path(home))[0]
     doc = helper_export(items)
     _write_export(path, doc)
     return {"items": len(items), "fingerprint": doc["fingerprint"]}
 
 
 def drain_answers(home, doc) -> dict:
-    """The drain from a helper's answers: the proposals are written through `_drain_write`, as for a server.
-    -> `drain`'s result plus {"defaulted", "unknown"}. A stale or unreadable document raises ValueError
-    with nothing written."""
+    """The drain from a helper's answers: the proposals are written through `_drain_write`.
+    -> {"counts", "written", "proposed", "defaulted", "unknown"}. A stale or unreadable document raises
+    ValueError with nothing written."""
     home = Path(home)
-    items, loose_rows, orders = _loose_end_items(home, pick=False)
+    items, loose_rows, orders = _loose_end_items(home)
     applied = helper_apply(items, doc)
     results = [{"group": it["group"], "use": it["use"], "ref": it["ref"],
                 "outcome": applied["outcomes"][it["ref"]]["outcome"], "text": it["text"],
                 "cause": _cause(applied["outcomes"][it["ref"]], it["use"])} for it in items]
     d = _drain_write(home, HELPER_MODEL, loose_rows, orders, results)
-    _helper_log(home, items, applied)
     d["defaulted"], d["unknown"] = applied["defaulted"], applied["unknown"]
     return d
 
@@ -1621,15 +853,13 @@ def _drain_cli(args) -> int:
     priv.add_argument("--slice")
     priv.add_argument("--new-slice")
     priv.add_argument("--json", action="store_true")
-    priv.add_argument("--fresh", action="store_true")
     priv.add_argument("--export")
     priv.add_argument("--answers")
     try:
         ns = priv.parse_intermixed_args(list(args.rest))
     except SystemExit:
         return 2
-    for k in ("json", "fresh"):
-        setattr(args, k, getattr(args, k) or getattr(ns, k))
+    args.json = args.json or ns.json
     args.work_order, args.parked, args.reason, args.route = ns.work_order, ns.parked, ns.reason, ns.route
     args.slice = ns.slice or ns.new_slice           # `--new-slice` is the older spelling of `--slice`
     args.trigger, args.question = ns.trigger, ns.question
@@ -1655,25 +885,13 @@ def _drain_cli(args) -> int:
                   + (f"; {len(d['unknown'])} unknown refs ignored" if d["unknown"] else ""))
             return 0
         if act is None:
-            if len(rest) != 1:
-                print("drain: usage: drain <home> | accept ID (--work-order NNN [--slice NAME] | --question Q "
-                      "| --reason R) [ROOT] | decline ID --reason R [--route DEST] [ROOT] | withdraw ID [ROOT] | defer ID [ROOT] "
-                      "| status [ROOT]", file=sys.stderr)
-                return 2
-            try:
-                d = drain(_resolve_home(rest[0]), fresh=args.fresh)
-            except Off:
-                print("system-one: off")
-                return 0
-            except Unavailable as e:
-                print(f"system-one: unavailable ({e})")
-                return 0
-            c = d["counts"]
-            print(json.dumps(d) if args.json else
-                  f"drain: {c['pending']} pending ({c['join']} join, {c['new-order']} new-order, {c['ask']} ask, "
-                  f"{c['park']} park, {c['close']} close, {c['read']} read); {len(d['written'])} written, "
-                  f"{len(d['proposed'])} rows marked proposed")
-            return 0
+            if len(rest) == 1:
+                print(RETIRED_SENTENCE, file=sys.stderr)       # `drain <home>` alone asked the local model
+            else:
+                print("drain: usage: drain <home> --export FILE | drain <home> --answers FILE | accept ID "
+                      "(--work-order NNN [--slice NAME] | --question Q | --reason R) [ROOT] | decline ID --reason R "
+                      "[--route DEST] [ROOT] | withdraw ID [ROOT] | defer ID [ROOT] | status [ROOT]", file=sys.stderr)
+            return 2
         if act == "status":
             if len(rest) > 2:
                 print("drain: status takes at most one ROOT", file=sys.stderr)
@@ -1795,9 +1013,8 @@ def _work_state(home: Path, wo: "str | None", text_file: "str | None") -> tuple:
 def match_lenses(home, wo=None, text_file=None, global_dir=None) -> dict:
     """List the repo's active lenses with each one's domain and when-to-apply, plus the problems the
     canary's lens readers find. No model call (WO-098: matching a lens to the work stays with the
-    reasoning model, which reads the list). Raises Off when System One is not on in this repo."""
+    reasoning model, which reads the list)."""
     home = Path(home)
-    _active_config(home)
     lm = _lenses_mod()
     cfg = lm.load(home)
     if cfg["state"] != "on":                          # lenses are opt-in per repo
@@ -1830,23 +1047,16 @@ def format_lenses(d: dict) -> str:
 
 def _lenses_cli(args) -> int:
     home = _resolve_home(args.home)
+    if bool(args.wo) == bool(args.text):
+        print("lenses: give exactly one of --wo and --text", file=sys.stderr)
+        return 2
     try:
-        if bool(args.wo) == bool(args.text):
-            print("lenses: give exactly one of --wo and --text", file=sys.stderr)
-            return 2
-        try:
-            d = match_lenses(home, args.wo, args.text, args.global_dir)
-        except (OSError, ValueError) as e:
-            print(f"lenses: {e}", file=sys.stderr)
-            return 2
-        print(json.dumps(d) if args.json else format_lenses(d))
-        return 0
-    except Off:
-        print("system-one: off")
-        return 0
-    except Unavailable as e:
-        print(f"system-one: unavailable ({e})")
-        return 0
+        d = match_lenses(home, args.wo, args.text, args.global_dir)
+    except (OSError, ValueError) as e:
+        print(f"lenses: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(d) if args.json else format_lenses(d))
+    return 0
 
 
 # ------------------------------------------------------------------------------------- scope (WO-089)
@@ -1905,7 +1115,7 @@ def _default_range(root: Path, nnn: str, slice_id: "str | None" = None) -> "list
     cur = (_git(root, "rev-parse", "--abbrev-ref", "HEAD") or "").strip()
     refs = (_git(root, "for-each-ref", "--format=%(refname:short)", f"refs/heads/wo-{nnn}",
                  f"refs/heads/wo-{nnn}-*") or "").split()
-    pat = re.compile(rf"wo-{re.escape(nnn)}(-s\d+)?$", re.I)
+    pat = re.compile(rf"wo-{re.escape(nnn)}(-s\d+[a-z]?)?$", re.I)
     branches = [r for r in refs if pat.match(r)]
     if slice_id:
         branches = [r for r in branches if r.lower() == f"wo-{nnn}-{slice_id}".lower()]
@@ -1984,75 +1194,6 @@ def _scope_cli(args) -> int:
     return 0
 
 
-# ------------------------------------------------------------------------------------- repo choice
-def _write_json_atomic(path: Path, obj) -> None:
-    import tempfile
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".s1-", suffix=".tmp", dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(json.dumps(obj, indent=2) + "\n")
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
-def set_repo_choice(home, enabled: bool) -> None:
-    """Write `<home>/system-one.json` `enabled`, atomically, keeping unrelated keys. Refuses a malformed
-    file (fix or delete it first)."""
-    home = Path(home)
-    state, detail = repo_choice(home)
-    if state == "malformed":
-        raise ValueError(f"system-one.json is malformed ({detail}): fix or delete it first")
-    if state == "retired":
-        raise ValueError(retired_line(detail.split(", ")))
-    raw: dict = {}
-    if (home / OPTOUT_NAME).is_file():
-        raw = json.loads((home / OPTOUT_NAME).read_text(encoding="utf-8"))
-    raw["enabled"] = enabled
-    _write_json_atomic(home / OPTOUT_NAME, raw)
-
-
-def _strip_keys(text: str, names: list) -> str:
-    """`text` (a JSON object) without the top-level `names`. A key that sits alone on its own line is cut
-    out of the text and every other line stays byte for byte; any other layout is rewritten whole."""
-    want = {k: v for k, v in json.loads(text).items() if k not in names}
-    lines = text.splitlines(keepends=True)
-    keep = [ln for ln in lines if not any(re.match(r'\s*"' + re.escape(k) + r'"\s*:', ln) for k in names)]
-    for i, ln in enumerate(keep[:-1]):
-        if ln.rstrip().endswith(",") and keep[i + 1].strip().startswith("}"):
-            keep[i] = ln.rstrip()[:-1] + ln[len(ln.rstrip()):]
-    try:
-        if len(keep) < len(lines) and json.loads("".join(keep)) == want:
-            return "".join(keep)
-    except ValueError:
-        pass
-    return json.dumps(want, indent=2) + "\n"
-
-
-def migrate(root=".", write: bool = False) -> list:
-    """What `/gitos upgrade` converts: [(path, [names])]. The retired keys of the machine config and the repo's
-    `system-one.json` (with `write`, removed atomically, every other key stays; a file that is missing,
-    unreadable or not an object is skipped). The not-now stores move with `ledger_migrate.py`."""
-    found = []
-    for path in (system_home() / CONFIG_NAME, _repo_home(root) / OPTOUT_NAME):
-        try:
-            text = path.read_text(encoding="utf-8")
-            data = json.loads(text)
-        except (OSError, ValueError):
-            continue
-        names = [k for k in RETIRED_KEYS if isinstance(data, dict) and k in data]
-        if not names:
-            continue
-        found.append((path, names))
-        if write:
-            _write_text_atomic(path, _strip_keys(text, names))
-    return found
 
 
 def _repo_home(root) -> Path:
@@ -2060,33 +1201,10 @@ def _repo_home(root) -> Path:
     return root / ".gitos" if (root / ".gitos").is_dir() else root
 
 
-def _repo_cli(args) -> int:
-    rest = list(args.rest)
-    if len(rest) > 1:
-        print("repo: takes at most one ROOT", file=sys.stderr)
-        return 2
-    args.root = rest[0] if rest else "."
-    home = _repo_home(args.root)
-    try:
-        if args.action in ("on", "off"):
-            if not home.is_dir():
-                print(f"repo: no home under {args.root}", file=sys.stderr)
-                return 2
-            set_repo_choice(home, args.action == "on")
-        state, detail = repo_choice(home)
-    except (OSError, ValueError) as e:
-        print(f"repo: {e}", file=sys.stderr)
-        return 2
-    words = {"on": "on", "off": "off", "missing": "not chosen (off)", "malformed": "malformed (off)",
-             "retired": "retired keys (off)"}
-    print(f"system-one repo: {words[state]}" + (f" - {detail}" if detail else ""))
-    return 0
-
 
 # ------------------------------------------------------------------------------------- helper model
 HELPER_DEFAULTS = {"claude": "haiku", "codex": "gpt-5.1-codex-mini"}   # the only place either name appears in code
-HELPER_SOURCES = ("optimization", "recorded", "default")               # first match wins
-HELPER_KEY = "helper"             # `{"<harness>": "<model>"}` in <home>/system-one.json
+HELPER_SOURCES = ("optimization", "default")                           # first match wins
 
 
 def _mo_mod():
@@ -2126,48 +1244,19 @@ def _helper_optimization(home: Path, harness: str) -> "str | None":
     return mapping["choices"][mo.tier_choices(mapping, "light")[0]]["model"]
 
 
-def _helper_recorded(home: Path, harness: str) -> "str | None":
-    try:
-        data = json.loads((home / OPTOUT_NAME).read_text(encoding="utf-8"))
-        model = data[HELPER_KEY][harness]
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    return model if isinstance(model, str) and model.strip() else None
-
-
 def helper_model(home, harness: "str | None") -> "tuple[str, str] | None":
     """(model, source) for this repo's helper on `harness`, or None. Sources, first match wins:
-    the model-optimization light choice, the recorded pick, the shipped default."""
+    the model-optimization light choice, the shipped default."""
     if not harness:
         return None
     home = Path(home)
     finders = {"optimization": lambda: _helper_optimization(home, harness),
-               "recorded": lambda: _helper_recorded(home, harness),
                "default": lambda: HELPER_DEFAULTS.get(harness)}
     for src in HELPER_SOURCES:
         model = finders[src]()
         if model:
-            return model, {"optimization": "model-optimization light choice", "recorded": f"recorded in {OPTOUT_NAME}",
-                           "default": "shipped default"}[src]
+            return model, {"optimization": "model-optimization light choice", "default": "shipped default"}[src]
     return None
-
-
-def set_helper(home, harness: str, model: str) -> None:
-    """Record the helper model for `harness` in `<home>/system-one.json`, atomically, keeping every other key."""
-    home = Path(home)
-    state, detail = repo_choice(home)
-    if state == "malformed":
-        raise ValueError(f"system-one.json is malformed ({detail}): fix or delete it first")
-    if state == "retired":
-        raise ValueError(retired_line(detail.split(", ")))
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", harness or "") or not re.fullmatch(r"\S{1,100}", model or ""):
-        raise ValueError("helper --set takes a harness name and a model name without spaces")
-    raw: dict = {}
-    if (home / OPTOUT_NAME).is_file():
-        raw = json.loads((home / OPTOUT_NAME).read_text(encoding="utf-8"))
-    picks = raw.get(HELPER_KEY)
-    raw[HELPER_KEY] = {**(picks if isinstance(picks, dict) else {}), harness: model}
-    _write_json_atomic(home / OPTOUT_NAME, raw)
 
 
 def _helper_cli(args) -> int:
@@ -2175,302 +1264,14 @@ def _helper_cli(args) -> int:
     if not home.is_dir():
         print(f"helper: no home under {args.root}", file=sys.stderr)
         return 2
-    if args.set:
-        try:
-            set_helper(home, args.set[0], args.set[1])
-        except (OSError, ValueError) as e:
-            print(f"helper: {e}", file=sys.stderr)
-            return 2
-        print(f"helper: recorded {args.set[1]} for {args.set[0]}")
-        return 0
     harness = args.harness or detect_harness()
     found = helper_model(home, harness)
     if found is None:
-        print(f"helper: no model for harness '{harness or 'unknown'}'; ask the operator to pick one of their "
-              f"available models, then run helper --set {harness or '<harness>'} MODEL", file=sys.stderr)
+        print(f"helper: no model for harness '{harness or 'unknown'}'; ask the operator which of their available "
+              f"models is the cheapest, and dispatch the helper on it", file=sys.stderr)
         return 3
     print(f"helper: {found[0]} ({harness}; {found[1]})")
     return 0
-
-
-# ------------------------------------------------------------------------------------- setup
-SETUP_ENDPOINT = "http://127.0.0.1:8765/v1/systemone"
-SETUP_TIMEOUT_S = 10.0
-DETECT_TIMEOUT_S = 2.0
-
-
-def _get_json(url: str, timeout: float, headers: dict) -> "tuple[str, object, str]":
-    """GET -> (`down` | `answers`, parsed JSON or None, detail). `down` is no HTTP answer at all."""
-    req = urllib.request.Request(url, headers=headers, method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read(1 << 20)
-    except urllib.error.HTTPError as e:
-        return "answers", None, f"HTTP {e.code}"
-    except Exception as e:
-        return "down", None, type(e).__name__
-    try:
-        return "answers", json.loads(raw.decode("utf-8")), ""
-    except ValueError:
-        return "answers", None, "not JSON"
-
-
-def _listed_models(data) -> list:
-    rows = data.get("data") if isinstance(data, dict) and "data" in data else \
-        data.get("models") if isinstance(data, dict) else data
-    out = []
-    for r in rows if isinstance(rows, list) else []:
-        if isinstance(r, str):
-            out.append(r)
-        elif isinstance(r, dict):
-            out += [r[k] for k in ("id", "name", "model") if isinstance(r.get(k), str)]
-    return out
-
-
-def check_server(endpoint: str, base_cfg: "dict | None" = None, timeout: float = SETUP_TIMEOUT_S) -> dict:
-    """Is `endpoint` a System One server? Three checks, in order, stopping at the first that fails:
-    `/health` says `status: ok` with a model name; `/v1/models` lists that model; one `probe` decision
-    comes back in a valid answer shape with probabilities. -> {state: ok|down|not-system-one, steps,
-    model, failed}. Contacts only the one endpoint."""
-    cfg = {**DEFAULTS, **(base_cfg or {}), "endpoint": endpoint, "timeout_s": timeout}
-    sp = urllib.parse.urlsplit(endpoint)
-    origin = f"{sp.scheme}://{sp.netloc}"
-    hdr = _headers(cfg)
-    res: dict = {"endpoint": endpoint, "state": "not-system-one", "steps": [], "model": "", "failed": ""}
-
-    def step(name, ok, detail):
-        res["steps"].append({"name": name, "ok": ok, "detail": detail})
-        if not ok:
-            res["failed"] = name
-        return ok
-
-    kind, data, why = _get_json(origin + "/health", timeout, hdr)
-    if kind == "down":
-        res["state"] = "down"
-        step("health", False, why)
-        return res
-    model = data.get("model") if isinstance(data, dict) else None
-    if not (isinstance(data, dict) and data.get("status") == "ok" and isinstance(model, str) and model):
-        step("health", False, why or "no `status: ok` with a model name")
-        return res
-    res["model"] = model
-    step("health", True, f"status ok, model {model}")
-    kind, data, why = _get_json(origin + "/v1/models", timeout, hdr)
-    if model not in _listed_models(data):
-        step("models", False, why or f"`/v1/models` does not list {model}")
-        return res
-    step("models", True, f"lists {model}")
-    try:
-        reg = _registry()
-        qs = reg.request_questions("probe")
-        ans = normalize_response(_post(endpoint, cfg, model, "hello there", qs)[0], list(qs))
-        if not all(a["probabilities"] for a in ans.values()):
-            raise Unavailable("the answer carries no probabilities")
-    except Unavailable as e:
-        step("probe", False, _clean(str(e), cfg))
-        return res
-    step("probe", True, "a decision came back with probabilities")
-    res["state"] = "ok"
-    return res
-
-
-def _setup_cli(args) -> int:
-    endpoint = args.endpoint or SETUP_ENDPOINT
-    try:
-        existing = load_config()
-    except Unavailable:
-        existing = None
-    base = existing or {}
-    cls = endpoint_class(endpoint, base)
-    if args.detect:
-        if cls == "remote":
-            return 0
-        r = check_server(endpoint, base, DETECT_TIMEOUT_S)
-        if r["state"] == "ok":
-            print(f"system-one: a server answers at {endpoint} (model {r['model']}); "
-                  f"`system_one.py setup --write` sets it up")
-        return 0
-    if cls == "remote":
-        print(f"setup: refused: {endpoint} is not loopback and its host is not in `trusted_hosts` "
-              f"of the machine config; nothing was contacted", file=sys.stderr)
-        return 2
-    print(f"checking {endpoint}")
-    r = check_server(endpoint, base)
-    for s in r["steps"]:
-        print(f"  {s['name']:<7} {'ok' if s['ok'] else 'FAILED'}  {s['detail']}")
-    if r["state"] == "down":
-        print(f"nothing answers at {endpoint} ({r['steps'][0]['detail']}); nothing was written")
-        return 1
-    if r["state"] != "ok":
-        print(f"something answers at {endpoint} but it is not a System One server ({r['failed']}); "
-              f"nothing was written")
-        return 1
-    new = {**(existing or {}), "endpoint": endpoint, "model": r["model"],
-           "timeout_s": (existing or {}).get("timeout_s", DEFAULTS["timeout_s"])}
-    path = system_home() / CONFIG_NAME
-    if not args.write:
-        print(f"would write {path}:\n{json.dumps(new, indent=2)}")
-        if path.is_file():
-            print("a machine config already exists; writing it needs --write --force")
-        else:
-            print("to write it: system_one.py setup --write"
-                  + (f" --endpoint {endpoint}" if args.endpoint else ""))
-        return 0
-    if path.is_file() and not args.force:
-        print(f"setup: {path} already exists and is not overwritten without --force", file=sys.stderr)
-        return 2
-    _write_json_atomic(path, new)
-    print(f"wrote {path}")
-    return 0
-
-
-# ------------------------------------------------------------------ every use against a server (WO-097)
-USES_CHECK_STATE = "A short test text for checking the connection."
-
-
-def _check_answer(q: dict, a: dict) -> None:
-    """Raise Unavailable unless the normalized answer `a` is the right shape for the question `q`."""
-    if a["type"] != q["type"]:
-        raise Unavailable(f"answered type {a['type']!r} for a {q['type']!r} question")
-    if q["type"] == "choice":
-        names = list(q["criteria"])
-        if a["value"] not in names:
-            raise Unavailable(f"the choice {a['value']!r} is not one of the options")
-        if not a["probabilities"] or any(n not in a["probabilities"] for n in names):
-            raise Unavailable("the choice answer lacks a probability for every option")
-    elif q["type"] == "score":
-        if not a["probabilities"]:
-            raise Unavailable("the score answer carries no probabilities")
-
-
-def uses_check(endpoint: str, base_cfg: "dict | None" = None, model: str = "", home=None,
-               log: bool = True) -> list:
-    """Send one request per registered use, built from that use's own questions and a short neutral text
-    (`sample` of the use when the registry gives one), and check each answer parses through
-    `normalize_answer` for the declared type. -> [{use, questions, ok, reason, latency_ms}]. Decides
-    nothing and writes no `final`; each result is a `check` row in the log (never a `call` row, so the
-    cache never reads it) when `log` is true."""
-    cfg = {**DEFAULTS, **(base_cfg or {}), "endpoint": endpoint}
-    reg = _registry()
-    out = []
-    for use in reg.USES:
-        qs = reg.request_questions(use)
-        t = time.time()
-        reason = ""
-        try:
-            data = _post(endpoint, cfg, model, reg.USES[use].get("sample", USES_CHECK_STATE), qs)[0]
-            ans = normalize_response(data, list(qs))
-            for qid, a in ans.items():
-                _check_answer(qs[qid], a)
-        except Unavailable as e:
-            reason = _clean(str(e), cfg)
-        row = {"use": use, "questions": len(qs), "ok": not reason, "reason": reason,
-               "latency_ms": round((time.time() - t) * 1000, 1)}
-        out.append(row)
-        if log:
-            try:
-                _append(_home(home), {"kind": "check", "t": _now(), "model": model, **row})
-            except OSError:
-                pass
-    return out
-
-
-def _uses_check_cli(args) -> int:
-    try:
-        base = load_config()
-    except Unavailable as e:
-        print(f"unavailable: {e}", file=sys.stderr)
-        return 3
-    endpoint = args.endpoint or (base or {}).get("endpoint")
-    if not endpoint:
-        print("uses-check: no endpoint: pass --endpoint, or configure the machine first", file=sys.stderr)
-        return 2
-    if endpoint_class(endpoint, base or {}) == "remote":
-        print(f"uses-check: refused: {endpoint} is not loopback and its host is not in `trusted_hosts` "
-              f"of the machine config; nothing was contacted", file=sys.stderr)
-        return 2
-    cfg = {**DEFAULTS, **(base or {}), "endpoint": endpoint}
-    model = (base or {}).get("model", "") if endpoint == (base or {}).get("endpoint") else ""
-    if not model:
-        origin = "{0.scheme}://{0.netloc}".format(urllib.parse.urlsplit(endpoint))
-        _, data, _ = _get_json(origin + "/health", SETUP_TIMEOUT_S, _headers(cfg))
-        model = data.get("model", "") if isinstance(data, dict) and isinstance(data.get("model"), str) else ""
-    results = uses_check(endpoint, base, model, log=base is not None)
-    bad = [r for r in results if not r["ok"]]
-    if args.json:
-        print(json.dumps({"endpoint": endpoint, "model": model, "uses": results, "failed": len(bad)}))
-    else:
-        for r in results:
-            print(f"ok {r['use']} ({r['questions']} questions)" if r["ok"] else f"FAIL {r['use']}: {r['reason']}")
-        print(f"{len(results) - len(bad)} of {len(results)} uses ok" + (f", {len(bad)} failed" if bad else ""))
-    return 1 if bad else 0
-
-
-# ------------------------------------------------------------------------------------- CLI
-def _brief() -> int:
-    """One line, or nothing when there is no machine config."""
-    try:
-        cfg = load_config()
-    except RetiredKeys as e:
-        print(f"system-one: down ({e})")
-        return 0
-    except Unavailable:
-        print("system-one: down (config)")
-        return 0
-    if cfg is None:
-        return 0
-    state, detail = repo_choice(find_home())
-    if state == "retired":
-        print(f"system-one: down ({retired_line(detail.split(', '))})")
-    elif state in ("off", "malformed"):
-        print("system-one: off in this repo")
-    elif state == "missing":
-        print("system-one: not chosen here")
-    else:
-        ok, detail = health(cfg["endpoint"], cfg)
-        print(f"system-one: on ({cfg.get('model') or 'model unnamed'})" if ok
-              else f"system-one: down ({detail})")
-    return 0
-
-
-def _status(as_json: bool, brief: bool = False) -> int:
-    if brief:
-        return _brief()
-    home = find_home()
-    info: dict = {"state": "off"}
-    try:
-        cfg = load_config()
-    except Unavailable as e:
-        cfg = None
-        info["reason"] = str(e)
-    if cfg is not None and repo_choice(home)[0] != "on":
-        info["reason"] = REPO_REASONS[repo_choice(home)[0]]
-    elif cfg is not None:
-        ok, detail = health(cfg["endpoint"], cfg)
-        info.update({"state": "on", "endpoint": cfg["endpoint"], "model": cfg.get("model", ""),
-                     "class": endpoint_class(cfg["endpoint"], cfg), "health": detail if not ok else "ok",
-                     "key": ("set" if _key(cfg) else "unset") if cfg.get("key_env") else "none"})
-        try:
-            info["registry_version"] = _registry().REGISTRY_VERSION
-        except Exception as e:
-            info["registry_version"] = f"invalid ({type(e).__name__})"
-    if as_json:
-        print(json.dumps(info))
-    elif info["state"] == "off":
-        print("off" + (f" ({info['reason']})" if "reason" in info else ""))
-    else:
-        print("on")
-        for k in ("endpoint", "model", "class", "health", "key", "registry_version"):
-            print(f"  {k}: {info[k]}")
-    return 0
-
-
-def _load_json_or_text(path: str):
-    text = Path(path).read_text(encoding="utf-8")
-    try:
-        return json.loads(text)
-    except ValueError:
-        return text
 
 
 # ------------------------------------------------------------------ eval of the drain (WO-098)
@@ -2510,12 +1311,11 @@ def _eval_state_items(pts: list) -> list:
             for p in pts]
 
 
-def _eval_join_items(pts: list, home, pick: bool) -> list:
+def _eval_join_items(pts: list, home) -> list:
     """Each (item, open order) pair once, as the drain chooses them: `_join_item` plus its `item` and `wo`."""
     out, asked = [], set()
     cand = _loose_ends().join_candidates(
-        home, [(p["id"], p["text"]) for p in pts], sm=sys.modules[__name__],
-        pick=(lambda ref, text, opts: pick_orders(home, ref, text, opts)) if pick else None)["join"]
+        home, [(p["id"], p["text"]) for p in pts], sm=sys.modules[__name__])["join"]
     for j in cand:
         j2 = {**_join_item(j), "item": j["item"], "wo": j["wo"]}
         if j2["ref"] not in asked:                       # each pair is asked once per run
@@ -2551,39 +1351,23 @@ def _eval_report(pts: list, state_out: dict, join_out: list) -> dict:
             "points": rows}
 
 
-def eval_drain(path: str, home) -> dict:
-    """Ask `loose-end-state` for each labelled item and `loose-end-join` for each (item, open order)
-    candidate, cache off, and compare with the labels. Hand-back is an `escalate` (a `closable` is
-    settled: its confirm is a separate step). Writes nothing in the home; raises `Unavailable` when off or
-    a call fails."""
-    pts = _drain_points(path)
-    home = Path(home)
-    _active_config(home)
-    state_out = {it["ref"]: decide("loose-end-state", it["ref"], it["state"], home=home, fresh=True)["outcome"]
-                 for it in _eval_state_items(pts)}
-    join_out = [(j2, decide("loose-end-join", j2["ref"], j2["state"], home=home, fresh=True)["outcome"])
-                for j2 in _eval_join_items(pts, home, True)]
-    return _eval_report(pts, state_out, join_out)
-
 
 def eval_export(path: str, home, out_path) -> dict:
     """The labelled set as an export file (see `helper_export`); the labels are not in it. No model call."""
     pts = _drain_points(path)
-    items = _eval_state_items(pts) + _eval_join_items(pts, Path(home), False)
+    items = _eval_state_items(pts) + _eval_join_items(pts, Path(home))
     doc = helper_export(items)
     _write_export(out_path, doc)
     return {"items": len(items), "fingerprint": doc["fingerprint"]}
 
 
 def eval_answers(path: str, home, doc) -> dict:
-    """Score a helper's answers to `eval_export`'s file, exactly as `eval_drain` scores a server's. A stale
-    document raises ValueError. Calls are logged with model `helper`."""
+    """Score a helper's answers to `eval_export`'s file against the labels. A stale document raises ValueError."""
     pts = _drain_points(path)
     home = Path(home)
     states = _eval_state_items(pts)
-    joins = _eval_join_items(pts, home, False)
+    joins = _eval_join_items(pts, home)
     applied = helper_apply(states + joins, doc)
-    _helper_log(home, states + joins, applied)
     out = applied["outcomes"]
     d = _eval_report(pts, {it["ref"]: out[it["ref"]]["outcome"] for it in states},
                      [(j2, out[j2["ref"]]["outcome"]) for j2 in joins])
@@ -2617,15 +1401,14 @@ def _eval_drain_cli(args) -> int:
             print(json.dumps(d) if args.json else
                   format_drain_eval(d) + f"\nanswers counted as unsure (missing or invalid): {d['defaulted']}")
             return 0
-        d = eval_drain(args.file, _resolve_home(args.home))
+        print(RETIRED_SENTENCE, file=sys.stderr)
+        return 2
     except ValueError as e:
         print(f"eval-drain: {e}", file=sys.stderr)
         return 2
     except OSError as e:
         print(f"eval-drain: cannot read {args.file}: {e}", file=sys.stderr)
         return 2
-    print(json.dumps(d) if args.json else format_drain_eval(d))
-    return 0
 
 
 def main(argv: "list | None" = None) -> int:
@@ -2634,54 +1417,29 @@ def main(argv: "list | None" = None) -> int:
             stream.reconfigure(encoding="utf-8")        # Windows consoles default to cp1252
         except (AttributeError, OSError):
             pass
+    given = sys.argv[1:] if argv is None else list(argv)
+    if given and (given[0] in RETIRED_COMMANDS or (given[0] == "helper" and "--set" in given)):
+        print(RETIRED_SENTENCE, file=sys.stderr)
+        return 2
     ap = argparse.ArgumentParser(prog="system_one.py", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("status", help="off / on, endpoint, model, health, registry version")
-    s.add_argument("--json", action="store_true")
-    s.add_argument("--brief", action="store_true", help="one line, or nothing with no machine config")
-    rg = sub.add_parser("repo", help="this repo's choice: on, off or status (<home>/system-one.json)")
-    rg.add_argument("action", choices=("on", "off", "status"))
-    rg.add_argument("rest", nargs="*", metavar="ROOT")
-    hp = sub.add_parser("helper", help="the drain helper's model for this repo and where it came from; "
-                                       "--set HARNESS MODEL records a pick (no model call)")
+    hp = sub.add_parser("helper", help="the drain helper's model for this repo and where it came from (no model call)")
     hp.add_argument("root", nargs="?", default=".", metavar="ROOT")
     hp.add_argument("--harness", help="claude or codex (default: detected from the environment)")
-    hp.add_argument("--set", nargs=2, metavar=("HARNESS", "MODEL"), help="record the operator's pick")
-    mg = sub.add_parser("migrate", help="list (or, with --write, remove) the retired keys of the machine "
-                                        "config and the repo's system-one.json")
-    mg.add_argument("root", nargs="?", default=".", metavar="ROOT")
-    mg.add_argument("--write", action="store_true", help="remove the keys; every other key stays")
-    su = sub.add_parser("setup", help="find and check a local server, then write the machine config")
-    su.add_argument("--endpoint", help=f"default {SETUP_ENDPOINT}")
-    su.add_argument("--write", action="store_true", help="write the machine config")
-    su.add_argument("--force", action="store_true", help="overwrite an existing machine config")
-    su.add_argument("--detect", action="store_true", help="quiet: one line if a server answers, else nothing")
-    uc = sub.add_parser("uses-check", help="send every registered use to the server and check each answer "
-                                           "parses for its declared type (decides nothing)")
-    uc.add_argument("--endpoint", help="a server to check (default: the machine config's)")
-    uc.add_argument("--json", action="store_true")
-    a = sub.add_parser("ask", help="ask the configured model")
-    a.add_argument("--state", required=True)
-    a.add_argument("--questions", required=True)
-    a.add_argument("--json", action="store_true")
-    lg = sub.add_parser("log", help="call log")
-    lg.add_argument("--summary", action="store_true")
-    lg.add_argument("--use")
-    lg.add_argument("--json", action="store_true")
-    dr = sub.add_parser("drain", help="ask the loose-end questions and write one proposal file each under "
-                                      "<home>/drain/pending/ (the one command that writes in the home); "
-                                      "also: accept ID | decline ID | withdraw ID | defer ID | status")
+    dr = sub.add_parser("drain", help="<home> --export FILE | <home> --answers FILE: the drain by a helper (the "
+                                      "answers step is the one command that writes in the home); also: accept ID | "
+                                      "decline ID | withdraw ID | defer ID | status")
     dr.add_argument("rest", nargs=argparse.REMAINDER,
-                    help="<home>; or accept ID --work-order NNN [--slice NAME] | --question Q | --reason R [ROOT]; "
-                         "decline ID --reason R [--route DEST] [ROOT]; withdraw ID [ROOT]; defer ID [ROOT]; status [ROOT]")
+                    help="<home> --export FILE; <home> --answers FILE; accept ID --work-order NNN [--slice NAME] | "
+                         "--question Q | --reason R [ROOT]; decline ID --reason R [--route DEST] [ROOT]; "
+                         "withdraw ID [ROOT]; defer ID [ROOT]; status [ROOT]")
     dr.add_argument("--json", action="store_true")
-    dr.add_argument("--fresh", action="store_true", help="ask every item again; skip the cache")
-    ed = sub.add_parser("eval-drain", help="ask the drain's uses on labelled loose ends and compare with the labels")
+    ed = sub.add_parser("eval-drain", help="export the drain's questions on labelled loose ends for a helper "
+                                           "(--export), or score its answers against the labels (--answers)")
     ed.add_argument("file", help="JSONL: id, text, source, age_days, expect_state "
                                  "(closable|ask-operator|park|open), expect_join (WO-NNN or null)")
     ed.add_argument("--home", required=True, help="the home directory (or the repo root that holds it) whose open orders are the join candidates")
-    ed.add_argument("--export", metavar="OUT", help="write the questions of the labelled set to OUT for a helper "
-                                                    "(no model call; the title pick is skipped)")
+    ed.add_argument("--export", metavar="OUT", help="write the questions of the labelled set to OUT for a helper")
     ed.add_argument("--answers", metavar="IN", help="score a helper's answers file against the labels")
     ed.add_argument("--json", action="store_true")
     ln = sub.add_parser("lenses", help="list the active lenses with their domain and when-to-apply (no model call, writes nothing)")
@@ -2697,60 +1455,19 @@ def main(argv: "list | None" = None) -> int:
     sc.add_argument("--range", help="A..B (default: merge-base to the branch wo-NNN and its slice branches wo-NNN-sN)")
     sc.add_argument("--slice", help="SN: only that slice's branch wo-NNN-sN (default: the order and all its slices)")
     sc.add_argument("--json", action="store_true")
-    given = sys.argv[1:] if argv is None else list(argv)
     if given and not given[0].startswith("-") and given[0] not in sub.choices:
         print(f"system_one.py: unknown command {given[0]!r}; run system_one.py --help", file=sys.stderr)
         return 2
     args = ap.parse_args(argv)
-    try:
-        if args.cmd == "status":
-            return _status(args.json, args.brief)
-        if args.cmd == "repo":
-            return _repo_cli(args)
-        if args.cmd == "helper":
-            return _helper_cli(args)
-        if args.cmd == "migrate":
-            found = migrate(args.root, args.write)
-            if found:
-                print(("migrated: " if args.write else "to migrate: ")
-                      + "; ".join(f"{', '.join(n)} in {p}" for p, n in found))
-            return 0
-        if args.cmd == "setup":
-            return _setup_cli(args)
-        if args.cmd == "uses-check":
-            return _uses_check_cli(args)
-        if args.cmd == "ask":
-            out = ask(_load_json_or_text(args.state), _load_json_or_text(args.questions))
-            if args.json:
-                print(json.dumps(out))
-            else:
-                for i, v in out.items():
-                    print(f"{i}: {v['value']} (p={v['p']:.3f})")
-            return 0
-        if args.cmd == "log":
-            stats = log_summary(args.use)
-            skipped: list = []
-            log_rows(skipped=skipped)
-            if args.json:
-                print(json.dumps(stats))
-            else:
-                for u, st in stats.items():
-                    print(u + ": " + ", ".join(f"{k}={v}" for k, v in st.items()))
-                if not stats:
-                    print("no log rows")
-                if args.summary:
-                    print(f"skipped lines (not valid JSON): {len(skipped)}")
-            return 0
-        if args.cmd == "drain":
-            return _drain_cli(args)
-        if args.cmd == "eval-drain":
-            return _eval_drain_cli(args)
-        if args.cmd == "lenses":
-            return _lenses_cli(args)
-        return _scope_cli(args)
-    except Unavailable as e:
-        print(f"unavailable: {e}", file=sys.stderr)
-        return 3
+    if args.cmd == "helper":
+        return _helper_cli(args)
+    if args.cmd == "drain":
+        return _drain_cli(args)
+    if args.cmd == "eval-drain":
+        return _eval_drain_cli(args)
+    if args.cmd == "lenses":
+        return _lenses_cli(args)
+    return _scope_cli(args)
 
 
 if __name__ == "__main__":
